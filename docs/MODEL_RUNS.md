@@ -191,6 +191,28 @@ The run did not produce a review because the DeepSeek account had no usable bala
 No collaboration review or finding was imported.
 ```
 
+Model catalog check:
+
+```txt
+GET https://api.deepseek.com/models
+configured_model: deepseek-v4-flash
+available_models:
+- deepseek-v4-flash
+- deepseek-v4-pro
+configured_model_listed: true
+```
+
+Final DeepSeek test status:
+
+```txt
+status: integrated_but_unfunded
+live_api_auth: verified
+model_catalog: verified
+mock_dry_run: verified
+real_generation: blocked_by_balance
+next_action: add DeepSeek balance/credits before retrying live generation
+```
+
 Local settings needed for a real run:
 
 ```txt
