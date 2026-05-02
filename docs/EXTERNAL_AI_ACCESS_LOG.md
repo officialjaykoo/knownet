@@ -260,8 +260,10 @@ Single primary path because real tool calls work:
   Claude -> MCP connector/local stdio path
   Manus -> connector URL / Custom MCP
 
-Split free fallback + paid/API path:
+API-key runner path, not web-plan split:
   Gemini
+
+Split free fallback + paid/API path:
   DeepSeek
   Qwen
   Kimi
@@ -312,6 +314,12 @@ Manus paid/agent:
   Implemented config/profile path:
   apps/mcp/configs/manus_custom_mcp.example.json
   Use protected HTTPS Custom MCP or Custom API; do not use localhost.
+
+Gemini API:
+  Implemented API-key runner:
+  POST /api/model-runs/gemini/reviews
+  Gemini is quota/API-key based; free or paid quota uses the same runner path.
+  Do not describe Gemini as a manual path.
 ```
 
 ## Qwen Web

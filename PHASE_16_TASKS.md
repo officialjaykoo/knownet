@@ -87,6 +87,7 @@ Not done in this step:
 ```txt
 Gemini web chat is not an integration target.
 Gemini API is the integration target.
+Gemini integration is API-key/quota based, not paid-vs-free web based.
 
 KnowNet calls Gemini.
 Gemini does not call KnowNet.
@@ -831,7 +832,8 @@ leaking data.
 Goal:
 
 ```txt
-Verify the Gemini path mostly with mocks, then support one manual live test.
+Verify the Gemini path mostly with mocks, then support one operator-triggered
+live API test.
 ```
 
 Required automated tests:
@@ -895,7 +897,7 @@ docs/MCP_CLIENTS.md
   Clarify that web chat products generally cannot call MCP directly.
 
 docs/EXTERNAL_MODEL_RUNNER.md
-  New doc for Gemini API flow, config, safety, and manual live test.
+  New doc for Gemini API flow, config, safety, and live test.
 
 docs/RELEASE_HARDENING_RUN.md
   Add Phase 16 readiness note after implementation.
@@ -958,10 +960,9 @@ Claude:
     End-to-end Claude Desktop tool use.
 
 Gemini:
-  Best paid/API path:
+  Best API-key path:
     KnowNet server-side Gemini API runner.
-  Realistic free/web path:
-    GET preview, pasted state-summary/ai-state, manual review text.
+    Same runner path for free quota and paid quota.
   Locally testable by KnowNet:
     mocked Gemini runner, context builder, schema validation.
   Unverified without API key:

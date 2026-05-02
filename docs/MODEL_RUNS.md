@@ -8,8 +8,7 @@ KnowNet calls the Gemini API as an operator-controlled reviewer.
 
 ## Gemini Direction
 
-Gemini web chat cannot reliably connect to local KnowNet MCP tools. KnowNet uses
-the inverse flow:
+Gemini is an API-key runner integration. KnowNet uses this flow:
 
 ```txt
 KnowNet
@@ -23,6 +22,9 @@ KnowNet
 
 Gemini never receives raw database files, local filesystem paths, sessions,
 users, backups, raw tokens, token hashes, or `.env` values.
+
+The same runner path is used whether the API key has free quota or paid quota.
+Do not describe Gemini as a manual web path.
 
 ## Current State
 

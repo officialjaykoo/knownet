@@ -1,31 +1,25 @@
 {
   "id": "gemini",
-  "display_name": "Gemini CLI",
+  "display_name": "Gemini API",
   "github_references": [
     "https://github.com/google-gemini/gemini-cli",
     "https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md",
     "https://github.com/GoogleCloudPlatform/gemini-cloud-assist-mcp"
   ],
-  "best_paid_path": "Gemini CLI mcpServers config with stdio or HTTP KnowNet MCP.",
-  "realistic_free_path": "Gemini web chat cannot call local MCP; use GET preview or Gemini CLI if installed.",
-  "implemented_surface": "apps/mcp/configs/gemini_cli_settings.example.json",
-  "test_status": "config_template_ready",
+  "best_paid_path": "Gemini API key runner controlled by KnowNet.",
+  "realistic_free_path": "Gemini API key runner when the key has free or paid quota.",
+  "implemented_surface": "POST /api/model-runs/gemini/reviews",
+  "test_status": "api_runner_live_tested_quota_dependent",
   "requires_paid_or_external_setup": true,
-  "access_strategy": "server_side_runner_required",
-  "path_policy": "Gemini web cannot directly call KnowNet; KnowNet calls Gemini API through the controlled runner.",
-  "keep_separate_free_paid_paths": true,
+  "access_strategy": "api_key_runner",
+  "path_policy": "Gemini integration depends on API key and quota, not web-plan level. KnowNet calls Gemini through the controlled runner.",
+  "keep_separate_free_paid_paths": false,
   "primary_path": "server_side_api_runner",
   "connection_modes": [
     {
-      "mode": "local_stdio",
-      "settings_file": "~/.gemini/settings.json or .gemini/settings.json",
-      "trust": false,
-      "config_template": "apps/mcp/configs/gemini_cli_settings.example.json"
-    },
-    {
-      "mode": "streamable_http_bridge",
-      "url": "https://REPLACE_WITH_PROTECTED_DOMAIN/mcp",
-      "trust": false
+      "mode": "provider_runner",
+      "endpoint": "POST /api/model-runs/gemini/reviews",
+      "provider_family": "gemini_api_key"
     }
   ],
   "do_not_add": [
