@@ -22,7 +22,7 @@ def test_tool_registry_is_fixed_and_excludes_maintenance():
 def test_read_page_calls_agent_endpoint():
     server = KnowNetMcpServer(base_url="http://knownet", token="kn_agent_test")
     with patch.object(server, "_request", return_value={"ok": True}) as mocked:
-        assert server.call_tool("knownet_read_page", {"page_id": "page_1"}) == {"ok": True}
+        assert server.call_tool("knownet_read_page", {"page_id": "page_1"})["ok"] is True
     mocked.assert_called_once_with("GET", "/api/agent/pages/page_1")
 
 
@@ -58,8 +58,10 @@ def test_jsonrpc_strict_errors_and_capabilities():
     assert bad_params["error"]["code"] == -32602
     initialized = server.handle_jsonrpc({"jsonrpc": "2.0", "method": "notifications/initialized"})
     assert initialized is None
-    init = server.handle_jsonrpc({"jsonrpc": "2.0", "id": 4, "method": "initialize"})
+    with patch.object(server, "startup_diagnostics", return_value={"ok": True, "checks": []}):
+        init = server.handle_jsonrpc({"jsonrpc": "2.0", "id": 4, "method": "initialize"})
     assert set(init["result"]["capabilities"]) == {"tools", "resources", "prompts"}
+    assert init["result"]["diagnostics"]["ok"] is True
 
 
 def test_tool_schemas_are_strict():
@@ -127,6 +129,40 @@ def test_structured_logs_go_to_stderr_stream_and_redact_tokens():
     output = stream.getvalue()
     assert "kn_agent_secret" not in output
     assert "kn_agent_[redacted]secret" in output
+
+
+def test_mcp_metadata_request_id_token_warning_and_size_warning():
+    server = KnowNetMcpServer(token="kn_agent_test")
+    response = {"ok": True, "data": {"page": {"content": "x" * 10}}, "meta": {"truncated": True}}
+    server._apply_response_headers(response, {"X-Token-Expires-In": str(60 * 60)})
+    server._annotate_result(response, request_id="req_test")
+    assert response["meta"]["request_id"] == "req_test"
+    assert response["meta"]["token_warning"] == "expires_soon"
+    assert response["meta"]["warning"] == "page_truncated_use_narrower_reads"
+
+
+def test_scope_denied_includes_current_scope_hint():
+    server = KnowNetMcpServer(token="kn_agent_test")
+    server.current_scopes = ["pages:read"]
+    error = server._map_error(403, {"detail": {"details": {"scope": "reviews:read"}}})
+    assert error["required_scope"] == "reviews:read"
+    assert error["current_scopes"] == ["pages:read"]
+
+
+def test_startup_diagnostics_checks_ping_token_scopes_and_expiry():
+    server = KnowNetMcpServer(token="kn_agent_test")
+
+    def fake_request(method, path, **_):
+        if path == "/api/agent/ping":
+            return {"ok": True, "version": "9.0"}
+        if path == "/api/agent/me":
+            return {"ok": True, "data": {"token_id": "agent_test", "scopes": ["pages:read"], "expires_in_seconds": 60}}
+        raise AssertionError(path)
+
+    with patch.object(server, "_request", side_effect=fake_request):
+        diagnostics = server.startup_diagnostics()
+    assert diagnostics["ok"] is True
+    assert any(check.get("token_warning") == "expires_soon" for check in diagnostics["checks"])
 
 
 def test_mcp_roundtrip_over_http():

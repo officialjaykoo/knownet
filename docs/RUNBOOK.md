@@ -102,5 +102,8 @@ Logs go to stderr and JSON-RPC responses go to stdout. If an MCP client shows
 `auth_failed`, rotate the token and update the client environment. If it shows
 `scope_denied`, create a token with the missing read or review scope. If it
 shows `context_too_large`, lower the tool limit or read one page at a time.
+If MCP `initialize` reports `token_warning=expires_soon`, rotate the token before
+running a long review. Include MCP `request_id` values when investigating failed
+calls; they also appear in MCP stderr logs.
 
 See `docs/MCP_CLIENTS.md` for Claude Desktop, Cursor, and local stdio examples.

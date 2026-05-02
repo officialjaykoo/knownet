@@ -61,6 +61,21 @@ If the token has an expiry, responses include:
 X-Token-Expires-In: {seconds}
 ```
 
+MCP tool and resource responses add operator-friendly metadata when available:
+
+```json
+{
+  "request_id": "req_abc123",
+  "token_expires_in_seconds": 86400,
+  "token_warning": "expires_soon",
+  "chars_returned": 60000,
+  "warning": "page_truncated_use_narrower_reads"
+}
+```
+
+Use `request_id` when reporting a failed or surprising MCP call. If a response
+contains `token_warning`, rotate the token before it expires.
+
 ## Scopes
 
 Common scopes:
@@ -200,6 +215,10 @@ knownet_submit_review
 ```
 
 No maintenance or admin tools are exposed.
+
+During MCP `initialize`, the server returns diagnostics for API reachability,
+agent token validity, token scopes, and token expiry. Treat diagnostics warnings
+as operator action items before starting long reviews.
 
 Phase 11 also exposes safe read-only resources:
 

@@ -39,6 +39,10 @@ P11-008:
 
 P11-009:
   README, agent access contract, and runbook updates.
+
+P11 operational hardening:
+  Startup diagnostics, graceful shutdown wait, token expiry warnings,
+  per-call request_id metadata, result size warnings, and scope-denied hints.
 ```
 
 Phase 11 is not a new product surface. It is a compatibility and reliability
@@ -185,8 +189,24 @@ Process behavior:
 ```txt
 Handle SIGTERM and SIGINT gracefully.
 On shutdown, stop reading stdin, allow the current in-flight request to finish,
-flush stderr logs, and exit without writing partial JSON to stdout.
+wait up to 10 seconds for active requests, flush stderr logs, and exit without
+writing partial JSON to stdout.
 EOF on stdin exits cleanly with status 0.
+```
+
+Startup diagnostics:
+
+```txt
+initialize runs an MCP self-check:
+  - KnowNet API ping is reachable.
+  - Agent token is present and valid.
+  - Token scopes are not empty.
+  - Token expiry is inspected.
+
+If token expiry is within 7 days, diagnostics returns token_warning:
+  expires_soon
+
+Diagnostics are returned in initialize.result.diagnostics and logged to stderr.
 ```
 
 Response rules:
@@ -199,6 +219,7 @@ Unknown methods return -32601.
 Invalid params return -32602.
 Tool execution failures return a tool result with isError=true, not a malformed
 JSON-RPC response.
+Tool/resource results include meta.request_id for operator troubleshooting.
 ```
 
 Done when:
@@ -287,6 +308,8 @@ Resources preserve truncation metadata.
 Resources never include raw token values, token hashes, sessions, users,
 backups, or maintenance controls.
 Resource read failures return MCP-safe errors with short messages.
+403 scope errors include the required scope and current known scopes when
+available.
 ```
 
 Resource output:
@@ -376,7 +399,19 @@ Response metadata:
   "truncated": true,
   "total_count": 120,
   "returned_count": 20,
-  "next_offset": 20
+  "next_offset": 20,
+  "request_id": "req_abc123",
+  "chars_returned": 60000,
+  "warning": "page_truncated_use_narrower_reads"
+}
+```
+
+Token expiry metadata:
+
+```json
+{
+  "token_expires_in_seconds": 86400,
+  "token_warning": "expires_soon"
 }
 ```
 

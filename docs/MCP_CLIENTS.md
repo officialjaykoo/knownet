@@ -69,11 +69,18 @@ and update the MCP client environment.
 The token lacks the scope required by the requested tool or resource. Create a
 narrower or broader scoped token from the Agent Access panel.
 
+`token_warning=expires_soon`:
+Rotate the token before running a long review.
+
 `context_too_large`:
 Request fewer pages or read one page at a time.
 
 `rate_limited`:
 Wait before retrying. The response may include `retry_after_seconds`.
+
+`request_id`:
+Include this value when reporting a failed MCP call. It is also written to MCP
+stderr logs.
 
 ## Public Exposure
 

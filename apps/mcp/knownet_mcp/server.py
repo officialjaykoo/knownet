@@ -10,6 +10,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from typing import Any, Callable
+from uuid import uuid4
 
 
 PROTOCOL_VERSION = "2024-11-05"
@@ -137,10 +138,13 @@ class KnowNetMcpServer:
         self.log_level = (log_level or os.getenv("KNOWNET_MCP_LOG_LEVEL") or "info").lower()
         self.log_format = (log_format or os.getenv("KNOWNET_MCP_LOG_FORMAT") or "json").lower()
         self.shutdown_requested = False
+        self.active_requests = 0
+        self.current_scopes: list[str] = []
+        self.last_diagnostics: dict[str, Any] | None = None
 
     def request_shutdown(self, *_: Any) -> None:
         self.shutdown_requested = True
-        self._log("shutdown", "signal", "ok")
+        self._log("shutdown", "signal", "ok", active_requests=self.active_requests)
 
     def tool_specs(self) -> list[dict[str, Any]]:
         return [
@@ -191,47 +195,95 @@ class KnowNetMcpServer:
             },
         ]
 
-    def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    def startup_diagnostics(self) -> dict[str, Any]:
+        checks: list[dict[str, Any]] = []
+        ok = True
+        try:
+            ping = self._request("GET", "/api/agent/ping", auth=False, timeout=min(self.timeout, 3))
+            checks.append({"name": "api_reachable", "status": "ok", "version": ping.get("version")})
+        except Exception as error:
+            ok = False
+            checks.append({"name": "api_reachable", "status": "error", "message": str(error)})
+        if not self.token:
+            ok = False
+            checks.append({"name": "agent_token", "status": "error", "message": "KNOWNET_AGENT_TOKEN is missing."})
+        else:
+            try:
+                me = self._request("GET", "/api/agent/me", timeout=min(self.timeout, 3))
+                data = me.get("data", {})
+                scopes = data.get("scopes") or []
+                self.current_scopes = list(scopes)
+                expires_in = data.get("expires_in_seconds")
+                checks.append({"name": "agent_token", "status": "ok", "token_id": data.get("token_id")})
+                if not scopes:
+                    ok = False
+                    checks.append({"name": "agent_scopes", "status": "warning", "message": "Agent token has no scopes."})
+                else:
+                    checks.append({"name": "agent_scopes", "status": "ok", "count": len(scopes)})
+                if isinstance(expires_in, int) and expires_in <= 7 * 24 * 60 * 60:
+                    checks.append({"name": "token_expiry", "status": "warning", "token_warning": "expires_soon", "token_expires_in_seconds": expires_in})
+            except KnowNetHttpError as error:
+                ok = False
+                checks.append({"name": "agent_token", "status": "error", "error": self._map_error(error.status, error.payload)})
+            except Exception as error:
+                ok = False
+                checks.append({"name": "agent_token", "status": "error", "message": str(error)})
+        diagnostics = {"ok": ok, "checks": checks}
+        self.last_diagnostics = diagnostics
+        self._log("startup", "diagnostics", "ok" if ok else "warning")
+        return diagnostics
+
+    def call_tool(self, name: str, arguments: dict[str, Any] | None = None, *, request_id: str | None = None) -> dict[str, Any]:
         if name not in ALLOWED_TOOLS:
             return {"ok": False, "error": {"code": "unknown_tool", "message": f"Unknown or forbidden tool: {name}"}}
+        if self.shutdown_requested:
+            return {"ok": False, "error": {"code": "server_shutting_down", "message": "KnowNet MCP server is shutting down."}}
         started = time.perf_counter()
+        self.active_requests += 1
         try:
             args = self._validate_args(name, arguments or {}, TOOL_SCHEMAS[name])
             result = self._call_validated_tool(name, args)
             result = self._with_next_offset(result, args)
-            self._log("tools/call", name, "ok", duration_ms=self._duration(started))
+            self._annotate_result(result, request_id=request_id)
+            self._log("tools/call", name, "ok", duration_ms=self._duration(started), request_id=request_id)
             return result
         except McpInputError as error:
-            self._log("tools/call", name, "error", duration_ms=self._duration(started), error_code="invalid_tool_input")
+            self._log("tools/call", name, "error", duration_ms=self._duration(started), error_code="invalid_tool_input", request_id=request_id)
             return {"ok": False, "error": {"code": "invalid_tool_input", "message": error.message}}
         except KnowNetHttpError as error:
             mapped = self._map_error(error.status, error.payload)
-            self._log("tools/call", name, "error", duration_ms=self._duration(started), error_code=mapped["code"])
+            self._log("tools/call", name, "error", duration_ms=self._duration(started), error_code=mapped["code"], request_id=request_id)
             return {"ok": False, "error": mapped}
+        finally:
+            self.active_requests -= 1
 
-    def read_resource(self, uri: str) -> dict[str, Any]:
+    def read_resource(self, uri: str, *, request_id: str | None = None) -> dict[str, Any]:
         started = time.perf_counter()
+        self.active_requests += 1
         try:
             result = self._read_resource(uri)
-            self._log("resources/read", uri, "ok", duration_ms=self._duration(started))
+            self._annotate_result(result, request_id=request_id)
+            self._log("resources/read", uri, "ok", duration_ms=self._duration(started), request_id=request_id)
             return result
         except (McpInputError, KnowNetHttpError) as error:
             code = "invalid_resource" if isinstance(error, McpInputError) else self._map_error(error.status, error.payload)["code"]
-            self._log("resources/read", uri, "error", duration_ms=self._duration(started), error_code=code)
+            self._log("resources/read", uri, "error", duration_ms=self._duration(started), error_code=code, request_id=request_id)
             if isinstance(error, KnowNetHttpError):
                 return {"ok": False, "error": self._map_error(error.status, error.payload)}
             return {"ok": False, "error": {"code": code, "message": error.message}}
+        finally:
+            self.active_requests -= 1
 
-    def get_prompt(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
+    def get_prompt(self, name: str, arguments: dict[str, Any] | None = None, *, request_id: str | None = None) -> dict[str, Any]:
         if name not in ALLOWED_PROMPTS:
             return {"ok": False, "error": {"code": "unknown_prompt", "message": f"Unknown prompt: {name}"}}
         try:
             args = self._validate_args(name, arguments or {}, PROMPT_ARGUMENTS[name])
             text = self._prompt_text(name, args)
-            self._log("prompts/get", name, "ok")
+            self._log("prompts/get", name, "ok", request_id=request_id)
             return {"ok": True, "description": name, "messages": [{"role": "user", "content": {"type": "text", "text": text}}]}
         except McpInputError as error:
-            self._log("prompts/get", name, "error", error_code="invalid_prompt_input")
+            self._log("prompts/get", name, "error", error_code="invalid_prompt_input", request_id=request_id)
             return {"ok": False, "error": {"code": "invalid_prompt_input", "message": error.message}}
 
     def _call_validated_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
@@ -281,7 +333,7 @@ class KnowNetMcpServer:
         path = "/api/collaboration/reviews?dry_run=true" if dry_run else "/api/collaboration/reviews"
         return self._request("POST", path, payload=payload)
 
-    def _request(self, method: str, path: str, *, query: dict[str, Any] | None = None, payload: dict[str, Any] | None = None, auth: bool = True) -> dict[str, Any]:
+    def _request(self, method: str, path: str, *, query: dict[str, Any] | None = None, payload: dict[str, Any] | None = None, auth: bool = True, timeout: float | None = None) -> dict[str, Any]:
         if auth and not self.token:
             raise KnowNetHttpError(401, {"detail": {"code": "agent_token_required"}})
         clean_query = {k: v for k, v in (query or {}).items() if v is not None}
@@ -296,8 +348,12 @@ class KnowNetMcpServer:
             headers["Authorization"] = f"Bearer {self.token}"
         request = urllib.request.Request(url, data=body, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
+            with urllib.request.urlopen(request, timeout=timeout or self.timeout) as response:
+                result = json.loads(response.read().decode("utf-8"))
+                self._apply_response_headers(result, response.headers)
+                if path == "/api/agent/me" and isinstance(result.get("data"), dict):
+                    self.current_scopes = list(result["data"].get("scopes") or [])
+                return result
         except urllib.error.HTTPError as error:
             try:
                 payload_data = json.loads(error.read().decode("utf-8"))
@@ -361,7 +417,13 @@ class KnowNetMcpServer:
         if status == 401:
             return {"code": "auth_failed", "message": "KnowNet agent token is missing or invalid."}
         if status == 403:
-            return {"code": "scope_denied", "message": "KnowNet agent token lacks the required scope.", "missing_scope": details.get("scope")}
+            return {
+                "code": "scope_denied",
+                "message": "KnowNet agent token lacks the required scope.",
+                "missing_scope": details.get("scope"),
+                "required_scope": details.get("scope"),
+                "current_scopes": self.current_scopes,
+            }
         if status == 413:
             return {"code": "context_too_large", "message": "Requested context is too large. Use a narrower page or context selection."}
         if status == 429:
@@ -398,6 +460,7 @@ class KnowNetMcpServer:
             return self._jsonrpc_error(None if not isinstance(message, dict) else message.get("id"), -32600, "Invalid Request")
         method = message["method"]
         request_id = message.get("id")
+        trace_id = f"req_{uuid4().hex[:12]}"
         if method == "initialize":
             return {
                 "jsonrpc": "2.0",
@@ -406,6 +469,7 @@ class KnowNetMcpServer:
                     "protocolVersion": PROTOCOL_VERSION,
                     "serverInfo": {"name": "knownet", "version": SERVER_VERSION},
                     "capabilities": {"tools": {}, "resources": {}, "prompts": {}},
+                    "diagnostics": self.startup_diagnostics(),
                 },
             }
         if method == "notifications/initialized":
@@ -416,7 +480,7 @@ class KnowNetMcpServer:
             params = message.get("params")
             if not isinstance(params, dict) or not isinstance(params.get("name"), str):
                 return self._jsonrpc_error(request_id, -32602, "Invalid params")
-            result = self.call_tool(params["name"], params.get("arguments") or {})
+            result = self.call_tool(params["name"], params.get("arguments") or {}, request_id=trace_id)
             return self._tool_response(request_id, result)
         if method == "resources/list":
             return {"jsonrpc": "2.0", "id": request_id, "result": {"resources": self.resource_specs()}}
@@ -424,7 +488,7 @@ class KnowNetMcpServer:
             params = message.get("params")
             if not isinstance(params, dict) or not isinstance(params.get("uri"), str):
                 return self._jsonrpc_error(request_id, -32602, "Invalid params")
-            result = self.read_resource(params["uri"])
+            result = self.read_resource(params["uri"], request_id=trace_id)
             return self._resource_response(request_id, params["uri"], result)
         if method == "prompts/list":
             return {"jsonrpc": "2.0", "id": request_id, "result": {"prompts": self.prompt_specs()}}
@@ -432,7 +496,7 @@ class KnowNetMcpServer:
             params = message.get("params")
             if not isinstance(params, dict) or not isinstance(params.get("name"), str):
                 return self._jsonrpc_error(request_id, -32602, "Invalid params")
-            result = self.get_prompt(params["name"], params.get("arguments") or {})
+            result = self.get_prompt(params["name"], params.get("arguments") or {}, request_id=trace_id)
             if not result.get("ok"):
                 return self._jsonrpc_error(request_id, -32602, result["error"]["message"])
             return {"jsonrpc": "2.0", "id": request_id, "result": {"description": result["description"], "messages": result["messages"]}}
@@ -467,15 +531,44 @@ class KnowNetMcpServer:
     def _duration(self, started: float) -> int:
         return int((time.perf_counter() - started) * 1000)
 
-    def _log(self, method: str, name: str, status: str, *, duration_ms: int | None = None, error_code: str | None = None) -> None:
+    def _apply_response_headers(self, result: dict[str, Any], headers: Any) -> None:
+        expires = headers.get("X-Token-Expires-In") if hasattr(headers, "get") else None
+        if not expires:
+            return
+        try:
+            seconds = int(expires)
+        except ValueError:
+            return
+        meta = result.setdefault("meta", {})
+        if isinstance(meta, dict):
+            meta["token_expires_in_seconds"] = seconds
+            if seconds <= 7 * 24 * 60 * 60:
+                meta["token_warning"] = "expires_soon"
+
+    def _annotate_result(self, result: dict[str, Any], *, request_id: str | None) -> None:
+        meta = result.setdefault("meta", {})
+        if not isinstance(meta, dict):
+            return
+        if request_id:
+            meta["request_id"] = request_id
+        text = json.dumps(result.get("data", {}), ensure_ascii=False)
+        meta["chars_returned"] = len(text)
+        if meta.get("truncated"):
+            meta["warning"] = "page_truncated_use_narrower_reads"
+        elif len(text) > 50000:
+            meta["warning"] = "large_result_use_pagination"
+
+    def _log(self, method: str, name: str, status: str, *, duration_ms: int | None = None, error_code: str | None = None, request_id: str | None = None, active_requests: int | None = None) -> None:
         if self.log_level == "off":
             return
         event = {
+            "request_id": request_id,
             "method": method,
             "name": self._redact(name),
             "status": status,
             "duration_ms": duration_ms,
             "error_code": error_code,
+            "active_requests": active_requests,
         }
         if self.log_format == "text":
             line = " ".join(f"{key}={value}" for key, value in event.items() if value is not None)
@@ -507,6 +600,9 @@ def main() -> None:
         response = server.handle_jsonrpc(message)
         if response is not None:
             print(json.dumps(response), flush=True)
+    deadline = time.time() + 10
+    while server.active_requests > 0 and time.time() < deadline:
+        time.sleep(0.05)
     sys.stderr.flush()
 
 
