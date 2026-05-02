@@ -996,10 +996,12 @@ Kimi:
     Kimi API tool_calls or Kimi Code MCP.
   Realistic free/web path:
     Kimi web chat with GET preview, upload/paste, GitHub preview.
+    Free Kimi web does not provide the API key needed for live runner tests.
   Locally testable by KnowNet:
     mocked Kimi runner, Kimi Code MCP config validation.
   Unverified without API/code access:
     Live Kimi API tool calls or Kimi Code MCP.
+    Kimi API key creation requires paid/API access.
 
 MiniMax:
   Best paid/API/agent path:
@@ -1808,6 +1810,8 @@ Implemented:
 
 The Kimi runner remains disabled by default and requires KIMI_API_KEY plus
 KIMI_RUNNER_ENABLED=true for live calls.
+Kimi API key creation requires paid/API access; free web can only use
+GET preview or generated review packs.
 ```
 
 ## P16-015 MiniMax API, Mini-Agent, And MCP Profiles

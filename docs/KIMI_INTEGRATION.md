@@ -8,6 +8,9 @@ KnowNet supports Kimi through two separate paths.
 POST /api/model-runs/kimi/reviews
 ```
 
+Kimi API keys are available only through the paid/API plan. Free Kimi web usage
+does not provide the API key needed for this runner.
+
 The runner calls Moonshot/Kimi's OpenAI-compatible chat completions endpoint
 with sanitized KnowNet context. Kimi may request only these read-only tools
 inside the runner:
@@ -29,6 +32,14 @@ KIMI_API_KEY
 KIMI_RUNNER_ENABLED=false
 KIMI_BASE_URL=https://api.moonshot.ai/v1
 KIMI_MODEL=kimi-k2-0905-preview
+```
+
+Live status:
+
+```txt
+mock runner: implemented
+real runner: implemented
+live API verification: blocked until the operator has paid/API access and a KIMI_API_KEY
 ```
 
 ## Kimi Code / Playground MCP

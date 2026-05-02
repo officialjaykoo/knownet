@@ -262,6 +262,7 @@ Kimi free web:
 Kimi paid/API/Kimi Code/Playground:
   Implemented REST/model tool-calling runner:
   POST /api/model-runs/kimi/reviews
+  API key creation requires Kimi paid/API access; free web cannot live-test it.
   Kimi Code/Playground MCP config remains available:
   apps/mcp/configs/kimi_mcp.example.json
 
@@ -429,7 +430,8 @@ Kimi free web:
   access path by itself.
 
 Kimi paid/API:
-  Future Agent Runner path using OpenAI-compatible tool calls.
+  Implemented Agent Runner path using OpenAI-compatible tool calls.
+  API key creation requires Kimi paid/API access; free web cannot live-test it.
 
 Kimi Code / Kimi Playground:
   Register KnowNet MCP and test direct tool calls there.

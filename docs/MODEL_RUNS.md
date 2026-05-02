@@ -327,6 +327,9 @@ Kimi official docs describe `https://api.moonshot.ai/v1/chat/completions`,
 Bearer auth, OpenAI SDK compatibility, and API-key based access. KnowNet keeps
 tool execution local and sends only sanitized context.
 
+Kimi API keys require paid/API access. The free Kimi web plan is a manual
+review-pack fallback and cannot live-test this runner.
+
 Current local state as of 2026-05-03:
 
 ```txt
@@ -336,6 +339,7 @@ mock_adapter: working
 operator_import_required: true
 default_model: kimi-k2-0905-preview
 local_api_key: not verified
+live_verification: blocked until paid/API key is available
 ```
 
 Mock smoke path:
