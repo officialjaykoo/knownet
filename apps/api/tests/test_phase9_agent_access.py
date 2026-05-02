@@ -138,6 +138,17 @@ def test_agent_me_warns_when_token_has_no_expiry(tmp_path, monkeypatch):
         data = response.json()["data"]
         assert data["expires_at"] is None
         assert data["token_warning"] == "no_expiry"
+        assert data["token_management"]["warning"] == "no_expiry"
+        assert "Agent Dashboard" in data["token_management"]["operator_action"]
+        assert "raw token" in data["token_management"]["agent_rule"]
+
+        onboarding = client.get("/api/agent/onboarding", headers={"authorization": f"Bearer {token['raw_token']}"})
+        assert onboarding.status_code == 200
+        assert onboarding.json()["data"]["token_management"]["warning"] == "no_expiry"
+
+        state_summary = client.get("/api/agent/state-summary", headers={"authorization": f"Bearer {token['raw_token']}"})
+        assert state_summary.status_code == 200
+        assert state_summary.json()["data"]["token_management"]["warning"] == "no_expiry"
     get_settings.cache_clear()
 
 
@@ -284,6 +295,7 @@ def test_agent_ai_state_returns_structured_json_rows(tmp_path, monkeypatch):
         assert "path" not in payload["data"]["ai_state_pages"][0]["state"].get("source", {})
         assert payload["meta"]["total_count"] == 2
         assert payload["meta"]["truncated"] is True
+        assert payload["meta"]["has_more"] is True
         assert payload["meta"]["next_offset"] == 1
     get_settings.cache_clear()
 
@@ -295,6 +307,7 @@ def test_agent_state_summary_explains_counts(tmp_path, monkeypatch):
         response = client.get("/api/agent/state-summary", headers={"authorization": f"Bearer {token['raw_token']}"})
         assert response.status_code == 200, response.text
         data = response.json()["data"]
+        assert response.json()["meta"]["has_more"] is False
         assert "ai_state_coverage_note" in data
         assert "graph_node_breakdown" in data
         assert data["collaboration_status"]["ready_for_review"] is True

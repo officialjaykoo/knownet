@@ -142,6 +142,23 @@ def _token_warning(agent: AgentAuth) -> str | None:
     return None
 
 
+def _token_management(agent: AgentAuth) -> dict | None:
+    warning = _token_warning(agent)
+    if not warning:
+        return None
+    operator_action = "Ask the operator to rotate or create a new agent token from the Agent Dashboard."
+    if warning == "no_expiry":
+        operator_action = "Ask the operator to rotate this token with an explicit expiry from the Agent Dashboard."
+    return {
+        "warning": warning,
+        "expires_at": agent.expires_at,
+        "expires_in_seconds": agent.expires_in_seconds,
+        "operator_action": operator_action,
+        "dashboard_hint": "Open User Panel -> Agent Dashboard.",
+        "agent_rule": "Do not ask for raw token values. Ask the operator to rotate or create a new token.",
+    }
+
+
 def _sanitize_ai_state(state: dict) -> tuple[dict, str]:
     sanitized = json.loads(json.dumps(state))
     source = sanitized.get("source")
@@ -218,6 +235,7 @@ async def _onboarding_payload(request: Request, agent: AgentAuth) -> dict:
         "forbidden_actions": ONBOARDING_FORBIDDEN_ACTIONS,
         "review_workflow": ONBOARDING_REVIEW_WORKFLOW,
         "current_priorities": ONBOARDING_PRIORITIES,
+        "token_management": _token_management(agent),
         "handoff_format": ONBOARDING_HANDOFF_FORMAT,
         "conflict_resolution_policy": CONFLICT_RESOLUTION_POLICY,
         "security_boundary_policy": SECURITY_BOUNDARY_POLICY,
@@ -236,16 +254,18 @@ async def _onboarding_payload(request: Request, agent: AgentAuth) -> dict:
 
 
 def _meta(agent: AgentAuth, *, total: int, returned: int, truncated: bool, offset: int = 0) -> dict:
+    has_more = bool(truncated or total > offset + returned)
     meta = {
         "schema_version": 1,
         "vault_id": agent.vault_id,
         "agent_scope": agent.scopes,
         "truncated": truncated,
+        "has_more": has_more,
         "total_count": total,
         "returned_count": returned,
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
-    if truncated:
+    if has_more:
         meta["next_offset"] = offset + returned
     return meta
 
@@ -292,6 +312,7 @@ async def agent_me(request: Request, agent: AgentAuth = Depends(require_agent)):
             "expires_at": agent.expires_at,
             "expires_in_seconds": agent.expires_in_seconds,
             "token_warning": _token_warning(agent),
+            "token_management": _token_management(agent),
             "start_here_hint": start_here_status["hint"],
             "start_here_status": start_here_status,
             "recommended_start_pages": recommended_start_pages,
@@ -486,6 +507,8 @@ async def agent_ai_state(request: Request, limit: int = 50, offset: int = 0, inc
     truncated = count > offset + len(rows)
     await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.ai_state", status="ok", meta={"returned_count": len(states), "skipped_drafts": skipped_drafts, "truncated": truncated})
     meta = _meta(agent, total=count, returned=len(states), truncated=truncated, offset=offset)
+    if truncated:
+        meta["next_offset"] = offset + len(rows)
     meta["skipped_drafts"] = skipped_drafts
     meta["include_drafts"] = include_drafts
     return {"ok": True, "data": {"ai_state_pages": states}, "meta": meta}
@@ -570,6 +593,7 @@ async def agent_state_summary(request: Request, agent: AgentAuth = Depends(requi
             "summary": summary,
             "first_agent_brief": first_agent_brief,
             "phase_status": phase_status,
+            "token_management": _token_management(agent),
             "conflict_resolution_policy": CONFLICT_RESOLUTION_POLICY,
             "security_boundary_policy": SECURITY_BOUNDARY_POLICY,
             "infrastructure_notice": INFRASTRUCTURE_NOTICE,
