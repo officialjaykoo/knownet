@@ -135,6 +135,19 @@ def test_iteration_helpers_respect_next_offset_and_max_items():
     assert [page.id for page in pages] == ["page_1", "page_2", "page_3"]
 
 
+def test_ai_state_helper_reads_structured_rows():
+    client = KnowNetClient(base_url="http://knownet", token="kn_agent_test")
+    payload = {
+        "ok": True,
+        "data": {"ai_state_pages": [{"page_id": "page_1", "state": {"summary": "ready"}}]},
+        "meta": {"next_offset": 1},
+    }
+    with patch("urllib.request.urlopen", return_value=FakeResponse(payload)) as mocked:
+        rows = client.list_ai_state(limit=1).ai_state_pages()
+    assert rows[0]["state"]["summary"] == "ready"
+    assert mocked.call_args.args[0].full_url.endswith("/api/agent/ai-state?limit=1")
+
+
 def test_workflow_helpers():
     client = KnowNetClient(base_url="http://knownet", token="kn_agent_test")
     with patch.object(client, "me", return_value=FakeResponse({"scopes": ["pages:read"]})):
@@ -169,6 +182,9 @@ def test_writes_do_not_retry():
 def test_sdk_end_to_end_against_knownet_api(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "data" / "state.sqlite"))
+    monkeypatch.setenv("PUBLIC_MODE", "false")
+    monkeypatch.setenv("ADMIN_TOKEN", "")
+    monkeypatch.setenv("CLOUDFLARE_ACCESS_REQUIRED", "false")
     sys.path.insert(0, "apps/api")
     import uvicorn
     from knownet_api.config import get_settings

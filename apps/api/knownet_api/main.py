@@ -26,6 +26,7 @@ from .routes.pages import router as pages_router
 from .services.draft_service import DraftService
 from .services.citation_verifier import CitationVerifier
 from .services.embedding_service import EmbeddingService
+from .services.ai_state import ensure_ai_state_schema
 from .services.job_processor import JobProcessor
 from .services.rust_core import RustCoreClient
 from .services.source_selector import SourceSelector
@@ -138,6 +139,7 @@ async def lifespan(app: FastAPI):
         await app.state.rust_core.request("ensure_phase4_schema", {"sqlite_path": str(settings.sqlite_path)})
         await app.state.rust_core.request("ensure_graph_schema", {"sqlite_path": str(settings.sqlite_path)})
         await ensure_phase6_schema(settings.sqlite_path)
+        await ensure_ai_state_schema(settings.sqlite_path)
         app.state.sqlite_status = "ok"
     app.state.graph_rebuilds = set()
     app.state.auth_failures = {}

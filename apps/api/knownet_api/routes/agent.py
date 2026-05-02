@@ -175,11 +175,47 @@ async def agent_context(request: Request, agent: AgentAuth = Depends(require_age
     return {"ok": True, "data": {"pages": pages}, "meta": _meta(agent, total=len(pages), returned=len(pages), truncated=False)}
 
 
+@router.get("/ai-state")
+async def agent_ai_state(request: Request, limit: int = 50, offset: int = 0, agent: AgentAuth = Depends(require_agent)):
+    _require_scope(agent, "pages:read")
+    limit = min(max(limit, 1), agent.max_pages_per_request)
+    offset = max(offset, 0)
+    total = await fetch_one(request.app.state.settings.sqlite_path, "SELECT COUNT(*) AS count FROM ai_state_pages WHERE vault_id = ?", (agent.vault_id,))
+    rows = await fetch_all(
+        request.app.state.settings.sqlite_path,
+        "SELECT page_id, slug, title, source_path, content_hash, state_json, updated_at "
+        "FROM ai_state_pages WHERE vault_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+        (agent.vault_id, limit, offset),
+    )
+    states = []
+    for row in rows:
+        try:
+            state = json.loads(row["state_json"] or "{}")
+        except json.JSONDecodeError:
+            state = {}
+        states.append(
+            {
+                "page_id": row["page_id"],
+                "slug": row["slug"],
+                "title": row["title"],
+                "source_path": row["source_path"],
+                "content_hash": row["content_hash"],
+                "state": state,
+                "updated_at": row["updated_at"],
+            }
+        )
+    count = total["count"] if total else 0
+    truncated = count > offset + len(rows)
+    await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.ai_state", status="ok", meta={"returned_count": len(rows), "truncated": truncated})
+    return {"ok": True, "data": {"ai_state_pages": states}, "meta": _meta(agent, total=count, returned=len(rows), truncated=truncated)}
+
+
 @router.get("/state-summary")
 async def agent_state_summary(request: Request, agent: AgentAuth = Depends(require_agent)):
     summary = {}
     for name, query in {
         "pages": "SELECT COUNT(*) AS count FROM pages WHERE vault_id = ? AND status = 'active'",
+        "ai_state_pages": "SELECT COUNT(*) AS count FROM ai_state_pages WHERE vault_id = ?",
         "reviews": "SELECT COUNT(*) AS count FROM collaboration_reviews WHERE vault_id = ?",
         "findings": "SELECT COUNT(*) AS count FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id WHERE r.vault_id = ?",
         "graph_nodes": "SELECT COUNT(*) AS count FROM graph_nodes WHERE vault_id = ?",

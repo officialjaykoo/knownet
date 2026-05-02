@@ -24,6 +24,8 @@ from knownet_agent import KnowNetClient
 
 with KnowNetClient.from_env() as client:
     client.require_scopes(["pages:read"])
+    for row in client.iter_ai_state(max_items=10):
+        print(row["slug"], row["state"]["summary"])
     for page in client.iter_pages(max_items=10):
         print(page.id, page.title)
 ```
@@ -48,9 +50,9 @@ review contains at least one finding.
 
 ## Pagination
 
-Use `iter_pages`, `iter_reviews`, `iter_findings`, and `iter_citations` with
-`max_items`. The SDK follows `meta.next_offset` and stops when there is no next
-page.
+Use `iter_ai_state`, `iter_pages`, `iter_reviews`, `iter_findings`, and
+`iter_citations` with `max_items`. The SDK follows `meta.next_offset` and stops
+when there is no next page.
 
 ## Error Handling
 

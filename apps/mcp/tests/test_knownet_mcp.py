@@ -198,6 +198,9 @@ def test_mcp_roundtrip_over_http():
 def test_mcp_end_to_end_against_knownet_api(tmp_path, monkeypatch):
     monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("SQLITE_PATH", str(tmp_path / "data" / "state.sqlite"))
+    monkeypatch.setenv("PUBLIC_MODE", "false")
+    monkeypatch.setenv("ADMIN_TOKEN", "")
+    monkeypatch.setenv("CLOUDFLARE_ACCESS_REQUIRED", "false")
     sys.path.insert(0, "apps/api")
     import uvicorn
     from knownet_api.config import get_settings

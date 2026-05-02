@@ -59,6 +59,13 @@ apps/api/.venv/Scripts/python.exe apps/mcp/knownet_mcp/server.py
 
 The process speaks JSON-RPC over stdin/stdout. Logs are written to stderr.
 
+## Preferred State Tool
+
+Use `knownet_ai_state` when an AI client needs compact structured project
+context. It returns JSON rows derived from active pages, including summaries,
+sections, links, source paths, and content hashes. Use `knownet_read_page` only
+when the agent needs the full narrative source text for a specific page.
+
 ## Troubleshooting
 
 `auth_failed`:

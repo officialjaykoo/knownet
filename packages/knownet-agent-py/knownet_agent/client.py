@@ -70,6 +70,9 @@ class KnowNetResponse:
     def citations(self) -> list[KnowNetCitation]:
         return [KnowNetCitation.from_dict(item) for item in self.data.get("citations", [])]
 
+    def ai_state_pages(self) -> list[dict[str, Any]]:
+        return list(self.data.get("ai_state_pages", []))
+
 
 class KnowNetClient:
     def __init__(self, *, base_url: str = "http://127.0.0.1:8000", token: str, timeout: float = 30.0):
@@ -112,6 +115,9 @@ class KnowNetClient:
     def state_summary(self) -> KnowNetResponse:
         return self._request("GET", "/api/agent/state-summary")
 
+    def list_ai_state(self, limit: int = 20, offset: int | None = None) -> KnowNetResponse:
+        return self._request("GET", "/api/agent/ai-state", query={"limit": limit, "offset": offset})
+
     def list_pages(self, limit: int = 20, offset: int | None = None) -> KnowNetResponse:
         return self._request("GET", "/api/agent/pages", query={"limit": limit, "offset": offset})
 
@@ -132,6 +138,9 @@ class KnowNetClient:
 
     def get_context(self) -> KnowNetResponse:
         return self._request("GET", "/api/agent/context")
+
+    def iter_ai_state(self, limit: int = 20, max_items: int | None = None) -> Iterator[dict[str, Any]]:
+        yield from self._iterate(lambda offset: self.list_ai_state(limit=limit, offset=offset), lambda response: response.ai_state_pages(), max_items=max_items)
 
     def iter_pages(self, limit: int = 20, max_items: int | None = None) -> Iterator[KnowNetPage]:
         yield from self._iterate(lambda offset: self.list_pages(limit=limit, offset=offset), lambda response: response.pages(), max_items=max_items)

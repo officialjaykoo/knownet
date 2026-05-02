@@ -386,6 +386,22 @@ CREATE INDEX IF NOT EXISTS idx_implementation_records_finding
 CREATE INDEX IF NOT EXISTS idx_context_bundle_manifests_vault
   ON context_bundle_manifests(vault_id, created_at);
 
+CREATE TABLE IF NOT EXISTS ai_state_pages (
+  id TEXT PRIMARY KEY,
+  vault_id TEXT NOT NULL DEFAULT 'local-default',
+  page_id TEXT NOT NULL,
+  slug TEXT NOT NULL,
+  title TEXT NOT NULL,
+  source_path TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  state_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(vault_id, page_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_ai_state_pages_vault_updated
+  ON ai_state_pages(vault_id, updated_at);
+
 CREATE TABLE IF NOT EXISTS agent_tokens (
   id TEXT PRIMARY KEY,
   token_hash TEXT NOT NULL UNIQUE,

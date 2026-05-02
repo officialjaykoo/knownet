@@ -1,4 +1,6 @@
 from fastapi.testclient import TestClient
+import json
+import sqlite3
 
 from knownet_api.config import get_settings
 from knownet_api.main import app
@@ -113,6 +115,38 @@ def test_agent_scoped_read_and_denied_write(tmp_path, monkeypatch):
 
         maintenance = client.get("/api/maintenance/snapshots", headers={"authorization": f"Bearer {raw_token}"})
         assert maintenance.status_code == 403
+    get_settings.cache_clear()
+
+
+def test_agent_ai_state_returns_structured_json_rows(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        created = client.post("/api/pages", json={"slug": "structured-state", "title": "Structured State"})
+        assert created.status_code == 200
+        settings = app.state.settings
+        with sqlite3.connect(settings.sqlite_path) as connection:
+            connection.execute(
+                "INSERT INTO ai_state_pages (id, vault_id, page_id, slug, title, source_path, content_hash, state_json, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "ai_state_structured_state",
+                    "local-default",
+                    "page_structured_state",
+                    "structured-state",
+                    "Structured State",
+                    "data/pages/structured-state.md",
+                    "hash",
+                    json.dumps({"schema_version": 1, "summary": "structured json"}),
+                    "2026-05-02T00:00:00Z",
+                ),
+            )
+        token = _create_token(client, ["pages:read"])
+        response = client.get("/api/agent/ai-state", headers={"authorization": f"Bearer {token['raw_token']}"})
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["data"]["ai_state_pages"][0]["slug"] == "structured-state"
+        assert payload["data"]["ai_state_pages"][0]["state"]["summary"] == "structured json"
+        assert payload["meta"]["total_count"] == 1
     get_settings.cache_clear()
 
 

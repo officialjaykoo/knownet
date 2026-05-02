@@ -20,6 +20,7 @@ ALLOWED_TOOLS = {
     "knownet_ping",
     "knownet_me",
     "knownet_state_summary",
+    "knownet_ai_state",
     "knownet_list_pages",
     "knownet_read_page",
     "knownet_list_reviews",
@@ -33,6 +34,7 @@ ALLOWED_TOOLS = {
 ALLOWED_RESOURCES = {
     "knownet://agent/me",
     "knownet://agent/state-summary",
+    "knownet://agent/ai-state",
     "knownet://agent/pages",
     "knownet://agent/reviews",
     "knownet://agent/findings",
@@ -67,6 +69,10 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
     "knownet_ping": object_schema({}),
     "knownet_me": object_schema({}),
     "knownet_state_summary": object_schema({}),
+    "knownet_ai_state": object_schema({
+        "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
+        "offset": {"type": "integer", "default": 0, "minimum": 0},
+    }),
     "knownet_list_pages": object_schema({
         "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
         "offset": {"type": "integer", "default": 0, "minimum": 0},
@@ -151,6 +157,7 @@ class KnowNetMcpServer:
             {"name": "knownet_ping", "description": "Check whether KnowNet agent API is reachable.", "inputSchema": TOOL_SCHEMAS["knownet_ping"]},
             {"name": "knownet_me", "description": "Inspect the current agent token capabilities.", "inputSchema": TOOL_SCHEMAS["knownet_me"]},
             {"name": "knownet_state_summary", "description": "Read scoped KnowNet state counts.", "inputSchema": TOOL_SCHEMAS["knownet_state_summary"]},
+            {"name": "knownet_ai_state", "description": "Read structured JSON state derived from KnowNet pages.", "inputSchema": TOOL_SCHEMAS["knownet_ai_state"]},
             {"name": "knownet_list_pages", "description": "List scoped pages.", "inputSchema": TOOL_SCHEMAS["knownet_list_pages"]},
             {"name": "knownet_read_page", "description": "Read one scoped page.", "inputSchema": TOOL_SCHEMAS["knownet_read_page"]},
             {"name": "knownet_list_reviews", "description": "List scoped collaboration reviews.", "inputSchema": TOOL_SCHEMAS["knownet_list_reviews"]},
@@ -165,6 +172,7 @@ class KnowNetMcpServer:
         return [
             {"uri": "knownet://agent/me", "name": "Current agent", "mimeType": "application/json"},
             {"uri": "knownet://agent/state-summary", "name": "KnowNet state summary", "mimeType": "application/json"},
+            {"uri": "knownet://agent/ai-state", "name": "Structured AI state", "mimeType": "application/json"},
             {"uri": "knownet://agent/pages", "name": "Scoped pages", "mimeType": "application/json"},
             {"uri": "knownet://agent/pages/{page_id}", "name": "One scoped page", "mimeType": "application/json"},
             {"uri": "knownet://agent/reviews", "name": "Collaboration reviews", "mimeType": "application/json"},
@@ -291,6 +299,7 @@ class KnowNetMcpServer:
             "knownet_ping": lambda _: self._request("GET", "/api/agent/ping", auth=False),
             "knownet_me": lambda _: self._request("GET", "/api/agent/me"),
             "knownet_state_summary": lambda _: self._request("GET", "/api/agent/state-summary"),
+            "knownet_ai_state": lambda a: self._request("GET", "/api/agent/ai-state", query={"limit": a["limit"], "offset": a["offset"]}),
             "knownet_list_pages": lambda a: self._request("GET", "/api/agent/pages", query={"limit": a["limit"], "offset": a["offset"]}),
             "knownet_read_page": lambda a: self._request("GET", f"/api/agent/pages/{urllib.parse.quote(a['page_id'])}"),
             "knownet_list_reviews": lambda a: self._request("GET", "/api/agent/reviews", query={"limit": a["limit"], "offset": a["offset"]}),
@@ -307,6 +316,8 @@ class KnowNetMcpServer:
             return self._request("GET", "/api/agent/me")
         if uri == "knownet://agent/state-summary":
             return self._request("GET", "/api/agent/state-summary")
+        if uri == "knownet://agent/ai-state":
+            return self._with_next_offset(self._request("GET", "/api/agent/ai-state", query={"limit": 20, "offset": 0}), {"offset": 0})
         if uri == "knownet://agent/pages":
             return self._with_next_offset(self._request("GET", "/api/agent/pages", query={"limit": 20, "offset": 0}), {"offset": 0})
         if uri.startswith("knownet://agent/pages/"):

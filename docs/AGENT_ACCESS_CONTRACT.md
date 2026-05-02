@@ -51,6 +51,7 @@ safe token ids as `Token ID` and labels one-time secrets as
 GET /api/agent/ping
 GET /api/agent/me
 GET /api/agent/context
+GET /api/agent/ai-state
 GET /api/agent/pages
 GET /api/agent/pages/{page_id}
 GET /api/agent/reviews
@@ -178,6 +179,37 @@ Agents receive scoped, bounded context. Large reads may return:
 
 Large writes may return HTTP `413`.
 
+## Structured AI State
+
+`GET /api/agent/ai-state` returns the structured JSON form of active project
+pages. This is the preferred machine-readable state when an AI agent needs a
+compact understanding of current KnowNet structure.
+
+Each row includes:
+
+```json
+{
+  "page_id": "page_knownet_overview",
+  "slug": "knownet-overview",
+  "title": "KnowNet Overview",
+  "content_hash": "...",
+  "state": {
+    "schema_version": 1,
+    "kind": "page_state",
+    "summary": "string",
+    "sections": [],
+    "links": [],
+    "source": {
+      "format": "markdown",
+      "path": "data/pages/knownet-overview.md"
+    }
+  }
+}
+```
+
+Markdown remains the narrative source attachment. `ai_state_pages.state_json` is
+the indexed JSON row that agents should prefer for quick state reads.
+
 ## Forbidden Data
 
 Agent APIs must not return:
@@ -199,8 +231,9 @@ maintenance state that grants control
 1. GET /api/agent/ping
 2. GET /api/agent/me
 3. GET /api/agent/state-summary
-4. GET /api/agent/pages
-5. GET /api/agent/findings
+4. GET /api/agent/ai-state
+5. GET /api/agent/pages only when full page text is needed
+6. GET /api/agent/findings
 ```
 
 ## Example Review Flow
@@ -235,6 +268,7 @@ The MCP server exposes only these tools:
 knownet_ping
 knownet_me
 knownet_state_summary
+knownet_ai_state
 knownet_list_pages
 knownet_read_page
 knownet_list_reviews
@@ -256,6 +290,7 @@ Phase 11 also exposes safe read-only resources:
 ```txt
 knownet://agent/me
 knownet://agent/state-summary
+knownet://agent/ai-state
 knownet://agent/pages
 knownet://agent/pages/{page_id}
 knownet://agent/reviews
