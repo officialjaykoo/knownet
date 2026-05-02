@@ -984,6 +984,8 @@ DeepSeek:
 Qwen:
   Best paid/API/agent path:
     Qwen API function calling, Qwen-Agent, Qwen-Agent MCP, Qwen Code MCP.
+    Qwen API requires Alibaba Cloud DashScope / Model Studio signup; free usage
+    may be available after signup.
   Realistic free/web path:
     Qwen web chat with GET preview, upload/paste, GitHub preview.
   Locally testable by KnowNet:
@@ -1662,6 +1664,8 @@ Implemented:
 The current implemented Qwen surface follows the open-source Qwen-Agent MCP
 pattern. A Qwen API provider runner remains intentionally unimplemented until
 the operator chooses to test DashScope/Qwen API credentials.
+Reserved environment names are documented in .env.example for future runner
+work: QWEN_API_KEY, QWEN_RUNNER_ENABLED, QWEN_BASE_URL, QWEN_MODEL.
 ```
 
 ## P16-014 Kimi API And Kimi Code MCP Profiles

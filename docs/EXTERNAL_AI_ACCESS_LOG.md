@@ -255,6 +255,8 @@ Qwen paid/API/Qwen-Agent/Qwen Code:
   Implemented config/profile path:
   apps/mcp/configs/qwen_agent_mcp.example.json
   Use Qwen-Agent MCP as the preferred higher-capability route.
+  Qwen API requires Alibaba Cloud DashScope / Model Studio signup.
+  Free usage may be available after signup, but it is still an API-key path.
 
 Kimi free web:
   `scripts\kimi_review_pack.py --copy` only. Do not ask it to decide MCP setup.

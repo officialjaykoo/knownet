@@ -2,6 +2,10 @@
 
 KnowNet supports Qwen through Qwen-Agent/MCP configuration first.
 
+Qwen API access requires Alibaba Cloud DashScope / Model Studio signup. The
+operator noted that free usage may be available after signup, but it is still an
+account/API-key based path rather than anonymous web access.
+
 ## Best Path
 
 ```txt
@@ -32,6 +36,20 @@ KNOWNET_AGENT_TOKEN
 
 Do not place `ADMIN_TOKEN`, database paths, backup paths, or raw secrets in the
 Qwen config.
+
+## Future API Runner Slot
+
+KnowNet reserves these environment names for a later Qwen API runner:
+
+```txt
+QWEN_API_KEY
+QWEN_RUNNER_ENABLED=false
+QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_MODEL=qwen-plus
+```
+
+The API runner is not implemented yet. Current support is Qwen-Agent/MCP config
+plus web fallback.
 
 ## Free Web Fallback
 
