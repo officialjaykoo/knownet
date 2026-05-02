@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS citations (
   page_id TEXT NOT NULL,
   revision_id TEXT,
   citation_key TEXT NOT NULL,
+  display_title TEXT,
   source_type TEXT,
   source_id TEXT,
   validation_status TEXT NOT NULL DEFAULT 'unchecked',
@@ -401,6 +402,21 @@ CREATE TABLE IF NOT EXISTS ai_state_pages (
 
 CREATE INDEX IF NOT EXISTS idx_ai_state_pages_vault_updated
   ON ai_state_pages(vault_id, updated_at);
+
+CREATE TABLE IF NOT EXISTS system_pages (
+  page_id TEXT PRIMARY KEY,
+  kind TEXT NOT NULL,
+  tier INTEGER NOT NULL DEFAULT 1,
+  locked INTEGER NOT NULL DEFAULT 1,
+  owner TEXT NOT NULL DEFAULT 'system',
+  description TEXT,
+  registered_at_phase TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_system_pages_kind
+  ON system_pages(kind, tier, locked);
 
 CREATE TABLE IF NOT EXISTS agent_tokens (
   id TEXT PRIMARY KEY,

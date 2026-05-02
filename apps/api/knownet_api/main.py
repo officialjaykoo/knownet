@@ -27,9 +27,11 @@ from .services.draft_service import DraftService
 from .services.citation_verifier import CitationVerifier
 from .services.embedding_service import EmbeddingService
 from .services.ai_state import ensure_ai_state_schema
+from .services.citation_titles import backfill_citation_display_titles
 from .services.job_processor import JobProcessor
 from .services.rust_core import RustCoreClient
 from .services.source_selector import SourceSelector
+from .services.system_pages import ensure_system_pages_schema, register_managed_seed_pages, register_onboarding_pages
 
 
 HEALTH_ISSUE_DEFINITIONS = {
@@ -139,7 +141,11 @@ async def lifespan(app: FastAPI):
         await app.state.rust_core.request("ensure_phase4_schema", {"sqlite_path": str(settings.sqlite_path)})
         await app.state.rust_core.request("ensure_graph_schema", {"sqlite_path": str(settings.sqlite_path)})
         await ensure_phase6_schema(settings.sqlite_path)
+        await backfill_citation_display_titles(settings.sqlite_path)
         await ensure_ai_state_schema(settings.sqlite_path)
+        await ensure_system_pages_schema(settings.sqlite_path)
+        await register_onboarding_pages(settings.sqlite_path)
+        await register_managed_seed_pages(settings.sqlite_path)
         app.state.sqlite_status = "ok"
     app.state.graph_rebuilds = set()
     app.state.auth_failures = {}
@@ -223,6 +229,9 @@ async def add_security_headers(request, call_next):
     expires_in = getattr(request.state, "agent_expires_in_seconds", None)
     if expires_in is not None:
         response.headers["X-Token-Expires-In"] = str(expires_in)
+    token_warning = getattr(request.state, "agent_token_warning", None)
+    if token_warning:
+        response.headers["X-Token-Warning"] = str(token_warning)
     return response
 app.include_router(messages_router)
 app.include_router(agent_router)

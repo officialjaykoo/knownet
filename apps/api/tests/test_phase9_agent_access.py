@@ -54,6 +54,10 @@ def test_agent_token_lifecycle_and_self_read(tmp_path, monkeypatch):
         assert me.headers["X-Token-Expires-In"].isdigit()
         data = me.json()["data"]
         assert data["token_id"] == token["id"]
+        assert data["start_here_hint"] == "recommended"
+        assert data["start_here_status"]["hint_reason"] == "no_recent_start_seen"
+        assert data["onboarding_endpoint"] == "/api/agent/onboarding"
+        assert data["recommended_start_pages"][0]["slug"] == "start-here-for-external-ai-agents"
         assert "raw_token" not in str(data)
         assert "token_hash" not in str(data)
 
@@ -86,6 +90,120 @@ def test_agent_token_expiry_validation_and_missing_revoke(tmp_path, monkeypatch)
 
         missing = client.post("/api/agents/tokens/agent_missing/revoke")
         assert missing.status_code == 404
+    get_settings.cache_clear()
+
+
+def test_agent_onboarding_available_without_read_scopes(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        token = _create_token(client, [])
+        response = client.get("/api/agent/onboarding", headers={"authorization": f"Bearer {token['raw_token']}"})
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        data = payload["data"]
+        assert data["start_here_hint"] == "recommended"
+        assert data["start_here_status"]["hint_reason"] == "no_recent_start_seen"
+        assert data["recommended_start_pages"][0]["slug"] == "start-here-for-external-ai-agents"
+        assert data["allowed_actions"] == []
+        assert any(item["required_scope"] == "pages:read" for item in data["unavailable_actions"])
+        assert "dry-run" in " ".join(item["purpose"] for item in data["review_workflow"]).lower()
+        assert data["start_here_hint_legend"]["recommended"]
+        assert data["start_here_status"]["scope"] == "token_local"
+        assert any(item["action"] == "request_database_file" for item in data["forbidden_actions"])
+        assert data["handoff_format"]["required_fields"][0] == "Title"
+        assert "example_valid_finding" in data["handoff_format"]
+        assert data["conflict_resolution_policy"]["on_conflict"]
+        assert "raw_tokens" in data["security_boundary_policy"]
+        assert data["infrastructure_notice"]["production_ready"] is False
+        assert payload["meta"]["schema_version"] == 1
+
+        events = client.get(f"/api/agents/tokens/{token['id']}/events")
+        assert events.status_code == 200
+        assert events.json()["data"]["events"][0]["action"] == "agent.onboarding"
+
+        second = client.get("/api/agent/onboarding", headers={"authorization": f"Bearer {token['raw_token']}"})
+        assert second.status_code == 200
+        assert second.json()["data"]["start_here_hint"] == "available"
+        assert second.json()["data"]["start_here_status"]["seen_count"] == 1
+    get_settings.cache_clear()
+
+
+def test_agent_me_warns_when_token_has_no_expiry(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        token = _create_token(client, ["pages:read"], expires_at=None)
+        response = client.get("/api/agent/me", headers={"authorization": f"Bearer {token['raw_token']}"})
+        assert response.status_code == 200, response.text
+        assert response.headers["X-Token-Warning"] == "no_expiry"
+        data = response.json()["data"]
+        assert data["expires_at"] is None
+        assert data["token_warning"] == "no_expiry"
+    get_settings.cache_clear()
+
+
+def test_onboarding_pages_are_locked_and_marked_on_read_surfaces(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        protected_slug = "protected-system-page"
+        protected_page_id = "page_protected_system_page"
+        created = client.post("/api/pages", json={"slug": protected_slug, "title": "Protected System Page"})
+        assert created.status_code == 200
+        settings = app.state.settings
+        with sqlite3.connect(settings.sqlite_path) as connection:
+            connection.execute(
+                "INSERT INTO system_pages (page_id, kind, tier, locked, owner, description, registered_at_phase, created_at, updated_at) "
+                "VALUES (?, 'onboarding', 1, 1, 'system', 'test', 'phase_14', '2026-05-02T00:00:00Z', '2026-05-02T00:00:00Z')",
+                (protected_page_id,),
+            )
+            connection.execute(
+                "INSERT INTO suggestions (id, job_id, message_id, path, title, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, 'pending', '2026-05-02T00:00:00Z', '2026-05-02T00:00:00Z')",
+                ("sug_locked", "job_locked", "msg_locked", str(settings.data_dir / "suggestions" / "locked.md"), "Start Here"),
+            )
+            connection.commit()
+
+        listed = client.get("/api/pages")
+        assert listed.status_code == 200
+        page_row = next(row for row in listed.json()["data"]["pages"] if row["slug"] == protected_slug)
+        assert page_row["system_kind"] == "onboarding"
+        assert page_row["system_tier"] == 1
+        assert page_row["system_locked"] is True
+
+        detail = client.get(f"/api/pages/{protected_slug}")
+        assert detail.status_code == 200
+        assert detail.json()["data"]["system_locked"] is True
+
+        token = _create_token(client, ["pages:read"])
+        agent_pages = client.get("/api/agent/pages", headers={"authorization": f"Bearer {token['raw_token']}"})
+        assert agent_pages.status_code == 200
+        agent_page = next(row for row in agent_pages.json()["data"]["pages"] if row["slug"] == protected_slug)
+        assert agent_page["system_kind"] == "onboarding"
+
+        agent_page_detail = client.get(f"/api/agent/pages/{protected_page_id}", headers={"authorization": f"Bearer {token['raw_token']}"})
+        assert agent_page_detail.status_code == 200
+        assert agent_page_detail.json()["data"]["page"]["system_locked"] is True
+
+        graph_rebuild = client.post("/api/graph/rebuild", json={"scope": "vault"})
+        assert graph_rebuild.status_code == 200
+        graph = client.get("/api/graph", params={"node_type": "page"})
+        assert graph.status_code == 200
+        graph_node = next(row for row in graph.json()["data"]["nodes"] if row["target_id"] == protected_page_id)
+        assert graph_node["system_kind"] == "onboarding"
+        assert graph_node["meta"]["system_tier"] == 1
+
+        create_again = client.post("/api/pages", json={"slug": protected_slug, "title": "Overwrite"})
+        assert create_again.status_code == 423
+        assert create_again.json()["detail"]["code"] == "system_page_locked"
+
+        applied = client.post("/api/suggestions/sug_locked/apply", json={"slug": protected_slug})
+        assert applied.status_code == 423
+        assert applied.json()["detail"]["code"] == "system_page_locked"
+
+        restored = client.post(f"/api/pages/{protected_slug}/revisions/rev_missing/restore")
+        assert restored.status_code == 423
+
+        deleted = client.delete(f"/api/pages/{protected_slug}")
+        assert deleted.status_code == 423
     get_settings.cache_clear()
 
 
@@ -145,8 +263,32 @@ def test_agent_ai_state_returns_structured_json_rows(tmp_path, monkeypatch):
         assert response.status_code == 200, response.text
         payload = response.json()
         assert payload["data"]["ai_state_pages"][0]["slug"] == "structured-state"
+        assert "source_path" not in payload["data"]["ai_state_pages"][0]
+        assert payload["data"]["ai_state_pages"][0]["source_ref"] == "pages/structured-state.md"
         assert payload["data"]["ai_state_pages"][0]["state"]["summary"] == "structured json"
+        assert "path" not in payload["data"]["ai_state_pages"][0]["state"].get("source", {})
         assert payload["meta"]["total_count"] == 1
+    get_settings.cache_clear()
+
+
+def test_agent_state_summary_explains_counts(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        token = _create_token(client, ["pages:read"])
+        response = client.get("/api/agent/state-summary", headers={"authorization": f"Bearer {token['raw_token']}"})
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert "ai_state_coverage_note" in data
+        assert "graph_node_breakdown" in data
+        assert data["collaboration_status"]["ready_for_review"] is True
+        assert data["first_agent_brief"]["current_phase"] >= 14
+        assert data["first_agent_brief"]["current_priorities"]
+        assert data["phase_status"]["implemented"] is True
+        assert data["phase_status"]["release_ready_blockers"]
+        assert data["conflict_resolution_policy"]["canonical_state"]
+        assert data["security_boundary_policy"]["write_boundary"]
+        assert data["infrastructure_notice"]["recommended_use"] == "testing_only"
+        assert data["first_agent_brief"]["risk_mitigation_status"]
     get_settings.cache_clear()
 
 
@@ -165,6 +307,7 @@ def test_agent_review_dry_run_and_access_events(tmp_path, monkeypatch):
         assert dry_run.status_code == 200, dry_run.text
         assert dry_run.json()["data"]["dry_run"] is True
         assert dry_run.json()["data"]["finding_count"] == 1
+        assert dry_run.json()["data"]["metadata"]["source_agent"] == "claude"
 
         reviews = client.get("/api/collaboration/reviews")
         assert reviews.status_code == 200

@@ -16,6 +16,7 @@ def test_tool_registry_is_fixed_and_excludes_maintenance():
     server = KnowNetMcpServer(token="kn_agent_test")
     names = {tool["name"] for tool in server.tool_specs()}
     assert names == ALLOWED_TOOLS
+    assert {"search", "fetch"}.issubset(names)
     assert all("maintenance" not in name for name in names)
 
 
@@ -24,6 +25,46 @@ def test_read_page_calls_agent_endpoint():
     with patch.object(server, "_request", return_value={"ok": True}) as mocked:
         assert server.call_tool("knownet_read_page", {"page_id": "page_1"})["ok"] is True
     mocked.assert_called_once_with("GET", "/api/agent/pages/page_1")
+
+
+def test_start_here_calls_onboarding_endpoint():
+    server = KnowNetMcpServer(base_url="http://knownet", token="kn_agent_test")
+    with patch.object(server, "_request", return_value={"ok": True}) as mocked:
+        assert server.call_tool("knownet_start_here")["ok"] is True
+    mocked.assert_called_once_with("GET", "/api/agent/onboarding")
+
+
+def test_connector_search_and_fetch_aliases():
+    server = KnowNetMcpServer(base_url="http://knownet", token="kn_agent_test")
+
+    def fake_request(method, path, **kwargs):
+        if path == "/api/agent/onboarding":
+            return {"ok": True, "data": {"recommended_start_pages": [{"page_id": "page_start", "title": "Start", "slug": "start", "reason": "Begin here."}]}}
+        if path == "/api/agent/state-summary":
+            return {"ok": True, "data": {"first_agent_brief": {"current_phase": 14}}}
+        if path == "/api/agent/pages":
+            return {"ok": True, "data": {"pages": [{"id": "page_start", "title": "Start", "slug": "start", "updated_at": "now"}]}, "meta": {}}
+        if path == "/api/agent/pages/page_start":
+            return {"ok": True, "data": {"page": {"title": "Start", "content": "Page content"}}}
+        raise AssertionError((method, path, kwargs))
+
+    with patch.object(server, "_request", side_effect=fake_request):
+        search = server.call_tool("search", {"query": "start"})
+        fetch = server.call_tool("fetch", {"id": "page:page_start"})
+    assert search["ok"] is True
+    assert search["data"]["results"][0]["id"] == "agent:onboarding"
+    assert fetch["ok"] is True
+    assert fetch["data"]["text"] == "Page content"
+
+
+def test_connector_fetch_resource_includes_payload_and_text():
+    server = KnowNetMcpServer(base_url="http://knownet", token="kn_agent_test")
+    with patch.object(server, "_request", return_value={"ok": True, "data": {"summary": {"pages": 1}}}):
+        fetch = server.call_tool("fetch", {"id": "agent:state-summary"})
+    assert fetch["ok"] is True
+    assert fetch["data"]["payload"]["summary"]["pages"] == 1
+    assert '"pages": 1' in fetch["data"]["text"]
+    assert fetch["meta"]["truncated"] is False
 
 
 def test_review_dry_run_uses_existing_write_gateway():
@@ -99,6 +140,7 @@ def test_jsonrpc_invalid_tool_input_returns_tool_error():
 def test_resources_and_prompts_jsonrpc():
     server = KnowNetMcpServer(token="kn_agent_test")
     resources = server.handle_jsonrpc({"jsonrpc": "2.0", "id": 1, "method": "resources/list"})
+    assert "knownet://agent/onboarding" in {item["uri"] for item in resources["result"]["resources"]}
     assert "knownet://agent/me" in {item["uri"] for item in resources["result"]["resources"]}
 
     with patch.object(server, "_request", return_value={"ok": True, "data": {"token_id": "agent_test"}, "meta": {}}):
@@ -111,6 +153,7 @@ def test_resources_and_prompts_jsonrpc():
     prompt = server.handle_jsonrpc({"jsonrpc": "2.0", "id": 4, "method": "prompts/get", "params": {"name": "knownet_review_page", "arguments": {"page_id": "page_1"}}})
     text = prompt["result"]["messages"][0]["content"]["text"]
     assert "### Finding" in text
+    assert "knownet_start_here" in text
     assert "knownet_review_dry_run" in text
     assert "/api/" + "maintenance" not in text
     assert "kn_agent_" not in text
@@ -133,12 +176,19 @@ def test_structured_logs_go_to_stderr_stream_and_redact_tokens():
 
 def test_mcp_metadata_request_id_token_warning_and_size_warning():
     server = KnowNetMcpServer(token="kn_agent_test")
-    response = {"ok": True, "data": {"page": {"content": "x" * 10}}, "meta": {"truncated": True}}
+    response = {"ok": True, "data": {"page": {"content": "x" * 10}}, "meta": {"content_truncated": True}}
     server._apply_response_headers(response, {"X-Token-Expires-In": str(60 * 60)})
     server._annotate_result(response, request_id="req_test")
     assert response["meta"]["request_id"] == "req_test"
     assert response["meta"]["token_warning"] == "expires_soon"
     assert response["meta"]["warning"] == "page_truncated_use_narrower_reads"
+
+
+def test_mcp_pagination_warning_is_not_page_truncation():
+    server = KnowNetMcpServer(token="kn_agent_test")
+    response = {"ok": True, "data": {"items": [1]}, "meta": {"truncated": True}}
+    server._annotate_result(response, request_id="req_page")
+    assert response["meta"]["warning"] == "result_paginated_use_next_offset"
 
 
 def test_scope_denied_includes_current_scope_hint():

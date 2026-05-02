@@ -14,10 +14,13 @@ from uuid import uuid4
 
 
 PROTOCOL_VERSION = "2024-11-05"
-SERVER_VERSION = "11.0"
+SERVER_VERSION = "14.0"
 
 ALLOWED_TOOLS = {
+    "search",
+    "fetch",
     "knownet_ping",
+    "knownet_start_here",
     "knownet_me",
     "knownet_state_summary",
     "knownet_ai_state",
@@ -32,6 +35,7 @@ ALLOWED_TOOLS = {
 }
 
 ALLOWED_RESOURCES = {
+    "knownet://agent/onboarding",
     "knownet://agent/me",
     "knownet://agent/state-summary",
     "knownet://agent/ai-state",
@@ -66,7 +70,10 @@ def object_schema(properties: dict[str, Any], required: list[str] | None = None)
 
 
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
+    "search": object_schema({"query": {"type": "string", "minLength": 1, "maxLength": 240}}, ["query"]),
+    "fetch": object_schema({"id": {"type": "string", "minLength": 1, "maxLength": 220}}, ["id"]),
     "knownet_ping": object_schema({}),
+    "knownet_start_here": object_schema({}),
     "knownet_me": object_schema({}),
     "knownet_state_summary": object_schema({}),
     "knownet_ai_state": object_schema({
@@ -154,8 +161,11 @@ class KnowNetMcpServer:
 
     def tool_specs(self) -> list[dict[str, Any]]:
         return [
+            {"name": "search", "description": "Search KnowNet state for ChatGPT connector compatibility.", "inputSchema": TOOL_SCHEMAS["search"]},
+            {"name": "fetch", "description": "Fetch one KnowNet search result or state resource by id.", "inputSchema": TOOL_SCHEMAS["fetch"]},
             {"name": "knownet_ping", "description": "Check whether KnowNet agent API is reachable.", "inputSchema": TOOL_SCHEMAS["knownet_ping"]},
-            {"name": "knownet_me", "description": "Inspect the current agent token capabilities.", "inputSchema": TOOL_SCHEMAS["knownet_me"]},
+            {"name": "knownet_start_here", "description": "Read first-contact onboarding guidance for external AI agents.", "inputSchema": TOOL_SCHEMAS["knownet_start_here"]},
+            {"name": "knownet_me", "description": "Inspect the current agent's scoped permissions and role. Raw token values are never returned.", "inputSchema": TOOL_SCHEMAS["knownet_me"]},
             {"name": "knownet_state_summary", "description": "Read scoped KnowNet state counts.", "inputSchema": TOOL_SCHEMAS["knownet_state_summary"]},
             {"name": "knownet_ai_state", "description": "Read structured JSON state derived from KnowNet pages.", "inputSchema": TOOL_SCHEMAS["knownet_ai_state"]},
             {"name": "knownet_list_pages", "description": "List scoped pages.", "inputSchema": TOOL_SCHEMAS["knownet_list_pages"]},
@@ -170,6 +180,7 @@ class KnowNetMcpServer:
 
     def resource_specs(self) -> list[dict[str, Any]]:
         return [
+            {"uri": "knownet://agent/onboarding", "name": "Agent onboarding", "mimeType": "application/json"},
             {"uri": "knownet://agent/me", "name": "Current agent", "mimeType": "application/json"},
             {"uri": "knownet://agent/state-summary", "name": "KnowNet state summary", "mimeType": "application/json"},
             {"uri": "knownet://agent/ai-state", "name": "Structured AI state", "mimeType": "application/json"},
@@ -296,7 +307,10 @@ class KnowNetMcpServer:
 
     def _call_validated_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         table: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+            "search": self._connector_search,
+            "fetch": self._connector_fetch,
             "knownet_ping": lambda _: self._request("GET", "/api/agent/ping", auth=False),
+            "knownet_start_here": lambda _: self._request("GET", "/api/agent/onboarding"),
             "knownet_me": lambda _: self._request("GET", "/api/agent/me"),
             "knownet_state_summary": lambda _: self._request("GET", "/api/agent/state-summary"),
             "knownet_ai_state": lambda a: self._request("GET", "/api/agent/ai-state", query={"limit": a["limit"], "offset": a["offset"]}),
@@ -311,7 +325,73 @@ class KnowNetMcpServer:
         }
         return table[name](args)
 
+    def _connector_search(self, args: dict[str, Any]) -> dict[str, Any]:
+        query = str(args["query"]).strip().lower()
+        onboarding = self._request("GET", "/api/agent/onboarding")
+        summary = self._request("GET", "/api/agent/state-summary")
+        pages = self._request("GET", "/api/agent/pages", query={"limit": 30, "offset": 0})
+        results: list[dict[str, Any]] = [
+            {
+                "id": "agent:onboarding",
+                "title": "KnowNet Agent Onboarding",
+                "url": "knownet://agent/onboarding",
+                "text": "Start here for external AI agents: workflow contract, allowed actions, forbidden actions, and review format.",
+            },
+            {
+                "id": "agent:state-summary",
+                "title": "KnowNet State Summary",
+                "url": "knownet://agent/state-summary",
+                "text": json.dumps(summary.get("data", {}), ensure_ascii=False)[:900],
+            },
+        ]
+        for page in pages.get("data", {}).get("pages", []):
+            haystack = f"{page.get('title', '')} {page.get('slug', '')}".lower()
+            if query in haystack or any(part and part in haystack for part in query.split()):
+                results.append(
+                    {
+                        "id": f"page:{page['id']}",
+                        "title": page.get("title") or page.get("slug") or page["id"],
+                        "url": f"knownet://agent/pages/{page['id']}",
+                        "text": f"Page slug={page.get('slug')} updated_at={page.get('updated_at')}",
+                    }
+                )
+        if not results[2:]:
+            for item in onboarding.get("data", {}).get("recommended_start_pages", [])[:5]:
+                if item.get("page_id"):
+                    results.append(
+                        {
+                            "id": f"page:{item['page_id']}",
+                            "title": item.get("title") or item["slug"],
+                            "url": f"knownet://agent/pages/{item['page_id']}",
+                            "text": item.get("reason") or "Recommended start page for external AI agents.",
+                        }
+                    )
+        return {"ok": True, "data": {"results": results[:10]}}
+
+    def _connector_fetch(self, args: dict[str, Any]) -> dict[str, Any]:
+        item_id = str(args["id"]).strip()
+        if item_id == "agent:onboarding":
+            payload = self._request("GET", "/api/agent/onboarding")
+            data = payload.get("data", {})
+            return {"ok": True, "data": {"id": item_id, "title": "KnowNet Agent Onboarding", "payload": data, "text": json.dumps(data, ensure_ascii=False)}}
+        if item_id == "agent:state-summary":
+            payload = self._request("GET", "/api/agent/state-summary")
+            data = payload.get("data", {})
+            return {"ok": True, "data": {"id": item_id, "title": "KnowNet State Summary", "payload": data, "text": json.dumps(data, ensure_ascii=False)}}
+        if item_id == "agent:ai-state":
+            payload = self._request("GET", "/api/agent/ai-state", query={"limit": 20, "offset": 0})
+            data = payload.get("data", {})
+            return {"ok": True, "data": {"id": item_id, "title": "KnowNet Structured AI State", "payload": data, "text": json.dumps(data, ensure_ascii=False)}}
+        if item_id.startswith("page:"):
+            page_id = item_id.removeprefix("page:")
+            payload = self._request("GET", f"/api/agent/pages/{urllib.parse.quote(page_id)}")
+            page = payload.get("data", {}).get("page", {})
+            return {"ok": True, "data": {"id": item_id, "title": page.get("title") or page_id, "text": page.get("content", ""), "url": f"knownet://agent/pages/{page_id}"}}
+        raise McpInputError(f"Unknown fetch id: {item_id}")
+
     def _read_resource(self, uri: str) -> dict[str, Any]:
+        if uri == "knownet://agent/onboarding":
+            return self._request("GET", "/api/agent/onboarding")
         if uri == "knownet://agent/me":
             return self._request("GET", "/api/agent/me")
         if uri == "knownet://agent/state-summary":
@@ -445,7 +525,7 @@ class KnowNetMcpServer:
         safety = (
             "Use only scoped KnowNet MCP tools and resources. Do not request database files, local paths, "
             "operator-only controls, raw tokens, sessions, users, backup archives, or secret-bearing data. Use bounded "
-            "list/read calls. Run knownet_review_dry_run before knownet_submit_review."
+            "list/read calls. Start with knownet_start_here. Run knownet_review_dry_run before knownet_submit_review."
         )
         if name == "knownet_review_page":
             return (
@@ -461,7 +541,7 @@ class KnowNetMcpServer:
         max_pages = args.get("max_pages", 5)
         focus = args.get("focus") or "overall implementation quality"
         return (
-            f"{safety}\n\nPrepare an external review focused on {focus}. Start with knownet_me and knownet_state_summary, "
+            f"{safety}\n\nPrepare an external review focused on {focus}. Start with knownet_start_here, knownet_me, and knownet_state_summary, "
             f"then inspect at most {max_pages} pages via bounded list/read calls. Draft findings in this format and dry-run them before final submission:\n\n"
             + FINDING_FORMAT
         )
@@ -564,8 +644,11 @@ class KnowNetMcpServer:
             meta["request_id"] = request_id
         text = json.dumps(result.get("data", {}), ensure_ascii=False)
         meta["chars_returned"] = len(text)
-        if meta.get("truncated"):
+        meta.setdefault("truncated", False)
+        if meta.get("content_truncated"):
             meta["warning"] = "page_truncated_use_narrower_reads"
+        elif meta.get("truncated"):
+            meta["warning"] = "result_paginated_use_next_offset"
         elif len(text) > 50000:
             meta["warning"] = "large_result_use_pagination"
 

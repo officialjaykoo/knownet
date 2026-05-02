@@ -261,6 +261,7 @@ async def authenticate_agent_token(request: Request, settings: Settings | None =
         )
     if agent.expires_in_seconds is not None:
         request.state.agent_expires_in_seconds = agent.expires_in_seconds
+    request.state.agent_token_warning = "no_expiry" if agent.expires_at is None else None
     return agent
 
 

@@ -50,6 +50,7 @@ safe token ids as `Token ID` and labels one-time secrets as
 ```txt
 GET /api/agent/ping
 GET /api/agent/me
+GET /api/agent/onboarding
 GET /api/agent/context
 GET /api/agent/ai-state
 GET /api/agent/pages
@@ -66,6 +67,31 @@ GET /api/agent/state-summary
 ```json
 { "ok": true, "version": "9.0" }
 ```
+
+`/api/agent/onboarding` requires a valid agent token but does not require a
+specific read scope. It tells first-contact agents what to read first, what is
+allowed, what is forbidden, and how to submit review findings safely. It is a
+recommendation, not a blocking gate: KnowNet uses prior `agent.onboarding`
+access events to return `start_here_hint: "recommended"` when no recent start
+has been seen and `"available"` after the token has already called the
+onboarding endpoint.
+
+Onboarding rows are protected system pages. Read APIs expose `system_kind`,
+`system_tier`, and `system_locked`. Agents must treat `system_locked: true` as
+read-only; locked system pages cannot be overwritten through suggestion apply,
+page restore, or page deletion.
+
+## Filesystem Boundary
+
+External agents do not receive raw filesystem write tools. Page access uses
+page ids or slugs through scoped APIs. Page writes in the local application use
+slug validation and resolved paths under the configured page storage directory;
+raw path parameters, parent-directory traversal, database files, backup files,
+and direct filesystem access are outside the agent contract.
+
+If an external review was produced from old static documents and reports raw
+path-write risk, triage it against the current scoped API surface before
+treating it as an active vulnerability.
 
 ## Response Shape
 
@@ -84,6 +110,16 @@ Agent read responses use:
     "returned_count": 0,
     "generated_at": "2026-05-02T00:00:00Z"
   }
+}
+```
+
+Page list/read rows may include:
+
+```json
+{
+  "system_kind": "onboarding",
+  "system_tier": 1,
+  "system_locked": true
 }
 ```
 
@@ -159,6 +195,7 @@ Dry-run parses findings but does not create review or finding records.
 ```md
 ### Finding
 
+Title: Short finding title
 Severity: critical | high | medium | low | info
 Area: API | UI | Rust | Security | Data | Ops | Docs
 
@@ -168,6 +205,18 @@ Evidence:
 Proposed change:
 ...
 ```
+
+## State Conflict Policy
+
+SQLite structured records and generated AI state are the canonical collaboration
+state. Page Markdown is durable narrative source material and must be read
+through scoped APIs or MCP tools.
+
+If page content, AI state, graph data, or citation indexes disagree, treat the
+case as index drift. External agents should not guess which layer is correct and
+should not request raw database or filesystem access. Report the drift as a
+finding and ask an operator to run verify-index or rebuild through the
+operator-controlled API.
 
 ## Context Budget
 
@@ -230,20 +279,22 @@ maintenance state that grants control
 ```txt
 1. GET /api/agent/ping
 2. GET /api/agent/me
-3. GET /api/agent/state-summary
-4. GET /api/agent/ai-state
-5. GET /api/agent/pages only when full page text is needed
-6. GET /api/agent/findings
+3. GET /api/agent/onboarding
+4. GET /api/agent/state-summary
+5. GET /api/agent/ai-state
+6. GET /api/agent/pages only when full page text is needed
+7. GET /api/agent/findings
 ```
 
 ## Example Review Flow
 
 ```txt
 1. GET /api/agent/me
-2. GET /api/agent/context
-3. POST /api/collaboration/reviews?dry_run=true
-4. Fix format if needed
-5. POST /api/collaboration/reviews
+2. GET /api/agent/onboarding
+3. GET /api/agent/context
+4. POST /api/collaboration/reviews?dry_run=true
+5. Fix format if needed
+6. POST /api/collaboration/reviews
 ```
 
 ## MCP Setup
@@ -265,7 +316,10 @@ KNOWNET_MCP_TIMEOUT_SECONDS=30
 The MCP server exposes only these tools:
 
 ```txt
+search
+fetch
 knownet_ping
+knownet_start_here
 knownet_me
 knownet_state_summary
 knownet_ai_state
@@ -279,6 +333,23 @@ knownet_review_dry_run
 knownet_submit_review
 ```
 
+`search` and `fetch` exist for ChatGPT connector compatibility. Full MCP
+clients should prefer the explicit `knownet_*` tools. Connector surfaces that do
+not show `knownet_*` tools should use `search` first, then `fetch` returned ids
+such as `agent:onboarding`, `agent:state-summary`, or `page:{page_id}`.
+
+State summary is intentionally available as both a tool and a resource:
+
+```txt
+knownet_state_summary
+knownet://agent/state-summary
+```
+
+They expose the same state through different MCP surfaces. Tool-capable clients
+should call `knownet_state_summary`. Resource-oriented clients should read the
+resource or use `fetch agent:state-summary`. GET-only clients can only use the
+safe HTTP preview exposed by the MCP HTTP bridge.
+
 No maintenance or admin tools are exposed.
 
 During MCP `initialize`, the server returns diagnostics for API reachability,
@@ -289,6 +360,7 @@ Phase 11 also exposes safe read-only resources:
 
 ```txt
 knownet://agent/me
+knownet://agent/onboarding
 knownet://agent/state-summary
 knownet://agent/ai-state
 knownet://agent/pages
@@ -326,6 +398,7 @@ from knownet_agent import KnowNetClient
 
 client = KnowNetClient.from_env()
 
+print(client.start_here().data)
 print(client.me().data)
 ```
 

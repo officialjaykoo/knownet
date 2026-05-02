@@ -17,6 +17,8 @@ from ..security import (
     require_write_access,
 )
 from ..services.rust_core import RustCoreError
+from ..services.citation_titles import backfill_citation_display_titles
+from ..services.system_pages import raise_if_system_page_locked
 
 router = APIRouter(prefix="/api/suggestions", tags=["suggestions"])
 
@@ -154,6 +156,7 @@ async def apply_suggestion(
         raise HTTPException(status_code=404, detail={"code": "suggestion_not_found", "message": "Suggestion not found", "details": {}})
 
     slug = _safe_slug(payload.slug or row["title"], suggestion_id.replace("_", "-"))
+    await raise_if_system_page_locked(settings.sqlite_path, slug=slug)
     ensure_length(slug, settings.max_slug_chars, "slug")
     ensure_length(row["title"], settings.max_title_chars, "title")
     await enforce_write_rate_limit(request, actor, settings)
@@ -186,6 +189,7 @@ async def apply_suggestion(
                 "indexed_at": _utc_now(),
             },
         )
+        await backfill_citation_display_titles(settings.sqlite_path)
         page_id = _page_id_from_slug(result["slug"])
         markdown = Path(result["path"]).read_text(encoding="utf-8")
         result["citation_verification"] = await request.app.state.citation_verifier.verify_page(

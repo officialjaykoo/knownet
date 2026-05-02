@@ -107,15 +107,15 @@ def _parse_frontmatter(markdown: str) -> tuple[dict, str]:
 
 
 def _field(block: str, name: str) -> str | None:
-    match = re.search(rf"(?im)^\s*{re.escape(name)}:\s*(.+?)\s*$", block)
+    match = re.search(rf"(?im)^\s*(?:\*\*)?{re.escape(name)}\s*:\s*(?:\*\*)?\s*(.+?)\s*$", block)
     return match.group(1).strip() if match else None
 
 
 def _section(block: str, start: str, end: str | None = None) -> str | None:
     if end:
-        pattern = rf"(?is)^\s*{re.escape(start)}:\s*\n(.*?)(?=^\s*{re.escape(end)}:\s*$|\Z)"
+        pattern = rf"(?is)^\s*(?:\*\*)?{re.escape(start)}\s*:\s*(?:\*\*)?\s*\n(.*?)(?=^\s*(?:\*\*)?{re.escape(end)}\s*:\s*(?:\*\*)?\s*$|\Z)"
     else:
-        pattern = rf"(?is)^\s*{re.escape(start)}:\s*\n(.*)\Z"
+        pattern = rf"(?is)^\s*(?:\*\*)?{re.escape(start)}\s*:\s*(?:\*\*)?\s*\n(.*)\Z"
     match = re.search(pattern, block, re.MULTILINE)
     if not match:
         return None
@@ -164,6 +164,7 @@ def parse_review_markdown(markdown: str) -> tuple[dict, list[dict], list[str]]:
             errors.append(f"unknown_severity:{severity}")
             severity = "info"
         area = _normalize_area(_field(block, "Area"))
+        explicit_title = _field(block, "Title")
         evidence = _section(block, "Evidence", "Proposed change")
         proposed_change = _section(block, "Proposed change")
         status = "pending"
@@ -176,7 +177,7 @@ def parse_review_markdown(markdown: str) -> tuple[dict, list[dict], list[str]]:
             {
                 "severity": severity,
                 "area": area,
-                "title": title[:220],
+                "title": (explicit_title or title)[:220],
                 "evidence": evidence,
                 "proposed_change": proposed_change,
                 "raw_text": raw_text,
@@ -281,6 +282,14 @@ async def import_review(payload: ImportReviewRequest, request: Request, dry_run:
         actor = await require_write_access(await require_actor(request, settings))
     ensure_text_size(payload.markdown, MAX_REVIEW_BYTES, "markdown")
     metadata, findings, parser_errors = parse_review_markdown(payload.markdown)
+    if payload.source_agent:
+        metadata["source_agent"] = payload.source_agent
+    elif agent:
+        metadata["source_agent"] = agent.agent_name
+    if payload.source_model:
+        metadata["source_model"] = payload.source_model
+    elif agent and agent.agent_model:
+        metadata["source_model"] = agent.agent_model
     if not findings:
         raise HTTPException(status_code=422, detail={"code": "collaboration_no_findings", "message": "No findings found", "details": {}})
     if dry_run:

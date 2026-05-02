@@ -52,11 +52,14 @@ async def list_citation_audits(
     params.extend([limit, offset])
     rows = await fetch_all(
         settings.sqlite_path,
-        "SELECT id, vault_id, page_id, revision_id, citation_key, claim_hash, claim_text, status, "
-        "confidence, verifier_type, verifier_id, reason, source_hash, evidence_snapshot_id, created_at, updated_at "
-        "FROM citation_audits WHERE "
+        "SELECT ca.id, ca.vault_id, ca.page_id, ca.revision_id, ca.citation_key, COALESCE(cd.display_title, ca.citation_key) AS display_title, "
+        "ca.claim_hash, ca.claim_text, ca.status, ca.confidence, ca.verifier_type, ca.verifier_id, ca.reason, "
+        "ca.source_hash, ca.evidence_snapshot_id, ca.created_at, ca.updated_at "
+        "FROM citation_audits ca "
+        "LEFT JOIN (SELECT citation_key, MAX(display_title) AS display_title FROM citations GROUP BY citation_key) cd ON cd.citation_key = ca.citation_key "
+        "WHERE "
         + " AND ".join(clauses)
-        + " ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+        + " ORDER BY ca.updated_at DESC LIMIT ? OFFSET ?",
         tuple(params),
     )
     return {"ok": True, "data": {"audits": rows, "limit": limit, "offset": offset}}

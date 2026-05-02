@@ -28,8 +28,12 @@ type PageSummary = {
   slug: string;
   title: string;
   path: string;
+  updated_at?: string | null;
   links_count: number;
   citations_count: number;
+  system_kind?: string | null;
+  system_tier?: number | null;
+  system_locked?: boolean;
 };
 
 type Page = {
@@ -37,13 +41,14 @@ type Page = {
   title: string;
   markdown: string;
   links: Array<{ target: string; display?: string | null; status: string }>;
-  citations: Array<{ key: string }>;
+  citations: Array<{ key: string; display_title?: string | null }>;
   citation_sources?: CitationSource[];
   sections: Array<{ heading: string; level: number; section_key: string }>;
 };
 
 type CitationSource = {
   key: string;
+  display_title?: string | null;
   definition?: string | null;
   excerpt?: string | null;
   status?: string | null;
@@ -102,6 +107,7 @@ type CitationAudit = {
   id: string;
   page_id: string;
   citation_key: string;
+  display_title?: string | null;
   claim_text: string;
   status: string;
   reason: string | null;
@@ -201,6 +207,10 @@ function citationPreview(source?: CitationSource): string {
   return source.excerpt || source.definition || source.reason || source.key;
 }
 
+function citationTitle(source?: CitationSource): string {
+  return source?.display_title || source?.key || "Citation";
+}
+
 function isExternalHref(href: string): boolean {
   return /^https?:\/\//i.test(href);
 }
@@ -252,7 +262,7 @@ function MarkdownView({
                 return (
                   <sup className="citation-ref">
                     <button
-                      aria-label={`Open citation ${key}`}
+                      aria-label={`Open citation ${citationTitle(source)}`}
                       data-preview={citationPreview(source)}
                       onBlur={() => setActiveCitationKey(null)}
                       onClick={() => document.getElementById(`citation-${domId(key)}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
@@ -286,7 +296,8 @@ function MarkdownView({
       ) : null}
       {activeCitation ? (
         <aside className="citation-hover-card" role="status">
-          <strong>{activeCitation.key}</strong>
+          <strong>{citationTitle(activeCitation)}</strong>
+          {activeCitation.display_title && activeCitation.display_title !== activeCitation.key ? <small>{activeCitation.key}</small> : null}
           <small>{activeCitation.status || "unchecked"}</small>
           <p>{citationPreview(activeCitation)}</p>
           {activeCitation.reason ? <small>{activeCitation.reason}</small> : null}
@@ -299,7 +310,8 @@ function MarkdownView({
             <div className="citation-reference" id={`citation-${domId(source.key)}`} key={source.key}>
               <span>{index + 1}</span>
               <div>
-                <strong>{source.key}</strong>
+                <strong>{source.display_title || source.key}</strong>
+                {source.display_title && source.display_title !== source.key ? <small>{source.key}</small> : null}
                 <small>{source.status || "unchecked"}</small>
                 <p>{source.excerpt || source.definition || "No source excerpt available."}</p>
                 {source.reason ? <small>{source.reason}</small> : null}
@@ -323,13 +335,16 @@ async function fetchJson<T>(path: string, init?: RequestInit, token?: string | n
   const response = await fetch(`${apiBase}${path}`, { ...init, headers });
   const body = await response.json();
   if (!response.ok || !body.ok) {
-    throw new Error(body.detail?.message ?? body.error?.message ?? "Request failed");
+    const validationMessage = Array.isArray(body.detail) ? body.detail.map((item: { msg?: string }) => item.msg).filter(Boolean).join("; ") : "";
+    throw new Error(body.detail?.message ?? validationMessage ?? body.error?.message ?? "Request failed");
   }
   return body.data as T;
 }
 
 export default function HomePage() {
   const [pages, setPages] = useState<PageSummary[]>([]);
+  const [pageSort, setPageSort] = useState<"recent" | "links" | "class">("recent");
+  const [pageSortDir, setPageSortDir] = useState<"asc" | "desc">("desc");
   const [selectedSlug, setSelectedSlug] = useState("");
   const [page, setPage] = useState<Page | null>(null);
   const [linkSummary, setLinkSummary] = useState<LinkSummary | null>(null);
@@ -359,6 +374,8 @@ export default function HomePage() {
   const [healthSummary, setHealthSummary] = useState<HealthSummary | null>(null);
   const [snapshots, setSnapshots] = useState<SnapshotSummary[]>([]);
   const [verifyIssues, setVerifyIssues] = useState(0);
+  const [opsBusyAction, setOpsBusyAction] = useState<string | null>(null);
+  const [showAgentDashboard, setShowAgentDashboard] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [reviewMarkdown, setReviewMarkdown] = useState("");
   const [collaborationReviews, setCollaborationReviews] = useState<CollaborationReviewSummary[]>([]);
@@ -374,6 +391,35 @@ export default function HomePage() {
       setSelectedSlug(data.pages[0].slug);
     }
   }
+
+  const sortedPages = useMemo(() => {
+    const classRank = (page: PageSummary) => Number(page.system_tier || 3);
+    const sorted = [...pages].sort((left, right) => {
+      let value = 0;
+      if (pageSort === "recent") {
+        value = new Date(left.updated_at || 0).getTime() - new Date(right.updated_at || 0).getTime();
+      } else if (pageSort === "links") {
+        value = (Number(left.links_count || 0) + Number(left.citations_count || 0)) - (Number(right.links_count || 0) + Number(right.citations_count || 0));
+      } else {
+        value = classRank(left) - classRank(right);
+      }
+      if (value === 0) {
+        value = left.title.localeCompare(right.title);
+      }
+      return pageSortDir === "asc" ? value : -value;
+    });
+    return sorted;
+  }, [pageSort, pageSortDir, pages]);
+
+  const pageIconClass = (page: PageSummary) => {
+    if (page.system_tier === 1) {
+      return "page-icon system";
+    }
+    if (page.system_tier === 2) {
+      return "page-icon managed";
+    }
+    return "page-icon";
+  };
 
   useEffect(() => {
     const stored = window.localStorage.getItem(sessionStorageKey);
@@ -654,8 +700,15 @@ export default function HomePage() {
   }, [activeJobId]);
 
   const canWrite = !actor || ["owner", "admin", "editor"].includes(actor.role);
+  const canOperate = Boolean(actor && ["owner", "admin"].includes(actor.role));
 
   async function rebuildGraph() {
+    if (!canOperate) {
+      setStatus("Owner or admin login required");
+      return;
+    }
+    setOpsBusyAction("graph");
+    setStatus("Rebuilding graph");
     try {
       const result = await fetchJson<{ created: number; failed: number }>(
         "/api/graph/rebuild",
@@ -671,10 +724,18 @@ export default function HomePage() {
       await loadGraph();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Graph rebuild failed");
+    } finally {
+      setOpsBusyAction(null);
     }
   }
 
   async function createSnapshot() {
+    if (!canOperate) {
+      setStatus("Owner or admin login required");
+      return;
+    }
+    setOpsBusyAction("snapshot");
+    setStatus("Creating snapshot");
     try {
       const result = await fetchJson<{ name: string }>(
         "/api/maintenance/snapshots",
@@ -686,10 +747,18 @@ export default function HomePage() {
       await loadOperations();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Snapshot failed");
+    } finally {
+      setOpsBusyAction(null);
     }
   }
 
   async function runVerifyIndex() {
+    if (!canOperate) {
+      setStatus("Owner or admin login required");
+      return;
+    }
+    setOpsBusyAction("verify");
+    setStatus("Running verify");
     try {
       const result = await fetchJson<{ issues: Array<{ code: string }> }>(
         "/api/maintenance/verify-index",
@@ -701,6 +770,8 @@ export default function HomePage() {
       setStatus(result.issues.length ? `Verify found ${result.issues.length} issue(s)` : "Verify passed");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Verify failed");
+    } finally {
+      setOpsBusyAction(null);
     }
   }
 
@@ -949,8 +1020,19 @@ export default function HomePage() {
             Hide
           </button>
         </div>
+        <div className="page-list-tools" aria-label="Page sorting">
+          <select aria-label="Sort pages" value={pageSort} onChange={(event) => setPageSort(event.target.value as "recent" | "links" | "class")}>
+            <option value="recent">Recent</option>
+            <option value="links">Connected</option>
+            <option value="class">Class</option>
+          </select>
+          <button aria-label="Toggle page sort direction" onClick={() => setPageSortDir((current) => (current === "asc" ? "desc" : "asc"))} type="button">
+            {pageSortDir === "asc" ? <ChevronsUp aria-hidden size={15} /> : <ChevronsDown aria-hidden size={15} />}
+            {pageSortDir === "asc" ? "Asc" : "Desc"}
+          </button>
+        </div>
         <nav className="page-list" aria-label="Pages">
-          {pages.map((item) => (
+          {sortedPages.map((item) => (
             <button
               className={item.slug === selectedSlug ? "page-link active" : "page-link"}
               key={item.slug}
@@ -958,11 +1040,12 @@ export default function HomePage() {
               type="button"
             >
               <span>
-                <FileText aria-hidden size={15} />
+                <FileText aria-hidden className={pageIconClass(item)} size={15} />
                 {item.title}
               </span>
               <small>
                 {item.links_count} links / {item.citations_count} refs
+                {item.system_kind ? ` / ${item.system_kind}` : ""}
               </small>
             </button>
           ))}
@@ -981,6 +1064,12 @@ export default function HomePage() {
               </button>
             ) : null}
           </div>
+          {actor && ["owner", "admin"].includes(actor.role) ? (
+            <button onClick={() => setShowAgentDashboard(true)} type="button">
+              <KeyRound aria-hidden size={15} />
+              Agent Dashboard
+            </button>
+          ) : null}
           {!sessionToken ? (
             <form className="auth-form" onSubmit={submitAuth}>
               <div className="auth-tabs">
@@ -996,11 +1085,13 @@ export default function HomePage() {
               <input aria-label="Username" placeholder="Username" value={username} onChange={(event) => setUsername(event.target.value)} />
               <input
                 aria-label="Password"
+                minLength={authMode === "bootstrap" ? 8 : 1}
                 placeholder="Password"
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
               />
+              {authMode === "bootstrap" ? <small>Owner password must be at least 8 characters.</small> : null}
               <button type="submit">
                 {authMode === "bootstrap" ? <ShieldCheck aria-hidden size={15} /> : <LogIn aria-hidden size={15} />}
                 {authMode === "bootstrap" ? "Create owner" : "Login"}
@@ -1080,7 +1171,8 @@ export default function HomePage() {
             {citationAudits.slice(0, 5).map((item) => (
               <div className="review-item" key={item.id}>
                 <small>{item.status} / {item.verifier_type}</small>
-                <strong>{item.citation_key}</strong>
+                <strong>{item.display_title || item.citation_key}</strong>
+                {item.display_title && item.display_title !== item.citation_key ? <small>{item.citation_key}</small> : null}
                 <p>{item.reason || item.claim_text}</p>
                 <div>
                   <button onClick={() => markCitationNeedsReview(item.id)} type="button">
@@ -1133,20 +1225,35 @@ export default function HomePage() {
           {bundleStatus ? <small>Last bundle: {bundleStatus}</small> : null}
         </section>
         {actor && ["owner", "admin"].includes(actor.role) ? (
-          <>
-            <AgentAccessPanel sessionToken={sessionToken} vaultId={vaultId} />
-            <OperationsPanel
-              healthSummary={healthSummary}
-              snapshots={snapshots}
-              verifyIssues={verifyIssues}
-              onCreateSnapshot={createSnapshot}
-              onRunVerifyIndex={runVerifyIndex}
-              onRebuildGraph={rebuildGraph}
-            />
-          </>
+          <OperationsPanel
+            healthSummary={healthSummary}
+            snapshots={snapshots}
+            verifyIssues={verifyIssues}
+            canOperate={canOperate}
+            busyAction={opsBusyAction}
+            onCreateSnapshot={createSnapshot}
+            onRunVerifyIndex={runVerifyIndex}
+            onRebuildGraph={rebuildGraph}
+          />
         ) : null}
       </aside>
       <section className="workspace">
+        {showAgentDashboard ? (
+          <aside className="workspace-dashboard">
+            <div className="workspace-dashboard-head">
+              <div>
+                <p className="eyebrow">Agent Dashboard</p>
+                <h2>External Agent Access</h2>
+              </div>
+              <button onClick={() => setShowAgentDashboard(false)} type="button">
+                <X aria-hidden size={15} />
+                Close
+              </button>
+            </div>
+            <AgentAccessPanel sessionToken={sessionToken} vaultId={vaultId} />
+          </aside>
+        ) : (
+          <>
         {suggestion ? (
           <aside className="suggestion">
             <div className="suggestion-head">
@@ -1292,6 +1399,8 @@ export default function HomePage() {
           </>
         ) : (
           <p className="empty">Loading page.</p>
+        )}
+          </>
         )}
       </section>
     </main>

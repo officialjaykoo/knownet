@@ -258,12 +258,13 @@ pub fn index_page_file(
     if let Some(citations) = parsed.get("citations").and_then(Value::as_array) {
         for citation in citations {
             tx.execute(
-                "INSERT OR IGNORE INTO citations (page_id, revision_id, citation_key, created_at)
-                 VALUES (?1, ?2, ?3, ?4)",
+                "INSERT OR IGNORE INTO citations (page_id, revision_id, citation_key, display_title, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
                 params![
                     page_id,
                     revision_id,
                     citation.get("key").and_then(Value::as_str).unwrap_or(""),
+                    citation.get("display_title").and_then(Value::as_str),
                     indexed_at
                 ],
             )

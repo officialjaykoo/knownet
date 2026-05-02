@@ -31,6 +31,7 @@ source_model: claude-3.7
 
 ### Finding 1: Review import needs durable storage
 
+Title: Durable review storage is required
 Severity: high
 Area: collaboration-api
 
@@ -60,6 +61,7 @@ def test_parser_extracts_multiple_findings():
     assert len(findings) == 2
     assert findings[0]["severity"] == "high"
     assert findings[0]["area"] == "Docs"
+    assert findings[0]["title"] == "Durable review storage is required"
     assert findings[0]["status"] == "pending"
 
 
@@ -104,6 +106,29 @@ Keep parsing.
     assert findings[1]["severity"] == "info"
     assert findings[1]["area"] == "UI"
     assert "unknown_severity:strange" in errors
+
+
+def test_parser_accepts_bold_labels():
+    markdown = """# Review
+
+### Finding
+
+**Title:** Bold label title
+**Severity:** medium
+**Area:** API
+
+**Evidence:**
+Bold labels should parse.
+
+**Proposed change:**
+Keep the fields.
+"""
+    _metadata, findings, errors = parse_review_markdown(markdown)
+    assert errors == []
+    assert findings[0]["title"] == "Bold label title"
+    assert findings[0]["severity"] == "medium"
+    assert findings[0]["area"] == "API"
+    assert findings[0]["evidence"] == "Bold labels should parse."
 
 
 def test_parser_truncates_more_than_50_findings():

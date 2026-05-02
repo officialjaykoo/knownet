@@ -113,6 +113,14 @@ def test_dry_run_and_submit_paths():
     assert paths[1].endswith("/api/collaboration/reviews")
 
 
+def test_start_here_calls_onboarding_endpoint():
+    client = KnowNetClient(base_url="http://knownet", token="kn_agent_test")
+    with patch("urllib.request.urlopen", return_value=FakeResponse({"ok": True, "data": {"start_here_hint": "recommended"}, "meta": {"schema_version": 1}})) as mocked:
+        response = client.start_here()
+    assert response.data["start_here_hint"] == "recommended"
+    assert mocked.call_args.args[0].full_url.endswith("/api/agent/onboarding")
+
+
 def test_typed_models_context_manager_and_async_placeholder():
     client = KnowNetClient(base_url="http://knownet", token="kn_agent_test")
     with patch("urllib.request.urlopen", return_value=FakeResponse({"ok": True, "data": {"pages": [{"id": "page_1", "slug": "one", "title": "One"}]}, "meta": {}})):

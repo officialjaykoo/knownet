@@ -112,6 +112,9 @@ class KnowNetClient:
         self._last_me = response
         return response
 
+    def start_here(self) -> KnowNetResponse:
+        return self._request("GET", "/api/agent/onboarding")
+
     def state_summary(self) -> KnowNetResponse:
         return self._request("GET", "/api/agent/state-summary")
 

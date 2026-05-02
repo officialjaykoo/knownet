@@ -134,6 +134,32 @@ h1 {
   padding-right: 3px;
 }
 
+.page-list-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+.page-list-tools select,
+.page-list-tools button {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 9px;
+}
+
+.page-list-tools button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
 .page-link {
   display: grid;
   gap: 5px;
@@ -159,6 +185,18 @@ h1 {
   align-items: center;
   gap: 7px;
   font-weight: 700;
+}
+
+.page-icon {
+  color: #5aaed6;
+}
+
+.page-icon.system {
+  color: #d889a9;
+}
+
+.page-icon.managed {
+  color: #4f9d6a;
 }
 
 .page-link small,
@@ -842,6 +880,36 @@ h1 {
   padding-top: 54px;
 }
 
+.workspace-dashboard {
+  display: grid;
+  gap: 14px;
+  max-width: 1120px;
+}
+
+.workspace-dashboard-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.workspace-dashboard-head h2 {
+  font-size: 30px;
+}
+
+.workspace-dashboard-head button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--fg);
+  cursor: pointer;
+  font-weight: 800;
+  padding: 8px 10px;
+}
+
 .suggestion {
   display: grid;
   gap: 12px;
@@ -1169,6 +1237,14 @@ h1 {
 
 .legend-core {
   background: #0b3f73;
+}
+
+.legend-system {
+  background: #f4c7d8;
+}
+
+.legend-managed {
+  background: #bfe8cf;
 }
 
 .legend-selected {

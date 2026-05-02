@@ -93,6 +93,8 @@ export function GraphPanel({
         core: node.meta.core ? "true" : "false",
         autoCore: node.meta.auto_core ? "true" : "false",
         userPinned: node.meta.user_pinned ? "true" : "false",
+        systemTier: String(node.meta.system_tier || ""),
+        systemKind: String(node.meta.system_kind || ""),
         selected: node.id === selectedNodeId ? "true" : "false",
         labelText: node.meta.user_pinned ? "📌" : node.label,
       },
@@ -155,6 +157,8 @@ export function GraphPanel({
           {graph.truncated ? <p className="graph-warning">Graph was truncated. Use filters or open neighborhoods from a node.</p> : null}
           <div className="graph-legend" aria-label="Graph legend">
             <span><i className="legend-core" /> Auto core</span>
+            <span><i className="legend-system" /> System</span>
+            <span><i className="legend-managed" /> Managed</span>
             <span><i className="legend-selected" /> Selected</span>
             <span><i className="legend-pinned" /> Pinned</span>
           </div>
@@ -165,7 +169,11 @@ export function GraphPanel({
                 layout={{ name: "cose", animate: false, fit: true, padding: 24 }}
                 stylesheet={[
                   { selector: "node", style: { label: "data(labelText)", "font-size": 10, color: "#1b2028", "text-valign": "bottom", "text-halign": "center", "background-color": "#bfe3f5", width: 24, height: 24, "border-width": 1, "border-color": "#ffffff", shape: "ellipse" } },
+                  { selector: "node[systemTier = '1']", style: { "background-color": "#f4c7d8" } },
+                  { selector: "node[systemTier = '2']", style: { "background-color": "#bfe8cf" } },
                   { selector: "node[autoCore = 'true']", style: { "background-color": "#0b3f73", color: "#0b3f73", width: 32, height: 32, "font-size": 12, "font-weight": 700 } },
+                  { selector: "node[autoCore = 'true'][systemTier = '1']", style: { "background-color": "#d889a9", color: "#d889a9" } },
+                  { selector: "node[autoCore = 'true'][systemTier = '2']", style: { "background-color": "#77c894", color: "#77c894" } },
                   { selector: "node[userPinned = 'true']", style: { label: "📌", color: "#1b2028", "font-size": 16, "text-valign": "center", "text-halign": "center" } },
                   { selector: "node[selected = 'true']", style: { "border-width": 4, "border-color": "#2563eb", "z-index": 20 } },
                   { selector: "node[type = 'source']", style: { "background-color": "#4568a8", shape: "round-rectangle" } },
@@ -201,6 +209,7 @@ export function GraphPanel({
                     <strong>{node.label}</strong>
                     <small>
                       {node.node_type} / {node.meta.core ? "core" : node.status || "ok"} / degree {String(node.meta.degree ?? 0)}
+                      {node.meta.system_kind ? ` / ${String(node.meta.system_kind)}` : ""}
                     </small>
                   </button>
                 ))}
@@ -210,6 +219,7 @@ export function GraphPanel({
             <div className="graph-detail">
               <strong>{selectedGraphNode.label}</strong>
               <span>{selectedGraphNode.node_type}</span>
+              {selectedGraphNode.meta.system_kind ? <span>{String(selectedGraphNode.meta.system_kind)} page</span> : null}
               {selectedGraphNode.meta.user_pinned ? (
                 <span className="graph-detail-pin">
                   <Pin aria-hidden size={13} />

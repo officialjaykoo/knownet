@@ -59,12 +59,60 @@ apps/api/.venv/Scripts/python.exe apps/mcp/knownet_mcp/server.py
 
 The process speaks JSON-RPC over stdin/stdout. Logs are written to stderr.
 
+## ChatGPT Quick Tunnel Test
+
+ChatGPT custom connectors can run in two modes. Full developer-mode connectors
+may expose every `knownet_*` tool. Some connector surfaces only expose
+`search` and `fetch`. KnowNet supports both:
+
+```txt
+search  -> returns onboarding, state summary, and matching page results
+fetch   -> fetches one result by id
+```
+
+If `knownet_*` tools are not visible in the client, do not substitute a GitHub
+repository read for KnowNet state. Use `search` for `KnowNet current state`,
+then `fetch` the returned `agent:onboarding`, `agent:state-summary`, or
+`page:*` ids. If the client supports full tools, prefer this order:
+
+```txt
+knownet_start_here
+knownet_me
+knownet_state_summary
+knownet_ai_state
+knownet_review_dry_run
+```
+
+`knownet_state_summary` and `agent:state-summary` expose the same state through
+different MCP surfaces. Use the tool when the client can call JSON-RPC tools.
+Use the resource or `fetch agent:state-summary` when the client works better
+with resource reads. GET preview clients can only read the safe HTTP preview at
+`/mcp?resource=agent:state-summary`.
+
+For temporary quick-tunnel testing, run the HTTP bridge and tunnel only for the
+test window. Revoke the temporary agent token immediately after the test.
+
+```powershell
+$env:KNOWNET_BASE_URL="http://127.0.0.1:8000"
+$env:KNOWNET_AGENT_TOKEN="<short-lived token>"
+$env:KNOWNET_MCP_HTTP_PORT="8010"
+apps/api/.venv/Scripts/python.exe -m knownet_mcp.http_bridge
+cloudflared tunnel --url http://127.0.0.1:8010
+```
+
+Register the connector URL as:
+
+```txt
+https://<quick-tunnel-host>/mcp
+```
+
 ## Preferred State Tool
 
 Use `knownet_ai_state` when an AI client needs compact structured project
 context. It returns JSON rows derived from active pages, including summaries,
-sections, links, source paths, and content hashes. Use `knownet_read_page` only
-when the agent needs the full narrative source text for a specific page.
+sections, links, source references, and content hashes. Use
+`knownet_read_page` only when the agent needs the full narrative source text for
+a specific page.
 
 ## Troubleshooting
 
@@ -88,6 +136,35 @@ Wait before retrying. The response may include `retry_after_seconds`.
 `request_id`:
 Include this value when reporting a failed MCP call. It is also written to MCP
 stderr logs.
+
+`knownet_* tools are not visible`:
+Confirm the client is using full MCP developer mode. If it is not, use the
+connector-compatible `search` and `fetch` tools. Also check the connector URL,
+`KNOWNET_BASE_URL`, `KNOWNET_AGENT_TOKEN`, token scopes, and the MCP bridge
+stderr log.
+
+`client cannot use the MCP URL`:
+Some web AI products cannot attach arbitrary MCP connectors even when the
+quick-tunnel URL is reachable. In that case, ask the operator for captured
+`search`, `fetch`, or `knownet_*` JSON responses. Mark the review as
+`static-spec fallback` if it relies on repository documents instead of live
+KnowNet state.
+
+`GET /mcp works but tool calls do not`:
+`GET /mcp`, `GET /mcp/tools`, and `GET /.well-known/mcp` expose only safe
+discovery metadata for web clients and reviewers. Real MCP calls still use
+JSON-RPC `POST /mcp`. A successful GET discovery response is not proof that a
+web product can call tools.
+
+For clients that cannot POST JSON-RPC, these read-only previews are available:
+
+```txt
+GET /mcp?resource=agent:onboarding
+GET /mcp?resource=agent:state-summary
+```
+
+These previews are intentionally limited. Review submission and dry-run remain
+JSON-RPC POST operations so review bodies are not placed in URLs or GET logs.
 
 ## Public Exposure
 

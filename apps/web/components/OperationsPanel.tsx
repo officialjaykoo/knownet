@@ -22,6 +22,8 @@ type OperationsPanelProps = {
   healthSummary: HealthSummary | null;
   snapshots: SnapshotSummary[];
   verifyIssues: number;
+  canOperate: boolean;
+  busyAction: string | null;
   onCreateSnapshot: () => void;
   onRunVerifyIndex: () => void;
   onRebuildGraph: () => void;
@@ -31,6 +33,8 @@ export function OperationsPanel({
   healthSummary,
   snapshots,
   verifyIssues,
+  canOperate,
+  busyAction,
   onCreateSnapshot,
   onRunVerifyIndex,
   onRebuildGraph,
@@ -46,21 +50,22 @@ export function OperationsPanel({
         <small>{description}</small>
       </div>
       <div className="ops-grid">
-        <button onClick={onCreateSnapshot} type="button">
+        <button disabled={!canOperate || Boolean(busyAction)} onClick={onCreateSnapshot} type="button">
           <Archive aria-hidden size={15} />
-          Snapshot
+          {busyAction === "snapshot" ? "Working" : "Snapshot"}
         </button>
-        <button onClick={onRunVerifyIndex} type="button">
+        <button disabled={!canOperate || Boolean(busyAction)} onClick={onRunVerifyIndex} type="button">
           <ShieldCheck aria-hidden size={15} />
-          Verify
+          {busyAction === "verify" ? "Working" : "Verify"}
         </button>
-        <button onClick={onRebuildGraph} type="button">
+        <button disabled={!canOperate || Boolean(busyAction)} onClick={onRebuildGraph} type="button">
           <Network aria-hidden size={15} />
-          Graph
+          {busyAction === "graph" ? "Working" : "Graph"}
         </button>
       </div>
       <small>
         {snapshots[0] ? `Latest: ${snapshots[0].name}` : "No snapshots"} / {verifyIssues} verify issues
+        {canOperate ? "" : " / owner or admin required"}
       </small>
     </section>
   );

@@ -11,7 +11,9 @@ from ..audit import write_audit_event
 from ..db.sqlite import fetch_all, fetch_one
 from ..paths import page_storage_dir
 from ..security import Actor, enforce_write_rate_limit, ensure_length, require_admin_access, require_write_access
+from ..services.citation_titles import backfill_citation_display_titles
 from ..services.rust_core import RustCoreError
+from ..services.system_pages import raise_if_system_page_locked, system_fields
 from ..status import operation_failure_status
 
 router = APIRouter(prefix="/api/pages", tags=["pages"])
@@ -110,7 +112,7 @@ async def _citation_sources(settings, page_id: str, revision_id: str | None, mar
     definitions = _citation_definitions(markdown)
     rows = await fetch_all(
         settings.sqlite_path,
-        "SELECT c.citation_key, c.validation_status, m.path AS message_path, "
+        "SELECT c.citation_key, c.display_title, c.validation_status, m.path AS message_path, "
         "ca.status AS audit_status, ca.reason, ca.evidence_snapshot_id, ev.excerpt AS evidence_excerpt "
         "FROM citations c "
         "LEFT JOIN messages m ON m.id = c.citation_key "
@@ -133,6 +135,7 @@ async def _citation_sources(settings, page_id: str, revision_id: str | None, mar
         sources.append(
             {
                 "key": key,
+                "display_title": row["display_title"] or key,
                 "definition": definitions.get(key),
                 "excerpt": excerpt,
                 "status": row["audit_status"] or row["validation_status"],
@@ -141,7 +144,7 @@ async def _citation_sources(settings, page_id: str, revision_id: str | None, mar
         )
     for key, definition in definitions.items():
         if key not in seen:
-            sources.append({"key": key, "definition": definition, "excerpt": None, "status": "unchecked", "reason": None})
+            sources.append({"key": key, "display_title": key, "definition": definition, "excerpt": None, "status": "unchecked", "reason": None})
     return sources
 
 
@@ -168,6 +171,7 @@ async def _run_post_create_tasks(
                 "indexed_at": now,
             },
         )
+        await backfill_citation_display_titles(sqlite_path)
         index_status = {"status": "indexed"}
     except Exception as error:
         return operation_failure_status(error), graph_rebuild
@@ -222,7 +226,7 @@ async def _indexed_page(settings, page_row: dict, path: Path) -> dict:
     )
     citations = await fetch_all(
         settings.sqlite_path,
-        "SELECT citation_key AS key FROM citations WHERE page_id = ? AND (revision_id IS ? OR revision_id = ?) ORDER BY citation_key",
+        "SELECT citation_key AS key, COALESCE(display_title, citation_key) AS display_title FROM citations WHERE page_id = ? AND (revision_id IS ? OR revision_id = ?) ORDER BY display_title, citation_key",
         (page_id, revision_id, revision_id),
     )
     sections = await fetch_all(
@@ -249,10 +253,11 @@ async def list_pages(request: Request):
     pages_dir.mkdir(parents=True, exist_ok=True)
     rows = await fetch_all(
         settings.sqlite_path,
-        "SELECT p.slug, p.title, p.path, "
+        "SELECT p.id, p.slug, p.title, p.path, p.updated_at, sp.kind AS system_kind, sp.tier AS system_tier, sp.locked AS system_locked, "
         "(SELECT COUNT(*) FROM links l WHERE l.page_id = p.id AND (l.revision_id IS p.current_revision_id OR l.revision_id = p.current_revision_id)) AS links_count, "
         "(SELECT COUNT(*) FROM citations c WHERE c.page_id = p.id AND (c.revision_id IS p.current_revision_id OR c.revision_id = p.current_revision_id)) AS citations_count "
-        "FROM pages p WHERE p.status = 'active' AND p.path LIKE '%.md' ORDER BY p.title, p.slug",
+        "FROM pages p LEFT JOIN system_pages sp ON sp.page_id = p.id "
+        "WHERE p.status = 'active' AND p.path LIKE '%.md' ORDER BY p.title, p.slug",
         (),
     )
     if rows:
@@ -261,8 +266,10 @@ async def list_pages(request: Request):
                 "slug": row["slug"],
                 "title": row["title"],
                 "path": row["path"],
+                "updated_at": row["updated_at"],
                 "links_count": row["links_count"],
                 "citations_count": row["citations_count"],
+                **system_fields(row),
             }
             for row in rows
             if Path(row["path"]).exists()
@@ -282,6 +289,7 @@ async def create_page(
 ):
     settings = request.app.state.settings
     slug = _safe_slug(payload.slug)
+    await raise_if_system_page_locked(settings.sqlite_path, slug=slug)
     ensure_length(slug, settings.max_slug_chars, "slug")
     title = (payload.title or slug.replace("-", " ").title()).strip()
     ensure_length(title, settings.max_title_chars, "title")
@@ -357,6 +365,12 @@ async def get_page(slug: str, request: Request):
     page_id = page_row["id"] if page_row else _page_id_from_slug(slug)
     revision_id = page_row["current_revision_id"] if page_row else None
     page["citation_sources"] = await _citation_sources(settings, page_id, revision_id, page["markdown"])
+    system_row = await fetch_one(
+        settings.sqlite_path,
+        "SELECT kind AS system_kind, tier AS system_tier, locked AS system_locked FROM system_pages WHERE page_id = ?",
+        (page_id,),
+    )
+    page.update(system_fields(system_row))
     return {"ok": True, "data": page}
 
 
@@ -397,6 +411,7 @@ async def tombstone_page(
     settings = request.app.state.settings
     await enforce_write_rate_limit(request, actor, settings)
     page_row = await _page_row_by_slug(settings, slug)
+    await raise_if_system_page_locked(settings.sqlite_path, slug=slug, page_id=page_row["id"] if page_row else None)
     if not page_row:
         path = _safe_page_path(settings.data_dir, slug)
         if not path.exists():
@@ -453,6 +468,7 @@ async def recover_page(
     settings = request.app.state.settings
     await enforce_write_rate_limit(request, actor, settings)
     page_row = await fetch_one(settings.sqlite_path, "SELECT id, status FROM pages WHERE slug = ?", (slug,))
+    await raise_if_system_page_locked(settings.sqlite_path, slug=slug, page_id=page_row["id"] if page_row else None)
     if not page_row:
         raise HTTPException(status_code=404, detail={"code": "page_not_found", "message": "Page not found", "details": {"slug": slug}})
     try:
@@ -495,6 +511,7 @@ async def restore_revision(
         "SELECT id, current_revision_id FROM pages WHERE slug = ?",
         (slug,),
     )
+    await raise_if_system_page_locked(settings.sqlite_path, slug=slug, page_id=page_row["id"] if page_row else None)
     try:
         result = await rust.request(
             "restore_revision",
@@ -515,6 +532,7 @@ async def restore_revision(
                 "indexed_at": _utc_now(),
             },
         )
+        await backfill_citation_display_titles(settings.sqlite_path)
         await rust.request(
             "rebuild_graph_for_page",
             {

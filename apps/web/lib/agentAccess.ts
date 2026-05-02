@@ -159,6 +159,7 @@ export function tokenSignals(token: AgentTokenSummary, events: AgentEventSummary
   if (state === "revoked") signals.push("revoked");
   if (state === "expired") signals.push("expired");
   if (state === "expiring") signals.push("expires soon");
+  if (!token.expires_at && !token.revoked_at) signals.push("no expiry");
   if (!token.scopes.length) signals.push("no scopes");
   const lastUsedMs = token.last_used_at ? Date.parse(token.last_used_at) : NaN;
   if (!token.revoked_at && (Number.isNaN(lastUsedMs) || nowMs - lastUsedMs > unusedMs)) signals.push("unused 30d");

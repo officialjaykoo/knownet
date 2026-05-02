@@ -9,6 +9,7 @@ from ..audit import write_audit_event
 from ..db.sqlite import fetch_all, fetch_one
 from ..security import Actor, require_review_access, require_write_access, requested_vault_id, utc_now
 from ..services.rust_core import RustCoreError
+from ..services.system_pages import system_rows_for_page_ids
 
 router = APIRouter(prefix="/api/graph", tags=["graph"])
 
@@ -153,7 +154,17 @@ async def get_graph(
             + " ORDER BY weight DESC LIMIT ?",
             tuple([*edge_params, limit * 3]),
         )
-    nodes = [{**row, "meta": _json_meta(row.get("meta"))} for row in node_rows]
+    system_by_page_id = await system_rows_for_page_ids(
+        settings.sqlite_path,
+        [row["target_id"] for row in node_rows if row.get("node_type") == "page" and row.get("target_id")],
+    )
+    nodes = []
+    for row in node_rows:
+        meta = _json_meta(row.get("meta"))
+        system = system_by_page_id.get(row["target_id"]) if row.get("node_type") == "page" else None
+        if system:
+            meta.update(system)
+        nodes.append({**row, "meta": meta, **(system or {"system_kind": None, "system_tier": None, "system_locked": False})})
     edge_data = [{**row, "meta": _json_meta(row.get("meta"))} for row in edges]
     summary = _summary(nodes, edge_data, total_node_count)
     return {
@@ -210,16 +221,27 @@ async def get_neighborhood(
             break
     node_ids = list(seen)[:limit]
     placeholders = ",".join("?" for _ in node_ids)
-    nodes = await fetch_all(
+    node_rows = await fetch_all(
         settings.sqlite_path,
         "SELECT id, vault_id, node_type, label, target_type, target_id, status, weight, meta, updated_at "
         f"FROM graph_nodes WHERE vault_id = ? AND id IN ({placeholders}) ORDER BY weight DESC, label",
         tuple([effective_vault_id, *node_ids]),
     )
+    system_by_page_id = await system_rows_for_page_ids(
+        settings.sqlite_path,
+        [row["target_id"] for row in node_rows if row.get("node_type") == "page" and row.get("target_id")],
+    )
+    nodes = []
+    for row in node_rows:
+        meta = _json_meta(row.get("meta"))
+        system = system_by_page_id.get(row["target_id"]) if row.get("node_type") == "page" else None
+        if system:
+            meta.update(system)
+        nodes.append({**row, "meta": meta, **(system or {"system_kind": None, "system_tier": None, "system_locked": False})})
     return {
         "ok": True,
         "data": {
-            "nodes": [{**row, "meta": _json_meta(row.get("meta"))} for row in nodes],
+            "nodes": nodes,
             "edges": [{**row, "meta": _json_meta(row.get("meta"))} for row in edges],
             "truncated": len(seen) > len(node_ids),
             "graph_stale": _graph_stale(request, effective_vault_id),

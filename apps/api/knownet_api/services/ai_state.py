@@ -65,7 +65,9 @@ def _sections(body: str) -> list[dict]:
         match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line)
         if match:
             if current:
-                current["text"] = _plain_text("\n".join(buffer))[:1200]
+                section_body = _plain_text("\n".join(buffer))[:1200]
+                current["text"] = section_body
+                current["body"] = section_body
                 sections.append(current)
             position += 1
             heading = match.group(2).strip()
@@ -79,7 +81,9 @@ def _sections(body: str) -> list[dict]:
         elif current:
             buffer.append(line)
     if current:
-        current["text"] = _plain_text("\n".join(buffer))[:1200]
+        section_body = _plain_text("\n".join(buffer))[:1200]
+        current["text"] = section_body
+        current["body"] = section_body
         sections.append(current)
     return sections
 
