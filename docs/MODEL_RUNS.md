@@ -353,7 +353,7 @@ GLM_API_KEY is required before a live GLM run.
 GLM output remains dry-run-ready until an operator imports it.
 ```
 
-Real API attempt after `GLM_API_KEY` was configured locally:
+First real API attempt after `GLM_API_KEY` was configured locally:
 
 ```txt
 model: glm-5.1
@@ -381,6 +381,24 @@ The local value in GLM_API_KEY was not accepted as a Z.AI Bearer API key on
 either the general API endpoint or the coding endpoint.
 The runner wiring is implemented, but live GLM generation is blocked until the
 operator provides a valid Z.AI API key for the selected endpoint.
+No collaboration review or finding was imported.
+```
+
+Second real API attempt after replacing the local key:
+
+```txt
+model: glm-5.1
+status: failed
+code: glm_rate_limited
+reason: Insufficient balance or no resource package. Please recharge.
+```
+
+Interpretation:
+
+```txt
+The replacement key passed the basic authentication boundary and reached the
+provider account/quota check. Live GLM generation is still blocked by account
+balance or missing resource package, not by KnowNet runner wiring.
 No collaboration review or finding was imported.
 ```
 

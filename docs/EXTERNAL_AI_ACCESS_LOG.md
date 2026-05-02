@@ -274,6 +274,8 @@ GLM free web:
 GLM paid/API:
   Implemented REST/model tool-calling runner:
   POST /api/model-runs/glm/reviews
+  Live retry with replaced key reached provider quota check:
+  glm_rate_limited / insufficient balance or missing resource package.
 
 GLM Coding Plan / MCP-capable coding tools:
   Use KnowNet MCP endpoint directly with an agent token.
