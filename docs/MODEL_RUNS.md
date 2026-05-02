@@ -253,7 +253,7 @@ real_adapter: implemented
 mock_adapter: working
 operator_import_required: true
 default_model: MiniMax-M2.7
-local_api_key: not configured
+local_api_key: configured
 ```
 
 Mock smoke path:
@@ -270,6 +270,25 @@ Non-mock safety:
 MINIMAX_RUNNER_ENABLED=false blocks real calls by default.
 MINIMAX_API_KEY is required before a live MiniMax run.
 MiniMax output remains dry-run-ready until an operator imports it.
+```
+
+Real API attempt after `MINIMAX_API_KEY` was configured locally:
+
+```txt
+model: MiniMax-M2.7
+run_id: modelrun_49c7425ceb87
+status: failed
+code: minimax_rate_limited
+reason: insufficient balance (1008)
+```
+
+Interpretation:
+
+```txt
+The local key was accepted far enough to reach the MiniMax API.
+The run did not produce a review because the MiniMax account had no usable
+balance.
+No collaboration review or finding was imported.
 ```
 
 Allowed MiniMax runner tools:
