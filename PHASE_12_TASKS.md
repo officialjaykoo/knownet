@@ -27,6 +27,9 @@ SDK:
   Does not create a new auth model.
   Does not hard-code tokens in examples.
   Does not retry writes by default.
+  Completes the synchronous client first.
+  Prepares an async-compatible structure without implementing async HTTP in
+  Phase 12.
 
 Dashboard:
   Not part of Phase 12.
@@ -44,6 +47,8 @@ Do not:
   Add another token system.
   Expand the Dashboard in this phase.
   Rebuild MCP in this phase.
+  Add httpx, aiohttp, requests, pydantic, or other broad dependencies.
+  Implement AsyncKnowNetClient HTTP calls in Phase 12.
   Reintroduce external note-app compatibility.
 ```
 
@@ -54,12 +59,13 @@ Implement in this order:
 ```txt
 1. P12-001 Package Metadata
 2. P12-002 Typed Models And Response Metadata
-3. P12-003 Pagination Helpers
-4. P12-004 Agent Workflow Helpers
-5. P12-005 Robust Error Surface
-6. P12-006 SDK End-To-End Test
-7. P12-007 Examples And Documentation
-8. P12-008 Regression And Release Checks
+3. P12-003 Client Lifecycle And Async-Ready Structure
+4. P12-004 Pagination Helpers
+5. P12-005 Agent Workflow Helpers
+6. P12-006 Robust Error Surface
+7. P12-007 SDK End-To-End Test
+8. P12-008 Examples And Documentation
+9. P12-009 Regression And Release Checks
 ```
 
 ## P12-001 Package Metadata
@@ -95,6 +101,8 @@ Package rules:
 ```txt
 Use stdlib HTTP unless a dependency is clearly justified.
 Do not add broad dependencies for simple typing or HTTP calls.
+Use dataclasses for SDK models.
+Do not use pydantic for SDK models.
 Keep package import as:
   from knownet_agent import KnowNetClient
 ```
@@ -191,7 +199,58 @@ Tests cover conversion from API JSON into typed models.
 Existing SDK tests still pass.
 ```
 
-## P12-003 Pagination Helpers
+## P12-003 Client Lifecycle And Async-Ready Structure
+
+Goal:
+
+```txt
+Make the sync client safe for scripts and keep the code shape ready for a later
+async client.
+```
+
+Add to KnowNetClient:
+
+```python
+def close(self) -> None
+def __enter__(self) -> KnowNetClient
+def __exit__(self, exc_type, exc, tb) -> None
+```
+
+Rules:
+
+```txt
+The current stdlib urllib implementation has no persistent session, so close()
+may be a no-op in Phase 12.
+Context manager support is still required so scripts have a stable lifecycle
+contract before future connection pooling exists.
+```
+
+Async-ready structure:
+
+```txt
+Split shared request/response/error/model logic so a future AsyncKnowNetClient
+can reuse it.
+
+Allowed in Phase 12:
+  AsyncKnowNetClient placeholder class that raises NotImplementedError with a
+  clear message.
+  Shared model/error modules.
+
+Not allowed in Phase 12:
+  Async HTTP implementation.
+  httpx/aiohttp dependency.
+  Thread-executor fake async wrapper.
+```
+
+Done when:
+
+```txt
+Tests cover using KnowNetClient in a with block.
+Importing AsyncKnowNetClient works, but calling it clearly reports that async is
+reserved for a later phase.
+```
+
+## P12-004 Pagination Helpers
 
 Goal:
 
@@ -224,7 +283,7 @@ Done when:
 Tests cover multi-page iteration, max_items stop, and no-next-offset stop.
 ```
 
-## P12-004 Agent Workflow Helpers
+## P12-005 Agent Workflow Helpers
 
 Goal:
 
@@ -249,16 +308,22 @@ token_expires_soon uses X-Token-Expires-In or response metadata.
 read_context_for_review uses iter_pages and read_page, never unbounded reads.
 dry_run_then_submit_review runs dry_run_review first and submits only if dry-run
 returns ok and finding_count is acceptable.
+
+Dry-run submit rules:
+  parser_error present -> do not submit
+  finding_count > 0 -> submit
+  finding_count == 0 -> do not submit; return dry-run response with a warning
 ```
 
 Done when:
 
 ```txt
 Tests prove submit is not called when dry-run fails.
+Tests prove submit is not called when finding_count is 0.
 Tests prove missing scopes are reported clearly.
 ```
 
-## P12-005 Robust Error Surface
+## P12-006 Robust Error Surface
 
 Goal:
 
@@ -281,6 +346,7 @@ Add properties where available:
 ```txt
 KnowNetError.code
 KnowNetError.request_id
+KnowNetVersionError for unsupported response schema_version
 KnowNetScopeError.required_scope
 KnowNetScopeError.current_scopes
 KnowNetRateLimitError.retry_after_seconds
@@ -295,13 +361,24 @@ One retry remains allowed for idempotent GET.
 Writes are not retried by default.
 ```
 
+Schema compatibility:
+
+```txt
+SUPPORTED_SCHEMA_VERSION = 1
+
+If a response meta.schema_version exists and is not supported, raise
+KnowNetVersionError. If schema_version is absent, keep compatibility and do not
+raise.
+```
+
 Done when:
 
 ```txt
 Tests cover 401, 403, 413, 429, 500, malformed JSON, and connection failure.
+Tests cover unsupported schema_version.
 ```
 
-## P12-006 SDK End-To-End Test
+## P12-007 SDK End-To-End Test
 
 Goal:
 
@@ -338,7 +415,7 @@ Done when:
 The E2E test runs in local pytest without requiring an external service.
 ```
 
-## P12-007 Examples And Documentation
+## P12-008 Examples And Documentation
 
 Update:
 
@@ -364,6 +441,17 @@ examples/iterate_pages.py
 examples/review_workflow.py
 ```
 
+`examples/review_workflow.py` must show:
+
+```txt
+1. require_scopes(["reviews:create", "pages:read"])
+2. token_expires_soon() check
+3. read_context_for_review(max_pages=5)
+4. prepare review Markdown
+5. dry_run_then_submit_review(markdown)
+6. print review result or warning
+```
+
 Documentation must explain:
 
 ```txt
@@ -374,6 +462,8 @@ Dry-run before submit
 Scope error handling
 Token expiry warnings
 No direct database access
+Context manager usage
+Async client is reserved for a later phase
 ```
 
 Rules:
@@ -391,7 +481,7 @@ A custom Python agent can read docs and submit a safe dry-run review without
 reading SDK source code.
 ```
 
-## P12-008 Regression And Release Checks
+## P12-009 Regression And Release Checks
 
 Run:
 
@@ -423,12 +513,15 @@ Phase 12 is complete when:
 ```txt
 1. SDK package metadata is complete enough for local editable install.
 2. Common response data can be consumed through typed models.
-3. Pagination helpers cover pages, reviews, findings, and citations.
-4. Workflow helpers guide agents through safe review behavior.
-5. Error objects expose actionable scope, request, retry, and expiry details.
-6. SDK E2E test proves real HTTP integration.
-7. SDK docs and examples are usable without reading source code.
-8. Existing API, MCP, Rust, and web checks still pass.
+3. Sync client supports context manager lifecycle.
+4. Async-ready structure exists without async HTTP implementation.
+5. Pagination helpers cover pages, reviews, findings, and citations.
+6. Workflow helpers guide agents through safe review behavior.
+7. Error objects expose actionable scope, request, retry, version, and expiry
+   details.
+8. SDK E2E test proves real HTTP integration.
+9. SDK docs and examples are usable without reading source code.
+10. Existing API, MCP, Rust, and web checks still pass.
 ```
 
 Phase 12 should make custom AI scripts easier to write. It must not make KnowNet
