@@ -3,7 +3,27 @@
 Phase 13 turns the simple Agent Access panel into an operator-grade dashboard
 for managing external AI agents, tokens, scopes, and recent activity.
 
-Implementation status: pending.
+Implementation status: completed in the codebase.
+
+Completed surface:
+
+```txt
+apps/web/components/AgentAccessPanel.tsx
+  Operator dashboard layout, summary row, token filters, safe token detail,
+  one-time raw token create/rotate panel, destructive confirmations, sanitized
+  event triage, health chips, loading/empty/error states.
+
+apps/web/lib/agentAccess.ts
+  Dashboard helper functions for payload normalization, role gating, token
+  state/signals, filtering, summary counts, metadata sanitization, time labels,
+  copy feedback, and confirmation state.
+
+apps/web/tests/agentAccess.test.mjs
+  Node helper tests covering the safety-critical behavior.
+
+apps/web/app/globals.css
+  Compact operator dashboard styling with no nested cards or decorative effects.
+```
 
 Phase 13 is Dashboard-only. MCP was hardened in Phase 11. The Python SDK was
 hardened in Phase 12.
@@ -613,9 +633,9 @@ rg -n "token_hash|Authorization|password|secret" apps/web/components/AgentAccess
 Expected result:
 
 ```txt
-No dashboard-rendered field exposes token hashes, authorization headers, raw
-passwords, or secrets. Raw agent tokens appear only in the one-time create/rotate
-copy panel.
+No dashboard-rendered field exposes token hashes, raw passwords, or secrets.
+Authorization only appears in the internal fetch header. Raw agent tokens appear
+only in the one-time create/rotate copy panel.
 ```
 
 ## Completion Definition

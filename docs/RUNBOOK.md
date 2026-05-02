@@ -77,12 +77,41 @@ migrate, re-index pages, rebuild citation audits, and rebuild the graph.
 
 ## Agent Token Rotation
 
-List tokens in the Agent Access panel or with `GET /api/agents/tokens`.
-Rotate a token with `POST /api/agents/tokens/{token_id}/rotate`. The new raw
-token is shown once, so update the MCP or SDK environment immediately.
+Use the Agent Access dashboard as the normal operator path. It shows token
+health counts, status filters, token detail, and recent sanitized access events.
+The summary row refreshes only when the page loads or the operator clicks
+Refresh.
+
+Before creating an agent token:
+
+```txt
+1. Confirm the minimum required scope.
+2. Set an expiry date.
+3. Fill in purpose.
+4. Decide whether the token is for MCP or SDK.
+5. Confirm where the token will be stored.
+```
+
+After creating or rotating:
+
+```txt
+1. Copy the raw token once from the warning panel.
+2. Store it in the target MCP/SDK environment.
+3. Dismiss the raw token panel only after storage is confirmed.
+4. Run a small ping/me test from the target client.
+```
+
+Rotate a token from the dashboard or with
+`POST /api/agents/tokens/{token_id}/rotate`. The new raw token is shown once, so
+update the MCP or SDK environment immediately.
 
 Revoke unused tokens with `POST /api/agents/tokens/{token_id}/revoke`. Revoked
 tokens cannot call `/api/agent/*` and cannot use write gateways.
+
+If an agent reports `scope_denied`, open the token events and inspect the
+sanitized metadata for required/current scopes. If it reports `rate_limited`,
+check recent rate-limited events and lower the client request size or frequency.
+Rotate tokens that are expired or expiring soon.
 
 ## MCP Setup
 

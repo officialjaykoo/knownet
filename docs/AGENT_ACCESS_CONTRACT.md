@@ -14,6 +14,37 @@ Authorization: Bearer <agent token shown once by the operator dashboard>
 The token is scoped. It is not an admin token and cannot access maintenance
 operations.
 
+## Operator Dashboard
+
+Owner/admin users manage agent tokens in the web Agent Access dashboard. The
+dashboard uses the existing `/api/agents/*` endpoints and does not create a
+separate token system.
+
+Dashboard behavior:
+
+```txt
+Create:
+  Choose role, scope preset, optional explicit scopes, expiry, purpose, and
+  context limits.
+  The raw token is shown once in a warning panel.
+
+Rotate:
+  Requires confirmation.
+  Revokes the old token and shows the replacement raw token once.
+
+Revoke:
+  Requires confirmation.
+  Leaves the token visible for audit and event triage.
+
+Troubleshoot:
+  Use status filters, health chips, and sanitized access events to identify
+  denied, rate-limited, expired, or unused tokens.
+```
+
+Raw tokens are never returned by token list or event APIs. The dashboard labels
+safe token ids as `Token ID` and labels one-time secrets as
+`Raw token shown once`.
+
 ## Read Endpoints
 
 ```txt
