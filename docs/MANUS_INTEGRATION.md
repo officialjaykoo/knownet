@@ -26,6 +26,35 @@ apps/mcp/configs/manus_custom_mcp.example.json
 
 The endpoint must be a protected HTTPS domain. Quick tunnels are testing-only.
 
+## Observed Test
+
+The operator connected Manus through:
+
+```txt
+Settings -> Connectors -> URL connection
+```
+
+Using the KnowNet MCP URL was enough for initial setup. The MCP bridge logs
+confirmed successful calls:
+
+```txt
+knownet_start_here
+knownet_me
+knownet_state_summary
+knownet_ai_state
+knownet_list_pages
+knownet_read_page
+```
+
+Status:
+
+```txt
+connector registration: works
+read-only MCP calls: work
+infrastructure: quick tunnel, testing-only
+production blocker: named tunnel + access control still required
+```
+
 ## Safety Rules
 
 ```txt

@@ -534,6 +534,35 @@ Act as a first-time external AI reviewer and write finding drafts only.
 Do not claim that you called MCP/API unless the data is present in the pack.
 ```
 
+## Manus
+
+User observation:
+
+```txt
+Manus can connect from Settings -> Connectors -> URL connection.
+The KnowNet MCP address is enough for the initial connector setup.
+```
+
+Confirmed through KnowNet MCP bridge logs:
+
+```txt
+knownet_start_here: ok
+knownet_me: ok
+knownet_state_summary: ok
+knownet_ai_state: ok
+knownet_list_pages: ok
+knownet_read_page: ok
+```
+
+Result:
+
+```txt
+Manus Custom MCP connector can call KnowNet MCP tools through the current
+Cloudflare quick tunnel.
+This is still testing-only because the endpoint is a quick tunnel without a
+named domain and Access policy.
+```
+
 ## Current Judgment
 
 Confirmed:
@@ -546,6 +575,7 @@ DeepSeek Web/Desktop free: GET discovery/preview works
 Qwen Web free: GET discovery/preview works through extractor/search tools
 Kimi Web: no direct MCP in web chat; too unreliable for access decisions; use generated review pack only
 Kimi Code/Playground: MCP-capable path to test later
+Manus: connector URL registration works; MCP tools called successfully through quick tunnel
 MiniMax: direct API-to-MCP mismatch understood; use review pack for web, REST/Agent Runner implemented for API path
 ```
 

@@ -66,6 +66,7 @@ Done:
   - GLM/Z.AI API adapter
   - Qwen-Agent MCP config/profile
   - Manus Custom MCP config/profile
+  - Manus connector URL registration smoke-tested through quick tunnel
   - operator-only /api/model-runs endpoints
   - dry-run-ready run storage
   - explicit operator import into collaboration_reviews/collaboration_findings
@@ -1360,8 +1361,9 @@ Implemented:
   docs/MANUS_INTEGRATION.md
 
 The current implemented Manus surface is configuration and documentation only.
-Live Manus Custom MCP/API registration remains unverified until the operator
-tests Manus integration access with a protected HTTPS endpoint.
+Manus connector URL registration was smoke-tested through the current quick
+tunnel, and read-only MCP tool calls succeeded. Production readiness still
+requires a protected HTTPS endpoint with named tunnel and access control.
 ```
 
 ## P16-012 DeepSeek API Agent Runner
