@@ -179,6 +179,12 @@ apps/mcp/configs/http_bridge.env.example
 apps/mcp/configs/chatgpt_custom_connector.example.json
 ```
 
+Provider-specific GitHub references are tracked separately:
+
+```txt
+docs/MCP_PROVIDER_GITHUB_REFERENCES.md
+```
+
 ## Implementation Guidance
 
 Keep one MCP tool family:
