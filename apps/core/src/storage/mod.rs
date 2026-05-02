@@ -5,8 +5,8 @@ use rusqlite::Connection;
 
 use crate::error::CoreError;
 
-pub mod embeddings;
 pub mod collaboration;
+pub mod embeddings;
 pub mod graph;
 pub mod jobs;
 pub mod messages;
@@ -16,7 +16,6 @@ pub mod phase4;
 pub mod suggestions;
 pub mod util;
 
-pub use embeddings::{embedding_upsert, EmbeddingUpsertInput};
 pub use collaboration::{
     create_collaboration_finding, create_collaboration_review, create_context_bundle_manifest,
     create_implementation_record, update_collaboration_review_status, update_finding_decision,
@@ -24,6 +23,7 @@ pub use collaboration::{
     CreateContextBundleManifestInput, CreateImplementationRecordInput,
     UpdateCollaborationReviewStatusInput, UpdateFindingDecisionInput,
 };
+pub use embeddings::{embedding_upsert, EmbeddingUpsertInput};
 pub use graph::{
     clear_graph_layout_cache, ensure_graph_schema, rebuild_graph_for_page, rebuild_graph_for_vault,
     set_graph_node_pin, upsert_graph_layout_node, ClearGraphLayoutInput, GraphRebuildSummary,
@@ -34,8 +34,7 @@ pub use messages::{
     write_message, write_pending_message, WriteMessageInput, WritePendingMessageInput,
 };
 pub use pages::{
-    create_page, import_obsidian_page, index_page_file, restore_revision, CreatePageInput,
-    ImportObsidianPageInput, RestoreRevisionInput,
+    create_page, index_page_file, restore_revision, CreatePageInput, RestoreRevisionInput,
 };
 pub use phase3::{
     assign_vault_member, create_session, create_submission, create_user, create_vault,

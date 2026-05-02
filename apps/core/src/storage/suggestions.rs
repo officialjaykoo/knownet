@@ -272,7 +272,10 @@ pub fn reject_suggestion(input: RejectSuggestionInput<'_>) -> Result<(), CoreErr
         )
         .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
     if updated == 0 {
-        return Err(CoreError::new("suggestion_not_found", "Suggestion not found"));
+        return Err(CoreError::new(
+            "suggestion_not_found",
+            "Suggestion not found",
+        ));
     }
     Ok(())
 }

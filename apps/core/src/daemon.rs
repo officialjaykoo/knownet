@@ -178,7 +178,10 @@ fn handle_request(request: Request) -> Response {
                 .get("page_id")
                 .and_then(|value| value.as_str())
                 .unwrap_or("");
-            let revision_id = request.params.get("revision_id").and_then(|value| value.as_str());
+            let revision_id = request
+                .params
+                .get("revision_id")
+                .and_then(|value| value.as_str());
             let path = request
                 .params
                 .get("path")
@@ -443,7 +446,10 @@ fn handle_request(request: Request) -> Response {
                 .get("session_id")
                 .and_then(|value| value.as_str())
                 .unwrap_or("");
-            let user_id = request.params.get("user_id").and_then(|value| value.as_str());
+            let user_id = request
+                .params
+                .get("user_id")
+                .and_then(|value| value.as_str());
             let actor_type = request
                 .params
                 .get("actor_type")
@@ -538,7 +544,10 @@ fn handle_request(request: Request) -> Response {
                 .get("actor_type")
                 .and_then(|value| value.as_str())
                 .unwrap_or("anonymous");
-            let session_id = request.params.get("session_id").and_then(|value| value.as_str());
+            let session_id = request
+                .params
+                .get("session_id")
+                .and_then(|value| value.as_str());
             let created_at = request
                 .params
                 .get("created_at")
@@ -589,7 +598,10 @@ fn handle_request(request: Request) -> Response {
                 .get("reviewed_by")
                 .and_then(|value| value.as_str())
                 .unwrap_or("");
-            let review_note = request.params.get("review_note").and_then(|value| value.as_str());
+            let review_note = request
+                .params
+                .get("review_note")
+                .and_then(|value| value.as_str());
             let updated_at = request
                 .params
                 .get("updated_at")

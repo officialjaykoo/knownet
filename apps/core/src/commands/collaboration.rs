@@ -69,12 +69,14 @@ fn update_collaboration_review_status(request: &Request) -> Response {
     let review_id = str_param(request, "review_id", "");
     let status = str_param(request, "status", "");
     let updated_at = str_param(request, "updated_at", "");
-    match storage::update_collaboration_review_status(storage::UpdateCollaborationReviewStatusInput {
-        sqlite_path,
-        review_id,
-        status,
-        updated_at,
-    }) {
+    match storage::update_collaboration_review_status(
+        storage::UpdateCollaborationReviewStatusInput {
+            sqlite_path,
+            review_id,
+            status,
+            updated_at,
+        },
+    ) {
         Ok(()) => success(
             request,
             json!({

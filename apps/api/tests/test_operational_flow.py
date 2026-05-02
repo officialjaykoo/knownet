@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -14,42 +16,57 @@ def _isolate_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("SQLITE_PATH", str(data_dir / "knownet.db"))
 
 
-def test_import_graph_snapshot_restore_operational_flow(tmp_path, monkeypatch):
+def test_page_graph_snapshot_restore_operational_flow(tmp_path, monkeypatch):
     _isolate_settings(monkeypatch, tmp_path)
-    source_dir = tmp_path / "long-running-vault"
-    source_dir.mkdir()
-    (source_dir / "Project Alpha.md").write_text(
-        "# Project Alpha\n\n"
-        "Alpha is the operating hub for [[Project Beta]] and [[Citation Review]].\n\n"
-        "## Decisions\n\n"
-        "Keep local-first backups before large imports. [^msg-alpha]\n\n"
-        "[^msg-alpha]: Imported operational note.",
-        encoding="utf-8",
-    )
-    (source_dir / "Project Beta.md").write_text(
-        "# Project Beta\n\n"
-        "Beta links back to [[Project Alpha]] and tracks [[Restore Drill]].\n\n"
-        "## Worklog\n\n"
-        "Graph rebuild should stay idempotent after repeated imports.",
-        encoding="utf-8",
-    )
-    (source_dir / "Restore Drill.md").write_text(
-        "# Restore Drill\n\n"
-        "Restore drills prove that snapshots can recover Markdown and SQLite together.\n\n"
-        "- Check graph after restore\n"
-        "- Run verify-index\n",
-        encoding="utf-8",
-    )
 
     with TestClient(app) as client:
-        imported = client.post(
-            "/api/maintenance/obsidian/import",
-            json={"source_dir": str(source_dir), "dry_run": False},
-        )
-        assert imported.status_code == 200
-        import_data = imported.json()["data"]
-        assert import_data["summary"]["create"] == 3
-        assert import_data["summary"]["failed"] == 0
+        created_pages = {}
+        for slug, title in (
+            ("project-alpha", "Project Alpha"),
+            ("project-beta", "Project Beta"),
+            ("restore-drill", "Restore Drill"),
+        ):
+            created = client.post("/api/pages", json={"slug": slug, "title": title})
+            assert created.status_code == 200
+            created_pages[slug] = created.json()["data"]
+
+        page_markdown = {
+            "project-alpha": (
+                "# Project Alpha\n\n"
+                "Alpha is the operating hub for [[Project Beta]] and [[Citation Review]].\n\n"
+                "## Decisions\n\n"
+                "Keep .tar.gz snapshots before large maintenance work. [^msg-alpha]\n\n"
+                "[^msg-alpha]: Operational source."
+            ),
+            "project-beta": (
+                "# Project Beta\n\n"
+                "Beta links back to [[Project Alpha]] and tracks [[Restore Drill]].\n\n"
+                "## Worklog\n\n"
+                "Graph rebuild should stay idempotent after repeated page updates."
+            ),
+            "restore-drill": (
+                "# Restore Drill\n\n"
+                "Restore drills prove that snapshots can recover pages and SQLite together.\n\n"
+                "- Check graph after restore\n"
+                "- Run verify-index\n"
+            ),
+        }
+        for slug, markdown in page_markdown.items():
+            page_path = app.state.settings.data_dir / "pages" / f"{slug}.md"
+            page_path.write_text(markdown, encoding="utf-8")
+            page_id = f"page_{slug.replace('-', '_')}"
+            asyncio.run(
+                app.state.rust_core.request(
+                    "index_page",
+                    {
+                        "sqlite_path": str(app.state.settings.sqlite_path),
+                        "path": str(page_path),
+                        "page_id": page_id,
+                        "revision_id": created_pages[slug]["revision_id"],
+                        "indexed_at": "2026-05-02T00:00:00Z",
+                    },
+                )
+            )
 
         rebuilt = client.post("/api/graph/rebuild", json={"scope": "vault"})
         assert rebuilt.status_code == 200

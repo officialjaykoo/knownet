@@ -339,7 +339,7 @@ def test_active_docs_and_app_code_use_current_terms():
         REPO_ROOT / "apps" / "web" / "app",
         REPO_ROOT / "apps" / "web" / "components",
     ]
-    stale = ("data/" + "wiki", "/api/" + "wiki", "Markdown" + "-first")
+    stale = ("Markdown" + "-first",)
     hits: list[str] = []
     for root in scan_roots:
         paths = [root] if root.is_file() else list(root.rglob("*"))

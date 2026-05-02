@@ -139,10 +139,7 @@ fn extract_citations(body: &str) -> Vec<Value> {
 fn claim_paragraph(body: &str, marker: usize) -> String {
     let before = &body[..marker];
     let after = &body[marker..];
-    let start = before
-        .rfind("\n\n")
-        .map(|index| index + 2)
-        .unwrap_or(0);
+    let start = before.rfind("\n\n").map(|index| index + 2).unwrap_or(0);
     let end = after
         .find("\n\n")
         .map(|index| marker + index)

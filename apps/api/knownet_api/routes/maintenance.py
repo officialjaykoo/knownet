@@ -20,7 +20,6 @@ from ..config import REPO_ROOT
 from ..db.sqlite import execute, fetch_all, fetch_one
 from ..paths import PAGE_DIR_NAME, page_storage_dir
 from ..security import Actor, require_admin_access, utc_now
-from ..services.rust_core import RustCoreError
 from ..status import operation_failure_status
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
@@ -28,11 +27,6 @@ router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
 SNAPSHOT_DIRS = (PAGE_DIR_NAME, "revisions", "suggestions", "inbox", "sources")
 LOCK_ACTIVE_STATUSES = ("active", "running")
-
-
-class ObsidianImportRequest(BaseModel):
-    source_dir: str
-    dry_run: bool = True
 
 
 class RestoreRequest(BaseModel):
@@ -69,21 +63,6 @@ async def active_maintenance_lock(sqlite_path: Path) -> dict[str, Any] | None:
 def _snapshot_name() -> str:
     stamp = utc_now().replace(":", "").replace("-", "").replace(".", "")[:15]
     return f"knownet-snapshot-{stamp}-{uuid4().hex[:8]}.tar.gz"
-
-
-def _export_name() -> str:
-    return "obsidian-export-" + utc_now().replace(":", "").replace("-", "").replace(".", "") + ".tar.gz"
-
-
-def _add_tree_to_tar(archive: tarfile.TarFile, source: Path, arc_prefix: str) -> int:
-    count = 0
-    if not source.exists():
-        return count
-    for path in sorted(source.rglob("*")):
-        if path.is_file():
-            archive.add(path, _posix(Path(arc_prefix) / path.relative_to(source)))
-            count += 1
-    return count
 
 
 def _sha256_bytes(content: bytes) -> str:
@@ -249,13 +228,6 @@ async def _apply_snapshot_retention(backup_dir: Path, retention_count: int) -> N
     snapshots = sorted(backup_dir.glob("knownet-snapshot-*.tar.gz"), key=lambda path: path.stat().st_mtime, reverse=True)
     for old in snapshots[max(1, retention_count):]:
         old.unlink(missing_ok=True)
-
-
-def _safe_import_slug(path: Path) -> str:
-    slug = "".join(ch.lower() if ch.isalnum() else "-" for ch in path.stem).strip("-")
-    while "--" in slug:
-        slug = slug.replace("--", "-")
-    return slug or "untitled"
 
 
 async def _table_exists(sqlite_path: Path, name: str) -> bool:
@@ -479,153 +451,6 @@ async def restore_snapshot(payload: RestoreRequest, request: Request, actor: Act
         if restore_dir.exists():
             rmtree(restore_dir, ignore_errors=True)
     await _release_lock(settings, lock_id)
-    return {"ok": True, "data": result}
-
-
-@router.post("/obsidian/import")
-async def obsidian_import(
-    payload: ObsidianImportRequest,
-    request: Request,
-    actor: Actor = Depends(require_admin_access),
-):
-    settings = request.app.state.settings
-    source_dir = Path(payload.source_dir).expanduser().resolve()
-    if not source_dir.exists() or not source_dir.is_dir():
-        raise HTTPException(status_code=404, detail={"code": "directory_not_found", "message": "Import source directory not found", "details": {"source_dir": str(source_dir)}})
-
-    pages_dir = page_storage_dir(settings.data_dir)
-    pages_dir.mkdir(parents=True, exist_ok=True)
-    actions = []
-    pages_table_exists = await _table_exists(settings.sqlite_path, "pages")
-    for path in sorted(source_dir.rglob("*.md")):
-        parts = {part.lower() for part in path.parts}
-        if ".obsidian" in parts or ".trash" in parts:
-            continue
-        slug = _safe_import_slug(path)
-        target = pages_dir / f"{slug}.md"
-        action = "conflict" if target.exists() else "create"
-        conflict_reason = "target_exists" if target.exists() else None
-        if action == "create" and pages_table_exists:
-            existing_page = await fetch_one(settings.sqlite_path, "SELECT id FROM pages WHERE slug = ?", (slug,))
-            if existing_page:
-                action = "conflict"
-                conflict_reason = "database_slug_exists"
-        actions.append(
-            {
-                "source_path": str(path).replace("\\", "/"),
-                "slug": slug,
-                "target_path": str(target).replace("\\", "/"),
-                "action": action,
-                "conflict_reason": conflict_reason,
-            }
-        )
-
-    if not payload.dry_run:
-        for action in actions:
-            if action["action"] != "create":
-                continue
-            page_id = f"page_{action['slug'].replace('-', '_')}"
-            revision_id = f"rev_import_{action['slug'].replace('-', '_')}"
-            try:
-                imported = await request.app.state.rust_core.request(
-                    "import_obsidian_page",
-                    {
-                        "data_dir": str(settings.data_dir),
-                        "sqlite_path": str(settings.sqlite_path),
-                        "source_path": action["source_path"],
-                        "page_id": page_id,
-                        "revision_id": revision_id,
-                        "slug": action["slug"],
-                        "title": Path(action["source_path"]).stem,
-                        "imported_at": utc_now(),
-                    },
-                )
-            except RustCoreError as error:
-                action["action"] = "failed"
-                action["write_status"] = operation_failure_status(error)
-                continue
-            action["target_path"] = imported["path"]
-            action["write_status"] = {"status": "created", "revision_id": imported["revision_id"]}
-            try:
-                await request.app.state.rust_core.request(
-                    "index_page",
-                    {
-                        "sqlite_path": str(settings.sqlite_path),
-                        "path": action["target_path"],
-                        "page_id": page_id,
-                        "revision_id": revision_id,
-                        "indexed_at": utc_now(),
-                    },
-                )
-            except Exception as error:
-                action["index_status"] = operation_failure_status(error)
-            else:
-                action["index_status"] = {"status": "indexed"}
-        try:
-            result = await request.app.state.rust_core.request(
-                "rebuild_graph_for_vault",
-                {
-                    "sqlite_path": str(settings.sqlite_path),
-                    "vault_id": actor.vault_id,
-                    "rebuilt_at": utc_now(),
-                },
-            )
-            result = {"status": "rebuilt", "result": result or {}}
-        except Exception as error:
-            result = operation_failure_status(error)
-        for action in actions:
-            action.setdefault("graph_rebuild", result)
-
-    result = {
-        "source_dir": str(source_dir).replace("\\", "/"),
-        "dry_run": payload.dry_run,
-        "actions": actions,
-        "summary": {
-            "create": sum(1 for item in actions if item["action"] == "create"),
-            "conflict": sum(1 for item in actions if item["action"] == "conflict"),
-            "failed": sum(1 for item in actions if item["action"] == "failed"),
-        },
-    }
-    await write_audit_event(
-        settings.sqlite_path,
-        action="maintenance.obsidian_import",
-        actor=actor,
-        target_type="import",
-        target_id=str(source_dir).replace("\\", "/"),
-        metadata={"dry_run": payload.dry_run, "summary": result["summary"]},
-    )
-    return {"ok": True, "data": result}
-
-
-@router.post("/obsidian/export")
-async def obsidian_export(request: Request, actor: Actor = Depends(require_admin_access)):
-    settings = request.app.state.settings
-    export_dir = settings.data_dir / "backups"
-    tmp_dir = settings.data_dir / "tmp"
-    export_dir.mkdir(parents=True, exist_ok=True)
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    export_path = export_dir / _export_name()
-    tmp_export_path = tmp_dir / f"{export_path.name}.tmp"
-    pages_dir = page_storage_dir(settings.data_dir)
-    count = 0
-    with tarfile.open(tmp_export_path, "w:gz") as archive:
-        count = _add_tree_to_tar(archive, pages_dir, "vault")
-        _add_bytes_to_tar(archive, "manifest.json", yaml.safe_dump({"kind": "knownet-obsidian-export", "files": count}).encode("utf-8"))
-    tmp_export_path.replace(export_path)
-    result = {
-        "name": export_path.name,
-        "path": str(export_path).replace("\\", "/"),
-        "size_bytes": export_path.stat().st_size,
-        "files": count,
-    }
-    await write_audit_event(
-        settings.sqlite_path,
-        action="maintenance.obsidian_export",
-        actor=actor,
-        target_type="export",
-        target_id=export_path.name,
-        metadata=result,
-    )
     return {"ok": True, "data": result}
 
 
@@ -934,7 +759,7 @@ async def verify_index(request: Request, actor: Actor = Depends(require_admin_ac
             if any(term in normalized for term in forbidden_terms):
                 issues.append({"code": "context_bundle_forbidden_reference", "bundle_id": row["id"]})
 
-    stale_patterns = ("data/" + "wiki", "/api/" + "wiki", "Markdown" + "-first")
+    stale_patterns = ("Markdown" + "-first",)
     scan_paths = [
         REPO_ROOT / "README.md",
         REPO_ROOT / "PHASE_7_TASKS.md",

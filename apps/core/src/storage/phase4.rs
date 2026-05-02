@@ -124,14 +124,32 @@ pub fn rebuild_citation_audits_for_page(
     let mut warnings = Vec::new();
 
     for citation in citations {
-        let citation_key = citation.get("key").and_then(Value::as_str).unwrap_or("").trim();
-        let claim_text = citation.get("claim_text").and_then(Value::as_str).unwrap_or("").trim();
-        let claim_hash = citation.get("claim_hash").and_then(Value::as_str).unwrap_or("").trim();
+        let citation_key = citation
+            .get("key")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let claim_text = citation
+            .get("claim_text")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
+        let claim_hash = citation
+            .get("claim_hash")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
         if citation_key.is_empty() || claim_text.is_empty() || claim_hash.is_empty() {
             failed += 1;
             continue;
         }
-        let audit_id = format!("ca_{}", hash24(&format!("{}:{}:{}:{}", input.vault_id, input.page_id, citation_key, claim_hash)));
+        let audit_id = format!(
+            "ca_{}",
+            hash24(&format!(
+                "{}:{}:{}:{}",
+                input.vault_id, input.page_id, citation_key, claim_hash
+            ))
+        );
         let existing: i64 = tx
             .query_row(
                 "SELECT COUNT(*) FROM citation_audits WHERE vault_id = ?1 AND page_id = ?2 AND (revision_id IS ?3 OR revision_id = ?3) AND citation_key = ?4 AND claim_hash = ?5",
@@ -154,7 +172,13 @@ pub fn rebuild_citation_audits_for_page(
                 let source_hash = sha256_hex(&evidence.text);
                 let excerpt = evidence_excerpt(&evidence.text);
                 let excerpt_hash = sha256_hex(&excerpt);
-                let snapshot_id = format!("ev_{}", hash24(&format!("{}:{}:{}", citation_key, source_hash, excerpt_hash)));
+                let snapshot_id = format!(
+                    "ev_{}",
+                    hash24(&format!(
+                        "{}:{}:{}",
+                        citation_key, source_hash, excerpt_hash
+                    ))
+                );
                 tx.execute(
                     "INSERT OR IGNORE INTO citation_evidence_snapshots
                      (id, vault_id, citation_key, source_type, source_id, source_path, excerpt, excerpt_hash, source_hash, captured_at)
@@ -173,7 +197,13 @@ pub fn rebuild_citation_audits_for_page(
                     ],
                 )
                 .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
-                (status.to_string(), reason, ratio, Some(snapshot_id), Some(source_hash))
+                (
+                    status.to_string(),
+                    reason,
+                    ratio,
+                    Some(snapshot_id),
+                    Some(source_hash),
+                )
             }
             None => (
                 "stale".to_string(),
@@ -220,8 +250,12 @@ pub fn rebuild_citation_audits_for_page(
         } else {
             skipped += 1;
         }
-        if matches!(status.as_str(), "unsupported" | "contradicted" | "stale" | "needs_review") {
-            warnings.push(json!({"citation_key": citation_key, "status": status, "reason": reason}));
+        if matches!(
+            status.as_str(),
+            "unsupported" | "contradicted" | "stale" | "needs_review"
+        ) {
+            warnings
+                .push(json!({"citation_key": citation_key, "status": status, "reason": reason}));
         }
     }
     tx.commit()
@@ -234,7 +268,9 @@ pub fn rebuild_citation_audits_for_page(
     })
 }
 
-pub fn update_citation_audit_status(input: UpdateCitationAuditStatusInput<'_>) -> Result<(), CoreError> {
+pub fn update_citation_audit_status(
+    input: UpdateCitationAuditStatusInput<'_>,
+) -> Result<(), CoreError> {
     validate_id(input.audit_id)?;
     ensure_phase4_schema(input.sqlite_path)?;
     let connection = open_connection(input.sqlite_path)?;
@@ -249,7 +285,10 @@ pub fn update_citation_audit_status(input: UpdateCitationAuditStatusInput<'_>) -
         )
         .map_err(|err| CoreError::new("citation_audit_not_found", err.to_string()))?;
     if from_status == input.status {
-        return Err(CoreError::new("citation_already_resolved", "citation audit already has this status"));
+        return Err(CoreError::new(
+            "citation_already_resolved",
+            "citation audit already has this status",
+        ));
     }
     tx.execute(
         "UPDATE citation_audits SET status = ?1, verifier_type = 'human', verifier_id = ?2, reason = ?3, updated_at = ?4 WHERE id = ?5",
@@ -276,7 +315,9 @@ pub fn update_citation_audit_status(input: UpdateCitationAuditStatusInput<'_>) -
     Ok(())
 }
 
-pub fn update_citation_validation_status(input: UpdateCitationValidationStatusInput<'_>) -> Result<(), CoreError> {
+pub fn update_citation_validation_status(
+    input: UpdateCitationValidationStatusInput<'_>,
+) -> Result<(), CoreError> {
     if !matches!(
         input.status,
         "unchecked" | "supported" | "partially_supported" | "unsupported"
@@ -306,7 +347,10 @@ struct Evidence {
     text: String,
 }
 
-fn resolve_evidence(connection: &Connection, citation_key: &str) -> Result<Option<Evidence>, CoreError> {
+fn resolve_evidence(
+    connection: &Connection,
+    citation_key: &str,
+) -> Result<Option<Evidence>, CoreError> {
     let row: Result<(String,), _> = connection.query_row(
         "SELECT path FROM messages WHERE id = ?1",
         params![citation_key],
@@ -315,7 +359,8 @@ fn resolve_evidence(connection: &Connection, citation_key: &str) -> Result<Optio
     let Ok((path,)) = row else {
         return Ok(None);
     };
-    let text = fs::read_to_string(&path).map_err(|_| CoreError::new("citation_source_missing", "citation source missing"))?;
+    let text = fs::read_to_string(&path)
+        .map_err(|_| CoreError::new("citation_source_missing", "citation source missing"))?;
     Ok(Some(Evidence {
         source_type: "message".to_string(),
         source_id: citation_key.to_string(),

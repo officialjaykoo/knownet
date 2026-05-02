@@ -75,13 +75,22 @@ pub struct AssignVaultMemberInput<'a> {
     pub created_at: &'a str,
 }
 
-pub fn run_phase3_migration(sqlite_path: &str, backup_dir: &str, migrated_at: &str) -> Result<String, CoreError> {
+pub fn run_phase3_migration(
+    sqlite_path: &str,
+    backup_dir: &str,
+    migrated_at: &str,
+) -> Result<String, CoreError> {
     let db_path = Path::new(sqlite_path);
     if db_path.exists() {
         let backup_root = Path::new(backup_dir);
-        fs::create_dir_all(backup_root).map_err(|err| CoreError::new("io_error", err.to_string()))?;
-        let backup_path = backup_root.join(format!("knownet-phase3-{}.db", sanitize_timestamp(migrated_at)));
-        fs::copy(db_path, backup_path).map_err(|err| CoreError::new("io_error", err.to_string()))?;
+        fs::create_dir_all(backup_root)
+            .map_err(|err| CoreError::new("io_error", err.to_string()))?;
+        let backup_path = backup_root.join(format!(
+            "knownet-phase3-{}.db",
+            sanitize_timestamp(migrated_at)
+        ));
+        fs::copy(db_path, backup_path)
+            .map_err(|err| CoreError::new("io_error", err.to_string()))?;
     }
 
     let connection = open_connection(sqlite_path)?;
@@ -337,11 +346,16 @@ pub fn create_submission(input: CreateSubmissionInput<'_>) -> Result<(), CoreErr
     Ok(())
 }
 
-pub fn update_submission_status(input: UpdateSubmissionStatusInput<'_>) -> Result<String, CoreError> {
+pub fn update_submission_status(
+    input: UpdateSubmissionStatusInput<'_>,
+) -> Result<String, CoreError> {
     validate_id(input.submission_id)?;
     validate_id(input.reviewed_by)?;
     if input.status != "queued" && input.status != "rejected" {
-        return Err(CoreError::new("validation_error", "unsupported submission status"));
+        return Err(CoreError::new(
+            "validation_error",
+            "unsupported submission status",
+        ));
     }
     let connection = open_connection(input.sqlite_path)?;
     let tx = connection
@@ -382,7 +396,11 @@ pub fn update_submission_status(input: UpdateSubmissionStatusInput<'_>) -> Resul
         tx.execute(
             "INSERT INTO job_events (job_id, event_type, payload, created_at)
              VALUES (?1, 'job.queued', ?2, ?3)",
-            params![job_id, "{\"status\":\"queued\",\"source\":\"submission\"}", input.updated_at],
+            params![
+                job_id,
+                "{\"status\":\"queued\",\"source\":\"submission\"}",
+                input.updated_at
+            ],
         )
         .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
         tx.commit()
@@ -413,17 +431,28 @@ pub fn tombstone_page(input: TombstonePageInput<'_>) -> Result<String, CoreError
         )
         .map_err(|err| CoreError::new("page_not_found", err.to_string()))?;
     if status == "tombstone" {
-        return Err(CoreError::new("page_already_tombstoned", "page is already tombstoned"));
+        return Err(CoreError::new(
+            "page_already_tombstoned",
+            "page is already tombstoned",
+        ));
     }
 
     let source_path = Path::new(&page_path);
     if !source_path.exists() {
-        return Err(CoreError::new("file_not_found", "page markdown file not found"));
+        return Err(CoreError::new(
+            "file_not_found",
+            "page markdown file not found",
+        ));
     }
     let tombstone_dir = Path::new(input.data_dir).join("revisions").join(&page_id);
-    fs::create_dir_all(&tombstone_dir).map_err(|err| CoreError::new("io_error", err.to_string()))?;
-    let tombstone_path = tombstone_dir.join(format!("tombstone-{}.md", sanitize_timestamp(input.tombstoned_at)));
-    fs::rename(source_path, &tombstone_path).map_err(|err| CoreError::new("io_error", err.to_string()))?;
+    fs::create_dir_all(&tombstone_dir)
+        .map_err(|err| CoreError::new("io_error", err.to_string()))?;
+    let tombstone_path = tombstone_dir.join(format!(
+        "tombstone-{}.md",
+        sanitize_timestamp(input.tombstoned_at)
+    ));
+    fs::rename(source_path, &tombstone_path)
+        .map_err(|err| CoreError::new("io_error", err.to_string()))?;
 
     tx.execute(
         "UPDATE pages SET status = 'tombstone', updated_at = ?1 WHERE id = ?2",
@@ -448,14 +477,18 @@ pub fn recover_page(input: RecoverPageInput<'_>) -> Result<String, CoreError> {
         )
         .map_err(|err| CoreError::new("page_not_found", err.to_string()))?;
     if status != "tombstone" {
-        return Err(CoreError::new("page_not_tombstoned", "page is not tombstoned"));
+        return Err(CoreError::new(
+            "page_not_tombstoned",
+            "page is not tombstoned",
+        ));
     }
     let tombstone_path = latest_tombstone_path(&page_id, Path::new(&page_path))?;
     let restore_path = Path::new(&page_path);
     if let Some(parent) = restore_path.parent() {
         fs::create_dir_all(parent).map_err(|err| CoreError::new("io_error", err.to_string()))?;
     }
-    fs::rename(&tombstone_path, restore_path).map_err(|err| CoreError::new("io_error", err.to_string()))?;
+    fs::rename(&tombstone_path, restore_path)
+        .map_err(|err| CoreError::new("io_error", err.to_string()))?;
     tx.execute(
         "UPDATE pages SET status = 'active', updated_at = ?1 WHERE id = ?2",
         params![input.recovered_at, page_id],
@@ -470,7 +503,9 @@ fn add_vault_id_if_missing(connection: &Connection, table: &str) -> Result<(), C
     if !table_exists(connection, table)? || column_exists(connection, table, "vault_id")? {
         return Ok(());
     }
-    let sql = format!("ALTER TABLE {table} ADD COLUMN vault_id TEXT NOT NULL DEFAULT '{DEFAULT_VAULT_ID}'");
+    let sql = format!(
+        "ALTER TABLE {table} ADD COLUMN vault_id TEXT NOT NULL DEFAULT '{DEFAULT_VAULT_ID}'"
+    );
     connection
         .execute(&sql, [])
         .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
@@ -526,7 +561,9 @@ fn latest_tombstone_path(page_id: &str, page_path: &Path) -> Result<PathBuf, Cor
         .join("revisions")
         .join(page_id);
     let mut candidates = Vec::new();
-    for entry in fs::read_dir(&revisions_dir).map_err(|err| CoreError::new("io_error", err.to_string()))? {
+    for entry in
+        fs::read_dir(&revisions_dir).map_err(|err| CoreError::new("io_error", err.to_string()))?
+    {
         let path = entry
             .map_err(|err| CoreError::new("io_error", err.to_string()))?
             .path();
@@ -546,6 +583,12 @@ fn latest_tombstone_path(page_id: &str, page_path: &Path) -> Result<PathBuf, Cor
 fn sanitize_timestamp(timestamp: &str) -> String {
     timestamp
         .chars()
-        .map(|value| if value.is_ascii_alphanumeric() { value } else { '-' })
+        .map(|value| {
+            if value.is_ascii_alphanumeric() {
+                value
+            } else {
+                '-'
+            }
+        })
         .collect()
 }

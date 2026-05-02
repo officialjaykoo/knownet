@@ -10,7 +10,7 @@ KnowNet should become more complete by reducing ambiguity, hidden coupling, and 
 
 | Area | Current state | Desired direction | Status |
 |---|---|---|---|
-| FastAPI direct writes | Maintenance orchestration still writes operational lock/run/snapshot state directly, but page creation, suggestion rejection, citation verification status, and Obsidian page import now delegate canonical mutations to Rust. | Keep remaining FastAPI writes scoped to orchestration and audit-style operational state. | Accepted |
+| FastAPI direct writes | Maintenance orchestration still writes operational lock/run/snapshot state directly, but page creation, suggestion rejection, and citation verification status now delegate canonical mutations to Rust. | Keep remaining FastAPI writes scoped to orchestration and audit-style operational state. | Accepted |
 | Web page size | `apps/web/app/page.tsx` still owns workflow state, but Operations and Graph panels are now components. | Extract stable panels/components gradually without changing behavior. | Improved |
 | Rust daemon handler size | `apps/core/src/daemon.rs` still contains a large command handler, but page, suggestion, citation, and graph commands now route through `apps/core/src/commands/`. | Move only high-risk repeated command groups when touched; avoid splitting tiny one-off commands just to create files. | Improved |
 | Operations docs | Runbook exists but should keep matching actual health, restore, import, and release behavior. | Update docs alongside each hardening change. | Ongoing |
@@ -24,7 +24,7 @@ KnowNet should become more complete by reducing ambiguity, hidden coupling, and 
 5. Extracted the Graph panel into `apps/web/components/GraphPanel.tsx`.
 6. Added Rust command domain modules under `apps/core/src/commands/` for new page and suggestion commands.
 7. Verified that API tests need the rebuilt Rust binary; if `knownet-core.exe` is running, stop it before `cargo build`.
-8. Moved Obsidian per-page import writes to Rust daemon command `import_obsidian_page`.
+8. Removed third-party note-app import/export compatibility so KnowNet keeps a single native page and snapshot model.
 9. Moved citation validation status updates to Rust daemon command `update_citation_validation_status`.
 10. Moved graph rebuild/layout cache command routing out of the large daemon match arm and added shared command response/parameter helpers.
 

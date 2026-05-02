@@ -108,8 +108,13 @@ Page API:
   /api/pages only.
 
 Archive format:
-  .tar.gz for snapshots and multi-asset exports.
+  .tar.gz only.
   Do not introduce another archive format.
+
+External note-app compatibility:
+  Do not add third-party note-app import/export compatibility.
+  KnowNet uses its native pages, structured records, context bundles, and
+  snapshots.
 
 Security posture:
   Context bundle secret checks are hard-coded and cannot be disabled by user

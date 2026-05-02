@@ -78,8 +78,8 @@ pub struct CreateContextBundleManifestInput<'a> {
 }
 
 fn connection(sqlite_path: &str) -> Result<Connection, CoreError> {
-    let connection =
-        Connection::open(sqlite_path).map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
+    let connection = Connection::open(sqlite_path)
+        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
     connection
         .busy_timeout(std::time::Duration::from_millis(5000))
         .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
@@ -173,9 +173,19 @@ pub fn create_collaboration_finding(
     validate_id(input.review_id)?;
     validate_status(
         input.status,
-        &["pending", "accepted", "rejected", "deferred", "needs_more_context", "implemented"],
+        &[
+            "pending",
+            "accepted",
+            "rejected",
+            "deferred",
+            "needs_more_context",
+            "implemented",
+        ],
     )?;
-    validate_status(input.severity, &["critical", "high", "medium", "low", "info"])?;
+    validate_status(
+        input.severity,
+        &["critical", "high", "medium", "low", "info"],
+    )?;
     let connection = connection(input.sqlite_path)?;
     connection
         .execute(
@@ -234,7 +244,10 @@ pub fn update_collaboration_review_status(
     input: UpdateCollaborationReviewStatusInput<'_>,
 ) -> Result<(), CoreError> {
     validate_id(input.review_id)?;
-    validate_status(input.status, &["pending_review", "triaged", "implemented", "archived"])?;
+    validate_status(
+        input.status,
+        &["pending_review", "triaged", "implemented", "archived"],
+    )?;
     let connection = connection(input.sqlite_path)?;
     let changed = connection
         .execute(

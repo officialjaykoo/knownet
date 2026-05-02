@@ -112,7 +112,9 @@ pub fn write_message(input: WriteMessageInput<'_>) -> Result<WriteMessageResult,
     })
 }
 
-pub fn write_pending_message(input: WritePendingMessageInput<'_>) -> Result<WritePendingMessageResult, CoreError> {
+pub fn write_pending_message(
+    input: WritePendingMessageInput<'_>,
+) -> Result<WritePendingMessageResult, CoreError> {
     validate_id(input.message_id)?;
     let data_dir = Path::new(input.data_dir);
     let inbox_dir = data_dir.join("inbox");

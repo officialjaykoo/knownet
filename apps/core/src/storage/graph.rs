@@ -1068,7 +1068,8 @@ fn update_graph_signals(tx: &Transaction<'_>, vault_id: &str, now: &str) -> Resu
         let many_incoming_links = incoming_links >= incoming_threshold && incoming_links > 0;
         let many_outgoing_links = outgoing_links >= outgoing_threshold && outgoing_links > 0;
         let bridge = incoming_links > 0 && outgoing_links > 0 && degree >= hub_threshold;
-        let core_candidate = hub || many_incoming_links || many_outgoing_links || bridge || title_core;
+        let core_candidate =
+            hub || many_incoming_links || many_outgoing_links || bridge || title_core;
         let auto_core = core_candidate && auto_core_ids.contains(&node_id);
         let user_pinned: bool = tx
             .query_row(

@@ -18,30 +18,11 @@ pub struct CreatePageInput<'a> {
     pub created_at: &'a str,
 }
 
-pub struct ImportObsidianPageInput<'a> {
-    pub data_dir: &'a str,
-    pub sqlite_path: &'a str,
-    pub source_path: &'a str,
-    pub page_id: &'a str,
-    pub revision_id: &'a str,
-    pub slug: &'a str,
-    pub title: &'a str,
-    pub imported_at: &'a str,
-}
-
 pub struct RestoreRevisionInput<'a> {
     pub sqlite_path: &'a str,
     pub slug: &'a str,
     pub revision_id: &'a str,
     pub restored_at: &'a str,
-}
-
-pub struct ImportObsidianPageResult {
-    pub slug: String,
-    pub title: String,
-    pub path: String,
-    pub revision_id: String,
-    pub revision_path: String,
 }
 
 pub struct CreatePageResult {
@@ -138,111 +119,6 @@ pub fn create_page(input: CreatePageInput<'_>) -> Result<CreatePageResult, CoreE
         revision_id: input.revision_id.to_string(),
         revision_path: revision_path_string,
     })
-}
-
-pub fn import_obsidian_page(
-    input: ImportObsidianPageInput<'_>,
-) -> Result<ImportObsidianPageResult, CoreError> {
-    validate_id(input.page_id)?;
-    validate_id(input.revision_id)?;
-    validate_slug(input.slug)?;
-
-    let source_markdown = fs::read_to_string(input.source_path)
-        .map_err(|err| CoreError::new("file_not_found", err.to_string()))?;
-    let markdown = ensure_frontmatter(
-        &source_markdown,
-        input.page_id,
-        input.slug,
-        input.title,
-        input.imported_at,
-    );
-    let data_dir = Path::new(input.data_dir);
-    let pages_dir = data_dir.join("pages");
-    let revision_dir = data_dir.join("revisions").join(input.page_id);
-    fs::create_dir_all(&pages_dir).map_err(|err| CoreError::new("io_error", err.to_string()))?;
-    fs::create_dir_all(&revision_dir).map_err(|err| CoreError::new("io_error", err.to_string()))?;
-
-    let page_path = pages_dir.join(format!("{}.md", input.slug));
-    if page_path.exists() {
-        return Err(CoreError::new("page_exists", "Page already exists"));
-    }
-    let revision_path = revision_dir.join(format!("{}.md", input.revision_id));
-    let page_temp_path = pages_dir.join(format!("{}.md.tmp", input.slug));
-    let revision_temp_path = revision_dir.join(format!("{}.md.tmp", input.revision_id));
-    write_synced(&page_temp_path, &markdown)?;
-    write_synced(&revision_temp_path, &markdown)?;
-
-    let mut connection = Connection::open(input.sqlite_path)
-        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
-    connection
-        .busy_timeout(std::time::Duration::from_millis(5000))
-        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
-    let tx = connection
-        .transaction_with_behavior(TransactionBehavior::Immediate)
-        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
-    let page_path_string = page_path.to_string_lossy().replace('\\', "/");
-    let revision_path_string = revision_path.to_string_lossy().replace('\\', "/");
-    tx.execute(
-        "INSERT INTO pages (id, title, slug, path, current_revision_id, status, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, 'active', ?6, ?6)",
-        params![
-            input.page_id,
-            input.title,
-            input.slug,
-            page_path_string,
-            input.revision_id,
-            input.imported_at
-        ],
-    )
-    .map_err(|err| {
-        let _ = fs::remove_file(&page_temp_path);
-        let _ = fs::remove_file(&revision_temp_path);
-        CoreError::new("sqlite_error", err.to_string())
-    })?;
-    tx.execute(
-        "INSERT INTO revisions (id, page_id, path, author_type, change_note, created_at)
-         VALUES (?1, ?2, ?3, 'system', 'Imported from Obsidian vault', ?4)",
-        params![
-            input.revision_id,
-            input.page_id,
-            revision_path_string,
-            input.imported_at
-        ],
-    )
-    .map_err(|err| {
-        let _ = fs::remove_file(&page_temp_path);
-        let _ = fs::remove_file(&revision_temp_path);
-        CoreError::new("sqlite_error", err.to_string())
-    })?;
-    fs::rename(&page_temp_path, &page_path).map_err(|err| {
-        let _ = fs::remove_file(&page_temp_path);
-        let _ = fs::remove_file(&revision_temp_path);
-        CoreError::new("io_error", err.to_string())
-    })?;
-    fs::rename(&revision_temp_path, &revision_path).map_err(|err| {
-        let _ = fs::remove_file(&revision_temp_path);
-        CoreError::new("io_error", err.to_string())
-    })?;
-    tx.commit()
-        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
-
-    Ok(ImportObsidianPageResult {
-        slug: input.slug.to_string(),
-        title: input.title.to_string(),
-        path: page_path_string,
-        revision_id: input.revision_id.to_string(),
-        revision_path: revision_path_string,
-    })
-}
-
-fn ensure_frontmatter(markdown: &str, page_id: &str, slug: &str, title: &str, now: &str) -> String {
-    if markdown.starts_with("---\n") {
-        return markdown.to_string();
-    }
-    format!(
-        "---\nschema_version: 1\nid: {}\ntitle: {}\nslug: {}\nstatus: active\ncreated_at: {}\nupdated_at: {}\n---\n\n{}",
-        page_id, title, slug, now, now, markdown
-    )
 }
 
 pub fn restore_revision(input: RestoreRevisionInput<'_>) -> Result<String, CoreError> {
