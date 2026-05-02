@@ -20,7 +20,7 @@ MODEL_REVIEW_RUN_STATUSES = {"queued", "running", "dry_run_ready", "imported", "
 SEVERITIES = {"critical", "high", "medium", "low", "info"}
 AREAS = {"API", "UI", "Rust", "Security", "Data", "Ops", "Docs"}
 ACTIVE_STATUSES = {"queued", "running"}
-SECRET_ASSIGNMENT_RE = re.compile(r"^\s*(ADMIN_TOKEN|OPENAI_API_KEY|GEMINI_API_KEY|API_KEY|SECRET|PASSWORD)\s*=", re.IGNORECASE)
+SECRET_ASSIGNMENT_RE = re.compile(r"^\s*(ADMIN_TOKEN|OPENAI_API_KEY|GEMINI_API_KEY|DEEPSEEK_API_KEY|API_KEY|SECRET|PASSWORD)\s*=", re.IGNORECASE)
 LOCAL_PATH_RE = re.compile(r"(?i)\b[A-Z]:[\\/][^\s\"']+")
 FORBIDDEN_TEXT_MARKERS = (
     "token_hash",
@@ -365,6 +365,33 @@ class GeminiMockAdapter:
         }
 
 
+class MockModelReviewAdapter:
+    def __init__(self, *, provider_id: str) -> None:
+        self.provider_id = provider_id
+
+    async def generate_review(self, request: dict[str, Any]) -> dict[str, Any]:
+        context = request.get("context") or {}
+        summary = context.get("summary") or {}
+        pages = context.get("pages") or []
+        findings = context.get("open_findings") or []
+        page_count = summary.get("pages", len(pages)) if isinstance(summary, dict) else len(pages)
+        return {
+            "review_title": f"{self.provider_id.title()} mock review of KnowNet model context",
+            "overall_assessment": "Mock adapter verified that this provider path can build sanitized context, parse model-shaped JSON, and stop at dry-run.",
+            "findings": [
+                {
+                    "title": f"{self.provider_id.title()} provider path should keep operator import mandatory",
+                    "severity": "low",
+                    "area": "Ops",
+                    "evidence": f"The mock run received page_count={page_count}, sampled_pages={len(pages)}, open_findings={len(findings)} and returned dry-run-ready data only.",
+                    "proposed_change": "Keep the shared model-runner dry-run and operator import gate for every provider.",
+                    "confidence": 0.8,
+                }
+            ],
+            "summary": "Mock result only. No provider network call was made.",
+        }
+
+
 GEMINI_REVIEW_RESPONSE_SCHEMA: dict[str, Any] = {
     "type": "OBJECT",
     "properties": {
@@ -510,6 +537,128 @@ def _extract_gemini_text(payload: dict[str, Any]) -> str:
     if not text:
         raise HTTPException(status_code=502, detail={"code": "gemini_invalid_response", "message": "Gemini API returned empty text", "details": {}})
     return text
+
+
+def build_openai_compatible_review_messages(request: dict[str, Any], *, provider_name: str) -> list[dict[str, str]]:
+    run_request = request.get("request") or {}
+    context = request.get("context") or {}
+    focus = run_request.get("review_focus") or "Review the current KnowNet state for concrete risks that should be fixed before broader external AI use."
+    example = {
+        "review_title": f"{provider_name} review of KnowNet",
+        "overall_assessment": "Brief assessment.",
+        "findings": [
+            {
+                "title": "Concrete issue title",
+                "severity": "medium",
+                "area": "API",
+                "evidence": "Specific evidence from the provided context.",
+                "proposed_change": "Specific change to make.",
+                "confidence": 0.8,
+            }
+        ],
+        "summary": "Short summary.",
+    }
+    system_prompt = "\n".join(
+        [
+            f"You are {provider_name}, acting as an external AI reviewer for KnowNet.",
+            "Return strict JSON only. The word json is intentionally included for JSON mode.",
+            "Do not request or reveal raw database files, local filesystem paths, secrets, backups, sessions, users, raw tokens, or token hashes.",
+            "Use only the provided sanitized context.",
+            "Severity must be one of: critical, high, medium, low, info.",
+            "Area must be one of: API, UI, Rust, Security, Data, Ops, Docs.",
+            "Output JSON must follow this example shape:",
+            json.dumps(example, ensure_ascii=False),
+        ]
+    )
+    user_prompt = "\n".join(
+        [
+            f"Review focus: {focus}",
+            "Prefer 1 to 5 high-signal findings. If no issue exists, return one low/info finding explaining the remaining verification gap.",
+            "Sanitized KnowNet context JSON:",
+            _json_dumps(context),
+        ]
+    )
+    return [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
+
+
+class DeepSeekApiAdapter:
+    provider_id = "deepseek"
+
+    def __init__(self, *, api_key: str, model: str, timeout_seconds: float = 90.0) -> None:
+        self.api_key = api_key
+        self.model = model
+        self.timeout_seconds = timeout_seconds
+
+    async def generate_review(self, request: dict[str, Any]) -> dict[str, Any]:
+        body = {
+            "model": self.model,
+            "messages": build_openai_compatible_review_messages(request, provider_name="DeepSeek"),
+            "response_format": {"type": "json_object"},
+            "temperature": 0.2,
+            "max_tokens": 4000,
+            "stream": False,
+            "thinking": {"type": "disabled"},
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                response = await client.post(
+                    "https://api.deepseek.com/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                    json=body,
+                )
+        except httpx.TimeoutException as error:
+            raise HTTPException(status_code=504, detail={"code": "deepseek_timeout", "message": "DeepSeek API request timed out", "details": {}}) from error
+        except httpx.HTTPError as error:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "deepseek_request_failed", "message": sanitize_error_message(str(error)), "details": {}},
+            ) from error
+
+        if response.status_code >= 400:
+            message = _extract_openai_compatible_error_message(response)
+            if response.status_code == 429:
+                code = "deepseek_rate_limited"
+            elif response.status_code in {401, 403}:
+                code = "deepseek_auth_failed"
+            else:
+                code = "deepseek_request_failed"
+            raise HTTPException(
+                status_code=502,
+                detail={"code": code, "message": sanitize_error_message(message) or "DeepSeek API request failed", "details": {"status_code": response.status_code}},
+            )
+
+        try:
+            payload = response.json()
+        except json.JSONDecodeError as error:
+            raise HTTPException(status_code=502, detail={"code": "deepseek_invalid_response", "message": "DeepSeek API response was not JSON", "details": {}}) from error
+
+        text = _extract_openai_compatible_message_content(payload, provider_code="deepseek")
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as error:
+            raise HTTPException(status_code=502, detail={"code": "deepseek_invalid_response", "message": "DeepSeek API response content was not valid JSON", "details": {}}) from error
+
+
+def _extract_openai_compatible_error_message(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except json.JSONDecodeError:
+        return response.text[:1000]
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, dict):
+        return str(error.get("message") or error)
+    return str(payload)[:1000]
+
+
+def _extract_openai_compatible_message_content(payload: dict[str, Any], *, provider_code: str) -> str:
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise HTTPException(status_code=502, detail={"code": f"{provider_code}_invalid_response", "message": "Provider returned no choices", "details": {}})
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, str) or not content.strip():
+        raise HTTPException(status_code=502, detail={"code": f"{provider_code}_invalid_response", "message": "Provider returned empty message content", "details": {}})
+    return content.strip()
 
 
 def sanitize_error_message(message: str | None) -> str | None:

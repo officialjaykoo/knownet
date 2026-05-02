@@ -11,8 +11,10 @@ from ..db.sqlite import execute, fetch_all, fetch_one
 from ..routes.collaboration import _rebuild_collaboration_graph, parse_review_markdown
 from ..security import Actor, require_admin_access, utc_now
 from ..services.model_runner import (
+    DeepSeekApiAdapter,
     GeminiApiAdapter,
     GeminiMockAdapter,
+    MockModelReviewAdapter,
     assert_no_active_run,
     build_safe_context,
     estimate_tokens,
@@ -29,6 +31,14 @@ router = APIRouter(prefix="/api/model-runs", tags=["model-runs"])
 class GeminiReviewRunRequest(BaseModel):
     vault_id: str = "local-default"
     prompt_profile: str = Field(default="gemini_external_reviewer_v1", max_length=120)
+    review_focus: str | None = Field(default=None, max_length=800)
+    max_pages: int = Field(default=20, ge=1, le=50)
+    mock: bool = True
+
+
+class DeepSeekReviewRunRequest(BaseModel):
+    vault_id: str = "local-default"
+    prompt_profile: str = Field(default="deepseek_external_reviewer_v1", max_length=120)
     review_focus: str | None = Field(default=None, max_length=800)
     max_pages: int = Field(default=20, ge=1, le=50)
     mock: bool = True
@@ -178,20 +188,23 @@ async def _import_response_as_review(request: Request, run: dict, actor: Actor) 
     return {"review": review, "findings": created_findings, "graph_rebuild": graph_rebuild}
 
 
-@router.post("/gemini/reviews")
-async def create_gemini_review_run(payload: GeminiReviewRunRequest, request: Request, actor: Actor = Depends(require_admin_access)):
+async def _create_provider_review_run(
+    *,
+    provider: str,
+    model: str,
+    payload,
+    request: Request,
+    actor: Actor,
+    adapter,
+    source_agent: str,
+) -> dict:
     settings = request.app.state.settings
-    if not payload.mock:
-        if not settings.gemini_runner_enabled:
-            raise HTTPException(status_code=503, detail={"code": "gemini_disabled", "message": "Gemini runner is disabled. Use mock=true until a real provider is enabled.", "details": {}})
-        if not settings.gemini_api_key:
-            raise HTTPException(status_code=503, detail={"code": "gemini_api_key_missing", "message": "GEMINI_API_KEY is required for non-mock Gemini runs", "details": {}})
-    await assert_no_active_run(settings.sqlite_path, "gemini")
+    await assert_no_active_run(settings.sqlite_path, provider)
     run_id = f"modelrun_{uuid4().hex[:12]}"
     context = await build_safe_context(settings, vault_id=payload.vault_id, max_pages=payload.max_pages)
     request_json = {
-        "provider": "gemini",
-        "model": settings.gemini_model,
+        "provider": provider,
+        "model": model,
         "prompt_profile": payload.prompt_profile,
         "review_focus": payload.review_focus,
         "mock": payload.mock,
@@ -200,8 +213,8 @@ async def create_gemini_review_run(payload: GeminiReviewRunRequest, request: Req
     await _store_run(
         settings,
         run_id=run_id,
-        provider="gemini",
-        model=settings.gemini_model,
+        provider=provider,
+        model=model,
         prompt_profile=payload.prompt_profile,
         vault_id=payload.vault_id,
         status="running",
@@ -213,14 +226,9 @@ async def create_gemini_review_run(payload: GeminiReviewRunRequest, request: Req
         created_by=actor.actor_id,
     )
     try:
-        adapter = (
-            GeminiMockAdapter()
-            if payload.mock
-            else GeminiApiAdapter(api_key=settings.gemini_api_key, model=settings.gemini_model, timeout_seconds=settings.gemini_timeout_seconds)
-        )
         raw_output = await adapter.generate_review({"request": request_json, "context": context.context})
         normalized = normalize_model_output(raw_output)
-        markdown = model_output_to_markdown(normalized, source_agent="gemini-mock" if payload.mock else "gemini", source_model=settings.gemini_model)
+        markdown = model_output_to_markdown(normalized, source_agent=source_agent, source_model=model)
         metadata, findings, parser_errors = parse_review_markdown(markdown)
         response_json = {
             "mock": payload.mock,
@@ -254,9 +262,41 @@ async def create_gemini_review_run(payload: GeminiReviewRunRequest, request: Req
         actor=actor,
         target_type="model_review_run",
         target_id=run_id,
-        metadata={"provider": "gemini", "mock": payload.mock, "status": "dry_run_ready", "finding_count": response_json["dry_run"]["finding_count"]},
+        metadata={"provider": provider, "mock": payload.mock, "status": "dry_run_ready", "finding_count": response_json["dry_run"]["finding_count"]},
     )
     return {"ok": True, "data": {"run": _run_row(run), "dry_run": response_json["dry_run"]}}
+
+
+@router.post("/gemini/reviews")
+async def create_gemini_review_run(payload: GeminiReviewRunRequest, request: Request, actor: Actor = Depends(require_admin_access)):
+    settings = request.app.state.settings
+    if not payload.mock:
+        if not settings.gemini_runner_enabled:
+            raise HTTPException(status_code=503, detail={"code": "gemini_disabled", "message": "Gemini runner is disabled. Use mock=true until a real provider is enabled.", "details": {}})
+        if not settings.gemini_api_key:
+            raise HTTPException(status_code=503, detail={"code": "gemini_api_key_missing", "message": "GEMINI_API_KEY is required for non-mock Gemini runs", "details": {}})
+    adapter = (
+        GeminiMockAdapter()
+        if payload.mock
+        else GeminiApiAdapter(api_key=settings.gemini_api_key, model=settings.gemini_model, timeout_seconds=settings.gemini_timeout_seconds)
+    )
+    return await _create_provider_review_run(provider="gemini", model=settings.gemini_model, payload=payload, request=request, actor=actor, adapter=adapter, source_agent="gemini-mock" if payload.mock else "gemini")
+
+
+@router.post("/deepseek/reviews")
+async def create_deepseek_review_run(payload: DeepSeekReviewRunRequest, request: Request, actor: Actor = Depends(require_admin_access)):
+    settings = request.app.state.settings
+    if not payload.mock:
+        if not settings.deepseek_runner_enabled:
+            raise HTTPException(status_code=503, detail={"code": "deepseek_disabled", "message": "DeepSeek runner is disabled. Use mock=true until a real provider is enabled.", "details": {}})
+        if not settings.deepseek_api_key:
+            raise HTTPException(status_code=503, detail={"code": "deepseek_api_key_missing", "message": "DEEPSEEK_API_KEY is required for non-mock DeepSeek runs", "details": {}})
+    adapter = (
+        MockModelReviewAdapter(provider_id="deepseek")
+        if payload.mock
+        else DeepSeekApiAdapter(api_key=settings.deepseek_api_key, model=settings.deepseek_model, timeout_seconds=settings.deepseek_timeout_seconds)
+    )
+    return await _create_provider_review_run(provider="deepseek", model=settings.deepseek_model, payload=payload, request=request, actor=actor, adapter=adapter, source_agent="deepseek-mock" if payload.mock else "deepseek")
 
 
 @router.get("")

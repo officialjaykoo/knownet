@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     gemini_timeout_seconds: float = 90.0
     gemini_daily_run_limit: int = 20
     gemini_require_operator_import: bool = True
+    deepseek_api_key: str | None = None
+    deepseek_model: str = "deepseek-v4-flash"
+    deepseek_runner_enabled: bool = False
+    deepseek_timeout_seconds: float = 90.0
 
     model_config = SettingsConfigDict(env_file=REPO_ROOT / ".env", extra="ignore")
 

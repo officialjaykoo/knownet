@@ -39,7 +39,7 @@ AREA_NORMALIZE = {key.lower(): value for key, value in AREAS.items()}
 DECISION_STATUSES = {"accepted", "rejected", "deferred", "needs_more_context"}
 MAX_REVIEW_BYTES = 256 * 1024
 MAX_FINDINGS_PER_REVIEW = 50
-SECRET_ASSIGNMENT_NAMES = ("ADMIN_TOKEN", "OPENAI_API_KEY", "API_KEY", "SECRET", "PASSWORD")
+SECRET_ASSIGNMENT_NAMES = ("ADMIN_TOKEN", "OPENAI_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY", "API_KEY", "SECRET", "PASSWORD")
 SECRET_JSON_KEYS = ("token", "secret", "password", "key")
 FORBIDDEN_BUNDLE_PATH_NAMES = {"backups", "inbox", "sessions", "users"}
 EXCLUDED_SECTIONS = [
@@ -52,7 +52,7 @@ EXCLUDED_SECTIONS = [
     "audit_events IP hashes and session_meta",
     "raw citation evidence snapshots",
 ]
-SECRET_ASSIGNMENT_RE = re.compile(r"^\s*(ADMIN_TOKEN|OPENAI_API_KEY|API_KEY|SECRET|PASSWORD)\s*=", re.IGNORECASE)
+SECRET_ASSIGNMENT_RE = re.compile(r"^\s*(ADMIN_TOKEN|OPENAI_API_KEY|GEMINI_API_KEY|DEEPSEEK_API_KEY|API_KEY|SECRET|PASSWORD)\s*=", re.IGNORECASE)
 
 
 class ImportReviewRequest(BaseModel):

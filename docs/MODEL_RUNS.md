@@ -127,3 +127,59 @@ Every provider result must become dry_run_ready first.
 An operator/admin must explicitly import the run before it becomes a durable
 collaboration review and findings.
 ```
+
+## DeepSeek Direction
+
+DeepSeek uses the same server-side model-runner pattern as Gemini:
+
+```txt
+KnowNet
+-> build safe context
+-> call DeepSeek Chat Completions API
+-> request JSON output
+-> normalize to review Markdown
+-> dry-run parse
+-> operator chooses whether to import
+```
+
+DeepSeek official docs describe an OpenAI-compatible API at
+`https://api.deepseek.com/chat/completions` with `Authorization: Bearer ...`,
+and JSON output through `response_format: {"type": "json_object"}`.
+
+Current local state as of 2026-05-03:
+
+```txt
+provider: deepseek
+real_adapter: implemented
+mock_adapter: working
+operator_import_required: true
+default_model: deepseek-v4-flash
+local_api_key: not configured
+```
+
+Mock smoke test:
+
+```txt
+run_id: modelrun_33835668fb06
+status: dry_run_ready
+finding_count: 1
+parser_errors: none
+```
+
+Non-mock safety check without a local key:
+
+```txt
+status: blocked
+code: deepseek_disabled
+```
+
+Local settings needed for a real run:
+
+```txt
+DEEPSEEK_API_KEY=<local secret>
+DEEPSEEK_RUNNER_ENABLED=true
+DEEPSEEK_MODEL=deepseek-v4-flash
+```
+
+Until a local key is present, non-mock DeepSeek calls are intentionally blocked
+with `deepseek_disabled` or `deepseek_api_key_missing`.
