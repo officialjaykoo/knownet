@@ -2,6 +2,15 @@
 
 KnowNet exposes a local stdio MCP server for scoped AI-agent access.
 
+The compatibility reference is in:
+
+```txt
+docs/MCP_COMPATIBILITY_REFERENCES.md
+```
+
+Use that document when deciding how a new AI client should connect. Keep this
+file focused on concrete setup commands.
+
 The MCP server path is:
 
 ```txt
@@ -40,6 +49,9 @@ Example stdio configuration:
   }
 }
 ```
+
+Claude Desktop should use this local stdio path first. Do not route Claude
+Desktop through Cloudflare unless testing a remote connector specifically.
 
 ## Cursor
 
@@ -105,6 +117,10 @@ Register the connector URL as:
 ```txt
 https://<quick-tunnel-host>/mcp
 ```
+
+The HTTP discovery response now includes `transport_profiles` and
+`client_profiles` so connector-capable clients can see whether they are using
+local stdio, HTTP bridge, or GET preview fallback.
 
 ## Preferred State Tool
 

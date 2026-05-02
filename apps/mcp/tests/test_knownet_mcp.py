@@ -9,6 +9,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import patch
 
+from knownet_mcp.http_bridge import capability_payload
 from knownet_mcp.server import ALLOWED_TOOLS, KnowNetMcpServer
 
 
@@ -87,6 +88,16 @@ def test_jsonrpc_tools_list():
     response = server.handle_jsonrpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
     assert response["id"] == 1
     assert {tool["name"] for tool in response["result"]["tools"]} == ALLOWED_TOOLS
+
+
+def test_http_discovery_exposes_mcp_client_profiles():
+    server = KnowNetMcpServer(token="kn_agent_test")
+    payload = capability_payload(server)
+    assert payload["transport_profiles"]["local_stdio"]["auth_location"] == "environment variable KNOWNET_AGENT_TOKEN"
+    assert payload["transport_profiles"]["streamable_http_bridge"]["endpoint"] == "/mcp"
+    assert payload["client_profiles"]["claude_desktop"]["best_path"] == "local_stdio"
+    assert payload["client_profiles"]["chatgpt_pc_app"]["best_path"] == "streamable_http_bridge"
+    assert payload["client_profiles"]["manus"]["best_path"] == "protected_https_custom_mcp_or_api"
 
 
 def test_jsonrpc_strict_errors_and_capabilities():

@@ -28,6 +28,33 @@ def capability_payload(mcp: KnowNetMcpServer) -> dict[str, Any]:
             "content_type": "application/json",
             "note": "Use JSON-RPC initialize, tools/list, and tools/call. GET only returns safe discovery metadata.",
         },
+        "transport_profiles": {
+            "local_stdio": {
+                "recommended_for": ["Claude Desktop", "Cursor", "local agent runners"],
+                "command_pattern": "python apps/mcp/knownet_mcp/server.py",
+                "auth_location": "environment variable KNOWNET_AGENT_TOKEN",
+                "note": "Preferred for desktop clients because the MCP host starts a local process and no public tunnel is required.",
+            },
+            "streamable_http_bridge": {
+                "recommended_for": ["ChatGPT custom connector tests", "HTTPS Custom MCP clients", "temporary external reviews"],
+                "endpoint": "/mcp",
+                "methods": ["GET discovery", "POST JSON-RPC"],
+                "auth_location": "bridge-held environment variable KNOWNET_AGENT_TOKEN",
+                "note": "Use only behind a trusted local network or protected HTTPS gateway. Quick tunnels are testing-only.",
+            },
+            "get_preview": {
+                "recommended_for": ["web-only AI reviewers that cannot POST JSON-RPC"],
+                "endpoints": ["/mcp?resource=agent:onboarding", "/mcp?resource=agent:state-summary"],
+                "note": "Read-only preview only. It cannot dry-run or submit reviews.",
+            },
+        },
+        "client_profiles": {
+            "claude_desktop": {"best_path": "local_stdio", "free_or_realistic_path": "desktop local MCP if available", "config_doc": "docs/MCP_CLIENTS.md#claude-desktop"},
+            "chatgpt_pc_app": {"best_path": "streamable_http_bridge", "free_or_realistic_path": "custom connector quick-tunnel test", "config_doc": "docs/MCP_CLIENTS.md#chatgpt-quick-tunnel-test"},
+            "cursor": {"best_path": "local_stdio", "free_or_realistic_path": "local stdio MCP", "config_doc": "docs/MCP_CLIENTS.md#cursor"},
+            "manus": {"best_path": "protected_https_custom_mcp_or_api", "free_or_realistic_path": "GET preview / captured JSON unless Custom MCP is available", "config_doc": "docs/MCP_COMPATIBILITY_REFERENCES.md"},
+            "api_agent_runners": {"best_path": "provider tool-calling runner over KnowNet API/MCP", "free_or_realistic_path": "mock runner and GET previews", "config_doc": "PHASE_16_TASKS.md"},
+        },
         "auth": {
             "method": "bridge-held bearer token",
             "note": "Agent tokens are scoped and never returned in discovery, tool, resource, or event responses.",
