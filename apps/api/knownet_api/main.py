@@ -18,6 +18,7 @@ from .routes.graph import router as graph_router
 from .routes.jobs import router as jobs_router
 from .routes.maintenance import active_maintenance_lock, ensure_phase6_schema, router as maintenance_router
 from .routes.messages import router as messages_router
+from .routes.model_runs import router as model_runs_router
 from .routes.search import router as search_router
 from .routes.submissions import router as submissions_router
 from .routes.suggestions import router as suggestions_router
@@ -29,6 +30,7 @@ from .services.embedding_service import EmbeddingService
 from .services.ai_state import ensure_ai_state_schema
 from .services.citation_titles import backfill_citation_display_titles
 from .services.job_processor import JobProcessor
+from .services.model_runner import ensure_model_runner_schema
 from .services.rust_core import RustCoreClient
 from .services.source_selector import SourceSelector
 from .services.system_pages import ensure_system_pages_schema, register_managed_seed_pages, register_onboarding_pages
@@ -144,6 +146,7 @@ async def lifespan(app: FastAPI):
         await backfill_citation_display_titles(settings.sqlite_path)
         await ensure_ai_state_schema(settings.sqlite_path)
         await ensure_system_pages_schema(settings.sqlite_path)
+        await ensure_model_runner_schema(settings.sqlite_path)
         await register_onboarding_pages(settings.sqlite_path)
         await register_managed_seed_pages(settings.sqlite_path)
         app.state.sqlite_status = "ok"
@@ -249,6 +252,7 @@ app.include_router(submissions_router)
 app.include_router(search_router)
 app.include_router(maintenance_router)
 app.include_router(audit_router)
+app.include_router(model_runs_router)
 
 
 async def _health_payload() -> dict:

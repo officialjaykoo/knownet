@@ -458,6 +458,33 @@ CREATE INDEX IF NOT EXISTS idx_agent_tokens_hash
 CREATE INDEX IF NOT EXISTS idx_agent_access_events_token
   ON agent_access_events(token_id, created_at);
 
+CREATE TABLE IF NOT EXISTS model_review_runs (
+  id TEXT PRIMARY KEY,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  prompt_profile TEXT NOT NULL,
+  vault_id TEXT NOT NULL DEFAULT 'local-default',
+  status TEXT NOT NULL,
+  context_summary_json TEXT NOT NULL DEFAULT '{}',
+  request_json TEXT NOT NULL DEFAULT '{}',
+  response_json TEXT NOT NULL DEFAULT '{}',
+  input_tokens INTEGER,
+  output_tokens INTEGER,
+  estimated_cost_usd REAL,
+  review_id TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_model_review_runs_provider_status
+  ON model_review_runs(provider, status, updated_at);
+
+CREATE INDEX IF NOT EXISTS idx_model_review_runs_vault_updated
+  ON model_review_runs(vault_id, updated_at);
+
 CREATE TABLE IF NOT EXISTS maintenance_locks (
   id TEXT PRIMARY KEY,
   operation TEXT NOT NULL,

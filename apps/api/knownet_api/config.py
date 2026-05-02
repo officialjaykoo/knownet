@@ -39,6 +39,14 @@ class Settings(BaseSettings):
     restore_require_snapshot: bool = True
     health_backup_max_age_hours: int = 168
     smoke_test_timeout_seconds: int = 120
+    gemini_api_key: str | None = None
+    gemini_model: str = "gemini-2.5-pro"
+    gemini_runner_enabled: bool = False
+    gemini_max_context_tokens: int = 32000
+    gemini_max_context_chars: int = 120000
+    gemini_timeout_seconds: float = 90.0
+    gemini_daily_run_limit: int = 20
+    gemini_require_operator_import: bool = True
 
     model_config = SettingsConfigDict(env_file=REPO_ROOT / ".env", extra="ignore")
 
