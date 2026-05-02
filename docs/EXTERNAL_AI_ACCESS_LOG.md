@@ -404,6 +404,63 @@ kimi mcp add --transport http knownet https://YOUR_KNOWNET_DOMAIN_OR_TUNNEL/mcp
 kimi mcp list
 ```
 
+## MiniMax
+
+MiniMax observation:
+
+```txt
+MiniMax understood the protocol split clearly:
+  KnowNet is an MCP JSON-RPC server.
+  MiniMax API is a REST/model tool-calling surface.
+
+Direct MiniMax API -> KnowNet MCP is not the right shape.
+MiniMax needs one of:
+  1. REST wrapper in front of KnowNet MCP
+  2. MiniMax function-calling Agent Runner that executes KnowNet tools
+  3. A higher-level bridge that translates MiniMax tool calls to KnowNet MCP
+```
+
+Current practical route:
+
+```txt
+MiniMax web/free:
+  Use pasted review pack or safe GET preview.
+
+MiniMax API:
+  Future Agent Runner path, similar to DeepSeek/Qwen/Kimi.
+
+Mini-Agent / MCP:
+  Future higher-capability route after the shared Agent Runner contract is
+  stable.
+```
+
+Easy mode for MiniMax web:
+
+```powershell
+python scripts\minimax_review_pack.py --copy
+```
+
+This writes:
+
+```txt
+data/tmp/minimax-review-pack.md
+```
+
+Equivalent generic command:
+
+```powershell
+python scripts\knownet_review_pack.py --provider minimax --copy
+```
+
+Recommended prompt for MiniMax web:
+
+```txt
+You are not connected to KnowNet directly.
+Read only the pasted KnowNet review pack below.
+Act as a first-time external AI reviewer and write finding drafts only.
+Do not claim that you called MCP/API unless the data is present in the pack.
+```
+
 ## Current Judgment
 
 Confirmed:
@@ -416,6 +473,7 @@ DeepSeek Web/Desktop free: GET discovery/preview works
 Qwen Web free: GET discovery/preview works through extractor/search tools
 Kimi Web: no direct MCP in web chat; too unreliable for access decisions; use generated review pack only
 Kimi Code/Playground: MCP-capable path to test later
+MiniMax: direct API-to-MCP mismatch understood; use review pack now, REST/Agent Runner later
 ```
 
 Next infrastructure step:

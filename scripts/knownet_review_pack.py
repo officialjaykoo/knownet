@@ -24,6 +24,12 @@ PROFILES = {
         "client_name": "knownet-kimi-review-pack",
         "prompt_note": "Kimi web uses Moonshot's own tool system, not MCP. Use this pasted pack for web review; use Kimi Code or Playground for MCP tests.",
     },
+    "minimax": {
+        "label": "MiniMax",
+        "output": Path("data/tmp/minimax-review-pack.md"),
+        "client_name": "knownet-minimax-review-pack",
+        "prompt_note": "MiniMax API is a model/tool-calling surface, not a direct KnowNet MCP client. Use this pasted pack for web review; use a REST wrapper or Agent Runner for live MiniMax integration.",
+    },
 }
 
 
