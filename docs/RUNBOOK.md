@@ -86,13 +86,21 @@ tokens cannot call `/api/agent/*` and cannot use write gateways.
 
 ## MCP Setup
 
-The Phase 10 MCP server runs over stdio from `apps/mcp/knownet_mcp/server.py`.
+The MCP server runs over stdio from `apps/mcp/knownet_mcp/server.py`.
 Set:
 
 ```txt
 KNOWNET_BASE_URL=http://127.0.0.1:8000
 KNOWNET_AGENT_TOKEN=<token shown once by the operator dashboard>
+KNOWNET_MCP_LOG_FORMAT=json
 ```
 
 Use an agent token with only the scopes needed by the AI tool. The MCP server
 does not expose maintenance tools.
+
+Logs go to stderr and JSON-RPC responses go to stdout. If an MCP client shows
+`auth_failed`, rotate the token and update the client environment. If it shows
+`scope_denied`, create a token with the missing read or review scope. If it
+shows `context_too_large`, lower the tool limit or read one page at a time.
+
+See `docs/MCP_CLIENTS.md` for Claude Desktop, Cursor, and local stdio examples.

@@ -59,16 +59,17 @@ async def agent_me(request: Request, agent: AgentAuth = Depends(require_agent)):
 
 
 @router.get("/pages")
-async def agent_pages(request: Request, limit: int = 20, agent: AgentAuth = Depends(require_agent)):
+async def agent_pages(request: Request, limit: int = 20, offset: int = 0, agent: AgentAuth = Depends(require_agent)):
     _require_scope(agent, "pages:read")
     limit = min(max(limit, 1), agent.max_pages_per_request)
+    offset = max(offset, 0)
     total = await fetch_one(request.app.state.settings.sqlite_path, "SELECT COUNT(*) AS count FROM pages WHERE vault_id = ? AND status = 'active'", (agent.vault_id,))
     rows = await fetch_all(
         request.app.state.settings.sqlite_path,
-        "SELECT id, slug, title, updated_at FROM pages WHERE vault_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT ?",
-        (agent.vault_id, limit),
+        "SELECT id, slug, title, updated_at FROM pages WHERE vault_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+        (agent.vault_id, limit, offset),
     )
-    truncated = bool(total and total["count"] > len(rows))
+    truncated = bool(total and total["count"] > offset + len(rows))
     await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.pages", status="ok", meta={"returned_count": len(rows), "truncated": truncated})
     return {"ok": True, "data": {"pages": rows}, "meta": _meta(agent, total=total["count"] if total else 0, returned=len(rows), truncated=truncated)}
 
@@ -96,27 +97,43 @@ async def agent_page(page_id: str, request: Request, agent: AgentAuth = Depends(
 
 
 @router.get("/reviews")
-async def agent_reviews(request: Request, limit: int = 50, agent: AgentAuth = Depends(require_agent)):
+async def agent_reviews(request: Request, limit: int = 50, offset: int = 0, agent: AgentAuth = Depends(require_agent)):
     _require_scope(agent, "reviews:read")
     limit = min(max(limit, 1), 200)
-    rows = await fetch_all(request.app.state.settings.sqlite_path, "SELECT id, title, source_agent, source_model, status, page_id, created_at, updated_at FROM collaboration_reviews WHERE vault_id = ? ORDER BY updated_at DESC LIMIT ?", (agent.vault_id, limit))
+    offset = max(offset, 0)
+    total = await fetch_one(request.app.state.settings.sqlite_path, "SELECT COUNT(*) AS count FROM collaboration_reviews WHERE vault_id = ?", (agent.vault_id,))
+    rows = await fetch_all(request.app.state.settings.sqlite_path, "SELECT id, title, source_agent, source_model, status, page_id, created_at, updated_at FROM collaboration_reviews WHERE vault_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?", (agent.vault_id, limit, offset))
     await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.reviews", status="ok", meta={"returned_count": len(rows)})
-    return {"ok": True, "data": {"reviews": rows}, "meta": _meta(agent, total=len(rows), returned=len(rows), truncated=False)}
+    count = total["count"] if total else 0
+    return {"ok": True, "data": {"reviews": rows}, "meta": _meta(agent, total=count, returned=len(rows), truncated=count > offset + len(rows))}
 
 
 @router.get("/findings")
-async def agent_findings(request: Request, limit: int = 100, agent: AgentAuth = Depends(require_agent)):
+async def agent_findings(request: Request, limit: int = 100, offset: int = 0, status: str | None = None, agent: AgentAuth = Depends(require_agent)):
     _require_scope(agent, "findings:read")
     limit = min(max(limit, 1), 200)
+    offset = max(offset, 0)
+    filters = "WHERE r.vault_id = ?"
+    params: list[object] = [agent.vault_id]
+    if status:
+        filters += " AND f.status = ?"
+        params.append(status)
+    total = await fetch_one(
+        request.app.state.settings.sqlite_path,
+        "SELECT COUNT(*) AS count FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id " + filters,
+        tuple(params),
+    )
     rows = await fetch_all(
         request.app.state.settings.sqlite_path,
         "SELECT f.id, f.review_id, f.severity, f.area, f.title, f.status, f.created_at, f.updated_at "
         "FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
-        "WHERE r.vault_id = ? ORDER BY f.updated_at DESC LIMIT ?",
-        (agent.vault_id, limit),
+        + filters
+        + " ORDER BY f.updated_at DESC LIMIT ? OFFSET ?",
+        (*params, limit, offset),
     )
     await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.findings", status="ok", meta={"returned_count": len(rows)})
-    return {"ok": True, "data": {"findings": rows}, "meta": _meta(agent, total=len(rows), returned=len(rows), truncated=False)}
+    count = total["count"] if total else 0
+    return {"ok": True, "data": {"findings": rows}, "meta": _meta(agent, total=count, returned=len(rows), truncated=count > offset + len(rows))}
 
 
 @router.get("/graph")
@@ -134,11 +151,20 @@ async def agent_graph(request: Request, limit: int = 200, agent: AgentAuth = Dep
 
 
 @router.get("/citations")
-async def agent_citations(request: Request, limit: int = 100, agent: AgentAuth = Depends(require_agent)):
+async def agent_citations(request: Request, limit: int = 100, offset: int = 0, status: str | None = None, agent: AgentAuth = Depends(require_agent)):
     _require_scope(agent, "citations:read")
-    rows = await fetch_all(request.app.state.settings.sqlite_path, "SELECT id, page_id, citation_key, status, verifier_type, confidence, reason, updated_at FROM citation_audits WHERE vault_id = ? ORDER BY updated_at DESC LIMIT ?", (agent.vault_id, min(max(limit, 1), 200)))
+    limit = min(max(limit, 1), 200)
+    offset = max(offset, 0)
+    filters = "WHERE vault_id = ?"
+    params: list[object] = [agent.vault_id]
+    if status:
+        filters += " AND status = ?"
+        params.append(status)
+    total = await fetch_one(request.app.state.settings.sqlite_path, "SELECT COUNT(*) AS count FROM citation_audits " + filters, tuple(params))
+    rows = await fetch_all(request.app.state.settings.sqlite_path, "SELECT id, page_id, citation_key, status, verifier_type, confidence, reason, updated_at FROM citation_audits " + filters + " ORDER BY updated_at DESC LIMIT ? OFFSET ?", (*params, limit, offset))
     await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.citations", status="ok", meta={"returned_count": len(rows)})
-    return {"ok": True, "data": {"citations": rows}, "meta": _meta(agent, total=len(rows), returned=len(rows), truncated=False)}
+    count = total["count"] if total else 0
+    return {"ok": True, "data": {"citations": rows}, "meta": _meta(agent, total=count, returned=len(rows), truncated=count > offset + len(rows))}
 
 
 @router.get("/context")

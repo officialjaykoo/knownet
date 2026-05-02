@@ -169,7 +169,7 @@ maintenance state that grants control
 
 ## MCP Setup
 
-Phase 10 includes a stdio MCP server at:
+KnowNet includes a stdio MCP server at:
 
 ```txt
 apps/mcp/knownet_mcp/server.py
@@ -200,6 +200,31 @@ knownet_submit_review
 ```
 
 No maintenance or admin tools are exposed.
+
+Phase 11 also exposes safe read-only resources:
+
+```txt
+knownet://agent/me
+knownet://agent/state-summary
+knownet://agent/pages
+knownet://agent/pages/{page_id}
+knownet://agent/reviews
+knownet://agent/findings
+knownet://agent/graph
+knownet://agent/citations
+```
+
+And reusable prompts:
+
+```txt
+knownet_review_page
+knownet_review_findings
+knownet_prepare_external_review
+```
+
+Prompts instruct agents to use bounded reads and dry-run review submission
+before final import. They do not include token values, database paths, or
+maintenance controls.
 
 ## Python SDK
 

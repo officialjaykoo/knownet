@@ -96,7 +96,9 @@ Docker stores app data in the `knownet-data` volume. See
 
 ## Agent Tooling
 
-Phase 10 adds agent tooling on top of scoped Phase 9 access:
+MCP is the preferred integration path for MCP-capable AI tools. Phase 10 added
+agent tooling on top of scoped Phase 9 access, and Phase 11 hardens MCP client
+compatibility:
 
 - MCP server: `apps/mcp/knownet_mcp/server.py`
 - Python SDK: `packages/knownet-agent-py/`
@@ -104,6 +106,8 @@ Phase 10 adds agent tooling on top of scoped Phase 9 access:
 
 Use `KNOWNET_AGENT_TOKEN` from the environment for MCP and SDK examples. Do not
 hard-code agent tokens in source files.
+
+Client setup examples live in [MCP client docs](./docs/MCP_CLIENTS.md).
 
 ## Project Docs
 
@@ -119,6 +123,7 @@ Implementation task lists:
 - [Phase 8 Tasks](./PHASE_8_TASKS.md)
 - [Phase 9 Tasks](./PHASE_9_TASKS.md)
 - [Phase 10 Tasks](./PHASE_10_TASKS.md)
+- [Phase 11 Tasks](./PHASE_11_TASKS.md)
 
 Operational docs:
 
