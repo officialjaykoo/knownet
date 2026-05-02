@@ -1,44 +1,72 @@
 # External AI Access Log
 
-이 문서는 외부 AI 접근 실험 중 **확인된 ChatGPT/Codex와 Claude 결과만** 짧게 기록한다.
-다른 AI 웹 실험 기록은 혼란을 줄이기 위해 여기서 제거했다.
+This file records practical external AI access tests for KnowNet.
 
-## 결론
+It intentionally focuses on access method and observed result, not every finding
+each AI produced.
 
-ChatGPT/Codex와 Claude는 KnowNet MCP에 붙었다.
+## Current Test Endpoint
 
-확인된 것은 세 가지다.
-
-1. Codex shell에서 Cloudflare Quick Tunnel을 통해 MCP JSON-RPC POST 호출 성공
-2. ChatGPT PC Web에서 custom MCP connector를 통해 `knownet_start_here` 호출 성공
-3. Claude 앱/Claude.ai 커넥터 등록 화면에서 MCP 주소를 넣어 `knownet_start_here`, `knownet_me`, `knownet_state_summary` 호출 성공
-
-즉, KnowNet MCP HTTP bridge는 외부에서 접근 가능한 형태로 동작했다.
-
-## 사용한 주소
-
-테스트 당시 Quick Tunnel 주소:
+Temporary Cloudflare Quick Tunnel:
 
 ```txt
 https://dealers-spirituality-marker-compute.trycloudflare.com/mcp
 ```
 
-로컬 대상:
+Local target:
 
 ```txt
 http://127.0.0.1:8010/mcp
 ```
 
-주의:
+Important:
 
 ```txt
-Quick Tunnel 주소는 임시 테스트용이다.
-운영용 주소가 아니다.
+This is testing-only infrastructure.
+It is not a production endpoint.
 ```
 
-## ChatGPT/Codex 확인 결과
+## Access Modes
 
-환경:
+### Full MCP JSON-RPC
+
+Clients that can POST JSON-RPC to `/mcp` can use the real KnowNet tools:
+
+```txt
+initialize
+tools/list
+tools/call
+knownet_start_here
+knownet_me
+knownet_state_summary
+knownet_ai_state
+knownet_review_dry_run
+```
+
+This is the strongest external AI access path.
+
+### GET Discovery / Preview
+
+Clients that cannot POST can still read safe preview context:
+
+```txt
+GET /mcp
+GET /mcp?resource=agent:onboarding
+GET /mcp?resource=agent:state-summary
+```
+
+Limits:
+
+```txt
+No tool calls
+No dry-run submission
+No review submit
+Read-only context only
+```
+
+## ChatGPT / Codex
+
+Environment:
 
 ```txt
 Codex shell
@@ -46,7 +74,7 @@ Cloudflare Quick Tunnel
 KnowNet MCP HTTP bridge
 ```
 
-성공한 호출:
+Confirmed calls:
 
 ```txt
 initialize
@@ -58,27 +86,17 @@ knownet_ai_state
 knownet_review_dry_run
 ```
 
-결과:
+Result:
 
 ```txt
-MCP JSON-RPC POST 호출 성공
-review dry-run 성공
-실제 review submit은 하지 않음
+Full MCP JSON-RPC POST works.
+Review dry-run works.
+No real review was submitted during this test.
 ```
 
-진단:
+## ChatGPT PC Web
 
-```txt
-server: knownet
-version: 14.0
-agent_token: ok
-agent_scope_count: 6
-token_warning: expires_soon
-```
-
-## ChatGPT PC Web 확인 결과
-
-환경:
+Environment:
 
 ```txt
 ChatGPT PC Web
@@ -86,48 +104,45 @@ Custom MCP connector
 Cloudflare Quick Tunnel
 ```
 
-설정:
+Configuration:
 
 ```txt
 URL: https://dealers-spirituality-marker-compute.trycloudflare.com/mcp
 Authentication: none
 ```
 
-성공한 호출:
+Confirmed calls:
 
 ```txt
 knownet_start_here
 ```
 
-결과:
+Result:
 
 ```txt
-custom MCP connector가 붙은 ChatGPT PC Web 세션에서는 KnowNet 도구 호출 가능
-connector가 없는 일반 웹 세션에서는 knownet_* 도구 직접 호출 불가
+ChatGPT PC Web can use KnowNet when the custom MCP connector is registered.
+Ordinary chats without the connector cannot see knownet_* tools.
 ```
 
-## Claude 확인 결과
+## Claude
 
-성공한 방식:
+Working route:
 
 ```txt
-Claude Desktop 앱 또는 Claude.ai의 Connectors / Integrations 화면에서
-custom MCP server로 KnowNet MCP 주소를 등록
+Claude Desktop or claude.ai settings
+-> Connectors / Integrations
+-> Add custom MCP server
+-> enter the KnowNet MCP URL directly
 ```
 
-등록한 주소:
+Configuration:
 
 ```txt
-https://dealers-spirituality-marker-compute.trycloudflare.com/mcp
+URL: https://dealers-spirituality-marker-compute.trycloudflare.com/mcp
+Authentication: none
 ```
 
-인증:
-
-```txt
-No authentication
-```
-
-성공한 호출:
+Confirmed calls:
 
 ```txt
 knownet_start_here
@@ -135,14 +150,7 @@ knownet_me
 knownet_state_summary
 ```
 
-결과:
-
-```txt
-Claude에서 KnowNet MCP 도구 호출 성공
-세 API 모두 정상 응답
-```
-
-확인된 상태:
+Observed state:
 
 ```txt
 token_id: agent_55b5a5bf6896
@@ -156,85 +164,80 @@ graph_nodes: 630
 release_ready: false
 ```
 
-주의:
+Important:
 
 ```txt
-Claude Desktop용 claude_desktop_config.json 파일 업로드 방식이 아니다.
-Claude 앱/Claude.ai의 커넥터 등록 화면에서 MCP URL을 직접 추가해야 한다.
-현재 성공 경로는 Cloudflare Quick Tunnel을 통한 원격 MCP 연결이다.
+Uploading claude_desktop_config.json into a Claude chat is not the working path.
+The working path is registering the MCP URL in Claude's connector/integration UI.
 ```
 
-## 접근 방식 정리
+## DeepSeek Web / Desktop App
 
-MCP 가능한 클라이언트:
+User observation:
 
 ```txt
-POST /mcp
-JSON-RPC
-tools/list
-tools/call
-knownet_* 도구 호출 가능
+DeepSeek web and desktop app are effectively the same for this purpose.
+Differences are minor UI details such as shortcuts.
 ```
 
-GET-only 클라이언트:
+Free realistic route:
 
 ```txt
-GET /mcp
-GET /mcp?resource=agent:onboarding
-GET /mcp?resource=agent:state-summary
-도구 호출은 불가
-읽기 미리보기만 가능
+Use GET discovery and GET preview.
 ```
 
-POST가 필요한 기능:
+Useful URLs:
 
 ```txt
-search
-fetch
-knownet_review_dry_run
-knownet_submit_review
+GET https://dealers-spirituality-marker-compute.trycloudflare.com/mcp
+GET https://dealers-spirituality-marker-compute.trycloudflare.com/mcp?resource=agent:onboarding
+GET https://dealers-spirituality-marker-compute.trycloudflare.com/mcp?resource=agent:state-summary
 ```
 
-## 현재 판단
-
-외부 AI 접근성 실험 1단계는 성공으로 본다.
-
-다만 웹 AI를 계속 추가로 붙이는 실험은 여기서 멈춘다.
-이제 중요한 작업은 운영 가능한 접근 표면을 다듬는 것이다.
-
-다음 단계:
+Result:
 
 ```txt
-1. GET-only fallback을 필요한 만큼만 확장
-2. Quick Tunnel 대신 named tunnel 준비
-3. Cloudflare Access 같은 접근 제어 붙이기
-4. 테스트용 agent token은 짧게 만들고 테스트 후 revoke
-5. provider별 차이는 profile/config 문서에만 기록
-6. MCP 도구 이름은 계속 knownet_* 하나로 유지
+DeepSeek free web/app can inspect KnowNet through GET preview.
+It cannot perform JSON-RPC tool calls or review dry-run directly from the free web/app UI.
 ```
 
-## Claude Desktop 참고
-
-Claude Desktop에서 파일 업로드 방식은 성공 경로가 아니다.
-
-성공한 방식:
+Recommended prompt for DeepSeek free web/app:
 
 ```txt
-Claude Desktop 앱 또는 Claude.ai 설정 화면
-Connectors / Integrations
-Custom MCP server 추가
-MCP URL 직접 입력
+Use these KnowNet GET preview URLs:
+
+1. https://dealers-spirituality-marker-compute.trycloudflare.com/mcp
+2. https://dealers-spirituality-marker-compute.trycloudflare.com/mcp?resource=agent:onboarding
+3. https://dealers-spirituality-marker-compute.trycloudflare.com/mcp?resource=agent:state-summary
+
+Review KnowNet as a first-time external AI contributor.
+Do not submit a review.
+Return findings in this format:
+
+### Finding
+Title:
+Severity:
+Area:
+Evidence:
+Proposed change:
 ```
 
-실패한 방식:
+Separate DeepSeek API runner status is recorded in
+[MODEL_RUNS.md](MODEL_RUNS.md).
+
+## Current Judgment
+
+Confirmed:
 
 ```txt
-claude_desktop_config.json 파일을 Claude 채팅에 업로드
-일반 웹 대화에서 KnowNet 도구 호출 요청
+ChatGPT/Codex: full MCP JSON-RPC works
+ChatGPT PC Web: custom MCP connector works
+Claude: connector/integration registration works
+DeepSeek Web/Desktop free: GET discovery/preview works
 ```
 
-정리:
+Next infrastructure step:
 
 ```txt
-Claude는 설정 파일을 읽는 방식보다, 현재 앱/웹의 커넥터 등록 화면에서 MCP URL을 넣는 방식이 확인된 성공 경로다.
+Move from quick tunnel to named tunnel plus access control before production use.
 ```
