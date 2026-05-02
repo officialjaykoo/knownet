@@ -225,6 +225,50 @@ Proposed change:
 Separate DeepSeek API runner status is recorded in
 [MODEL_RUNS.md](MODEL_RUNS.md).
 
+## Free Vs Paid/API Rule
+
+Keep these paths separate. Do not mix them during testing.
+
+```txt
+Free web plan:
+  Treat the AI as a manual document reviewer.
+  Use GET preview when the web tool can browse.
+  Prefer a generated review pack when the web tool is confused or cannot POST.
+  The operator runs local helpers; the AI only reads pasted/uploaded results.
+
+Paid/API or dedicated agent tool:
+  Treat the AI as a provider behind KnowNet's controlled runner or as an MCP
+  client if that product explicitly supports MCP.
+  KnowNet still owns tool execution, safe context, dry-run parsing, and operator
+  import.
+  Never give raw database files, raw tokens, `.env`, backups, sessions, or whole
+  filesystem access.
+```
+
+Provider rule of thumb:
+
+```txt
+Qwen free web:
+  GET preview or `scripts\qwen_review_pack.py --copy`
+
+Qwen paid/API/Qwen-Agent/Qwen Code:
+  Future Agent Runner or Qwen-Agent/MCP path.
+
+Kimi free web:
+  `scripts\kimi_review_pack.py --copy` only. Do not ask it to decide MCP setup.
+
+Kimi paid/API/Kimi Code/Playground:
+  Future API runner or Kimi Code/Playground MCP path.
+
+MiniMax free web:
+  `scripts\minimax_review_pack.py --copy`
+
+MiniMax paid/API:
+  Implemented REST/model tool-calling runner:
+  POST /api/model-runs/minimax/reviews
+  Live generation still requires account balance.
+```
+
 ## Qwen Web
 
 User observation:
@@ -238,6 +282,8 @@ Free realistic route:
 
 ```txt
 Use GET discovery and GET preview through Qwen's extractor/search tools.
+If that is too manual, generate one pack with:
+  python scripts\qwen_review_pack.py --copy
 ```
 
 Useful URLs:
@@ -355,16 +401,16 @@ Safe use:
 Practical split:
 
 ```txt
-Kimi web:
+Kimi free web:
   Paste a generated review pack.
   GET discovery/preview may work, but do not rely on Kimi to choose the right
   access path by itself.
 
+Kimi paid/API:
+  Future Agent Runner path using OpenAI-compatible tool calls.
+
 Kimi Code / Kimi Playground:
   Register KnowNet MCP and test direct tool calls there.
-
-Kimi API:
-  Future Agent Runner path using OpenAI-compatible tool calls.
 ```
 
 Easy mode for Kimi web:
@@ -423,10 +469,10 @@ MiniMax needs one of:
 Current practical route:
 
 ```txt
-MiniMax web/free:
+MiniMax free web:
   Use pasted review pack or safe GET preview.
 
-MiniMax API:
+MiniMax paid/API:
   Implemented server-side model-runner path using OpenAI-compatible REST.
   The runner, not MiniMax itself, executes allowed KnowNet read tools.
 
