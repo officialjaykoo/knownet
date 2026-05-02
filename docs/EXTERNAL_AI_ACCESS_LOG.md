@@ -165,6 +165,10 @@
       "knownet_review_dry_run",
       "knownet_submit_review"
     ]
+  },
+  "phase15_cleanup": {
+    "temporary_test_tokens_revoked": true,
+    "recorded_at": "2026-05-02T17:41:10.998154Z"
   }
 }
 ```

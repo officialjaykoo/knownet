@@ -258,16 +258,33 @@ def test_agent_ai_state_returns_structured_json_rows(tmp_path, monkeypatch):
                     "2026-05-02T00:00:00Z",
                 ),
             )
+            connection.execute(
+                "INSERT INTO ai_state_pages (id, vault_id, page_id, slug, title, source_path, content_hash, state_json, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "ai_state_structured_state_2",
+                    "local-default",
+                    "page_structured_state_2",
+                    "structured-state-2",
+                    "Structured State 2",
+                    "data/pages/structured-state-2.md",
+                    "hash2",
+                    json.dumps({"schema_version": 1, "summary": "structured json 2"}),
+                    "2026-05-02T00:00:01Z",
+                ),
+            )
         token = _create_token(client, ["pages:read"])
-        response = client.get("/api/agent/ai-state", headers={"authorization": f"Bearer {token['raw_token']}"})
+        response = client.get("/api/agent/ai-state?limit=1", headers={"authorization": f"Bearer {token['raw_token']}"})
         assert response.status_code == 200, response.text
         payload = response.json()
-        assert payload["data"]["ai_state_pages"][0]["slug"] == "structured-state"
+        assert payload["data"]["ai_state_pages"][0]["slug"] == "structured-state-2"
         assert "source_path" not in payload["data"]["ai_state_pages"][0]
-        assert payload["data"]["ai_state_pages"][0]["source_ref"] == "pages/structured-state.md"
-        assert payload["data"]["ai_state_pages"][0]["state"]["summary"] == "structured json"
+        assert payload["data"]["ai_state_pages"][0]["source_ref"] == "pages/structured-state-2.md"
+        assert payload["data"]["ai_state_pages"][0]["state"]["summary"] == "structured json 2"
         assert "path" not in payload["data"]["ai_state_pages"][0]["state"].get("source", {})
-        assert payload["meta"]["total_count"] == 1
+        assert payload["meta"]["total_count"] == 2
+        assert payload["meta"]["truncated"] is True
+        assert payload["meta"]["next_offset"] == 1
     get_settings.cache_clear()
 
 

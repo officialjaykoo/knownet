@@ -235,8 +235,8 @@ async def _onboarding_payload(request: Request, agent: AgentAuth) -> dict:
     }
 
 
-def _meta(agent: AgentAuth, *, total: int, returned: int, truncated: bool) -> dict:
-    return {
+def _meta(agent: AgentAuth, *, total: int, returned: int, truncated: bool, offset: int = 0) -> dict:
+    meta = {
         "schema_version": 1,
         "vault_id": agent.vault_id,
         "agent_scope": agent.scopes,
@@ -245,6 +245,9 @@ def _meta(agent: AgentAuth, *, total: int, returned: int, truncated: bool) -> di
         "returned_count": returned,
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+    if truncated:
+        meta["next_offset"] = offset + returned
+    return meta
 
 
 def _require_scope(agent: AgentAuth, scope: str, *, slug: str | None = None) -> None:
@@ -326,7 +329,7 @@ async def agent_pages(request: Request, limit: int = 20, offset: int = 0, agent:
     truncated = bool(total and total["count"] > offset + len(rows))
     await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.pages", status="ok", meta={"returned_count": len(rows), "truncated": truncated})
     pages = [{**row, **system_fields(row)} for row in rows]
-    return {"ok": True, "data": {"pages": pages}, "meta": _meta(agent, total=total["count"] if total else 0, returned=len(rows), truncated=truncated)}
+    return {"ok": True, "data": {"pages": pages}, "meta": _meta(agent, total=total["count"] if total else 0, returned=len(rows), truncated=truncated, offset=offset)}
 
 
 @router.get("/pages/{page_id}")
@@ -365,7 +368,7 @@ async def agent_reviews(request: Request, limit: int = 50, offset: int = 0, agen
     rows = await fetch_all(request.app.state.settings.sqlite_path, "SELECT id, title, source_agent, source_model, status, page_id, created_at, updated_at FROM collaboration_reviews WHERE vault_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?", (agent.vault_id, limit, offset))
     await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.reviews", status="ok", meta={"returned_count": len(rows)})
     count = total["count"] if total else 0
-    return {"ok": True, "data": {"reviews": rows}, "meta": _meta(agent, total=count, returned=len(rows), truncated=count > offset + len(rows))}
+    return {"ok": True, "data": {"reviews": rows}, "meta": _meta(agent, total=count, returned=len(rows), truncated=count > offset + len(rows), offset=offset)}
 
 
 @router.get("/findings")
@@ -393,7 +396,7 @@ async def agent_findings(request: Request, limit: int = 100, offset: int = 0, st
     )
     await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.findings", status="ok", meta={"returned_count": len(rows)})
     count = total["count"] if total else 0
-    return {"ok": True, "data": {"findings": rows}, "meta": _meta(agent, total=count, returned=len(rows), truncated=count > offset + len(rows))}
+    return {"ok": True, "data": {"findings": rows}, "meta": _meta(agent, total=count, returned=len(rows), truncated=count > offset + len(rows), offset=offset)}
 
 
 @router.get("/graph")
@@ -433,7 +436,7 @@ async def agent_citations(request: Request, limit: int = 100, offset: int = 0, s
     )
     await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.citations", status="ok", meta={"returned_count": len(rows)})
     count = total["count"] if total else 0
-    return {"ok": True, "data": {"citations": rows}, "meta": _meta(agent, total=count, returned=len(rows), truncated=count > offset + len(rows))}
+    return {"ok": True, "data": {"citations": rows}, "meta": _meta(agent, total=count, returned=len(rows), truncated=count > offset + len(rows), offset=offset)}
 
 
 @router.get("/context")
@@ -482,7 +485,7 @@ async def agent_ai_state(request: Request, limit: int = 50, offset: int = 0, inc
     count = total["count"] if total else 0
     truncated = count > offset + len(rows)
     await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.ai_state", status="ok", meta={"returned_count": len(states), "skipped_drafts": skipped_drafts, "truncated": truncated})
-    meta = _meta(agent, total=count, returned=len(states), truncated=truncated)
+    meta = _meta(agent, total=count, returned=len(states), truncated=truncated, offset=offset)
     meta["skipped_drafts"] = skipped_drafts
     meta["include_drafts"] = include_drafts
     return {"ok": True, "data": {"ai_state_pages": states}, "meta": meta}

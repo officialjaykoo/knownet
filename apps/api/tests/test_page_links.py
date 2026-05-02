@@ -94,6 +94,12 @@ async def _seed_create_page_db(sqlite_path):
             "CREATE TABLE revisions (id TEXT PRIMARY KEY, page_id TEXT, path TEXT, author_type TEXT, change_note TEXT, created_at TEXT)"
         )
         await connection.execute(
+            "CREATE TABLE citations (id TEXT PRIMARY KEY, page_id TEXT, revision_id TEXT, citation_key TEXT, validation_status TEXT, display_title TEXT)"
+        )
+        await connection.execute(
+            "CREATE TABLE messages (id TEXT PRIMARY KEY, path TEXT)"
+        )
+        await connection.execute(
             "CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT, action TEXT, actor_type TEXT, actor_id TEXT, session_id TEXT, ip_hash TEXT, user_agent_hash TEXT, target_type TEXT, target_id TEXT, before_revision_id TEXT, after_revision_id TEXT, model_provider TEXT, model_name TEXT, model_version TEXT, prompt_version TEXT, metadata_json TEXT)"
         )
         await connection.commit()

@@ -9,6 +9,21 @@ from knownet_api.main import app
 pytestmark = pytest.mark.slow
 
 
+def _page_markdown(*, slug: str, title: str, page_id: str, body: str) -> str:
+    return (
+        "---\n"
+        "schema_version: 1\n"
+        f"id: {page_id}\n"
+        f"title: {title}\n"
+        f"slug: {slug}\n"
+        "status: active\n"
+        "created_at: 2026-05-02T00:00:00Z\n"
+        "updated_at: 2026-05-02T00:00:00Z\n"
+        "---\n\n"
+        f"{body}"
+    )
+
+
 def _isolate_settings(monkeypatch, tmp_path):
     get_settings.cache_clear()
     data_dir = tmp_path / "data"
@@ -31,24 +46,39 @@ def test_page_graph_snapshot_restore_operational_flow(tmp_path, monkeypatch):
             created_pages[slug] = created.json()["data"]
 
         page_markdown = {
-            "project-alpha": (
-                "# Project Alpha\n\n"
-                "Alpha is the operating hub for [[Project Beta]] and [[Citation Review]].\n\n"
-                "## Decisions\n\n"
-                "Keep .tar.gz snapshots before large maintenance work. [^msg-alpha]\n\n"
-                "[^msg-alpha]: Operational source."
+            "project-alpha": _page_markdown(
+                slug="project-alpha",
+                title="Project Alpha",
+                page_id="page_project_alpha",
+                body=(
+                    "# Project Alpha\n\n"
+                    "Alpha is the operating hub for [[Project Beta]] and [[Citation Review]].\n\n"
+                    "## Decisions\n\n"
+                    "Keep .tar.gz snapshots before large maintenance work. [^msg-alpha]\n\n"
+                    "[^msg-alpha]: Operational source."
+                ),
             ),
-            "project-beta": (
-                "# Project Beta\n\n"
-                "Beta links back to [[Project Alpha]] and tracks [[Restore Drill]].\n\n"
-                "## Worklog\n\n"
-                "Graph rebuild should stay idempotent after repeated page updates."
+            "project-beta": _page_markdown(
+                slug="project-beta",
+                title="Project Beta",
+                page_id="page_project_beta",
+                body=(
+                    "# Project Beta\n\n"
+                    "Beta links back to [[Project Alpha]] and tracks [[Restore Drill]].\n\n"
+                    "## Worklog\n\n"
+                    "Graph rebuild should stay idempotent after repeated page updates."
+                ),
             ),
-            "restore-drill": (
-                "# Restore Drill\n\n"
-                "Restore drills prove that snapshots can recover pages and SQLite together.\n\n"
-                "- Check graph after restore\n"
-                "- Run verify-index\n"
+            "restore-drill": _page_markdown(
+                slug="restore-drill",
+                title="Restore Drill",
+                page_id="page_restore_drill",
+                body=(
+                    "# Restore Drill\n\n"
+                    "Restore drills prove that snapshots can recover pages and SQLite together.\n\n"
+                    "- Check graph after restore\n"
+                    "- Run verify-index\n"
+                ),
             ),
         }
         for slug, markdown in page_markdown.items():

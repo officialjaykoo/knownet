@@ -189,6 +189,12 @@
       "Revoke temporary test tokens after the review window.",
       "Before real external operation, replace quick tunnel with named tunnel and access controls."
     ]
+  },
+  "phase_15_hardening_status": {
+    "status": "triaged_in_db",
+    "pending_findings": 0,
+    "pending_reviews": 0,
+    "note": "Phase 15 applied DB finding decisions from this merged triage. Original reviews and findings remain preserved."
   }
 }
 ```

@@ -11,6 +11,29 @@ function Step($Message) {
   Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
+function Load-DotEnv {
+  $envPath = Join-Path $Root ".env"
+  $values = @{}
+  if (Test-Path $envPath) {
+    Get-Content $envPath | ForEach-Object {
+      $line = $_.Trim()
+      if ($line -and -not $line.StartsWith("#") -and $line.Contains("=")) {
+        $key, $value = $line.Split("=", 2)
+        $values[$key] = $value.Trim('"')
+      }
+    }
+  }
+  return $values
+}
+
+function Invoke-Json($Method, $Url, $Headers = @{}) {
+  try {
+    return Invoke-RestMethod -Method $Method -Uri $Url -Headers $Headers -TimeoutSec 30
+  } catch {
+    throw "Request failed: $Method $Url - $($_.Exception.Message)"
+  }
+}
+
 Step "Rust tests"
 Push-Location $CoreDir
 cargo test
@@ -23,6 +46,14 @@ if (-not (Test-Path $VenvPython)) {
 Push-Location $ApiDir
 & $VenvPython -m pytest -m "not slow and not smoke"
 Pop-Location
+
+Step "MCP tests"
+$env:PYTHONPATH = Join-Path $Root "apps/mcp"
+& $VenvPython -m pytest (Join-Path $Root "apps/mcp/tests/test_knownet_mcp.py") -q
+
+Step "SDK tests"
+$env:PYTHONPATH = Join-Path $Root "packages/knownet-agent-py"
+& $VenvPython -m pytest (Join-Path $Root "packages/knownet-agent-py/tests") -q
 
 Step "Slow operational API tests"
 Push-Location $ApiDir
@@ -43,6 +74,44 @@ Step "Web build"
 Push-Location $WebDir
 npm run build
 Pop-Location
+
+Step "Live health and verify-index"
+$envValues = Load-DotEnv
+$health = Invoke-Json "GET" "http://127.0.0.1:8000/health/summary"
+Write-Host ("Health: " + ($health.data.overall_status))
+if ($health.data.issues) {
+  Write-Host ("Health issues: " + (($health.data.issues | ForEach-Object { $_ }) -join ", "))
+}
+$adminToken = $envValues["ADMIN_TOKEN"]
+if (-not $adminToken) {
+  throw "ADMIN_TOKEN missing; cannot run verify-index"
+}
+$verify = Invoke-Json "GET" "http://127.0.0.1:8000/api/maintenance/verify-index" @{"x-knownet-admin-token" = $adminToken}
+if (-not $verify.ok -or -not $verify.data.ok) {
+  throw "verify-index failed"
+}
+Write-Host "verify-index: ok"
+
+Step "Security/path exposure checks"
+$patterns = @(
+  "source_path",
+  "source\.path",
+  "C:/knownet",
+  "token_hash",
+  "raw_token"
+)
+$agentFiles = @(
+  (Join-Path $ApiDir "knownet_api/routes/agent.py"),
+  (Join-Path $Root "apps/mcp/knownet_mcp/server.py"),
+  (Join-Path $Root "apps/mcp/knownet_mcp/http_bridge.py")
+)
+foreach ($pattern in $patterns) {
+  $matches = Select-String -Path $agentFiles -Pattern $pattern -ErrorAction SilentlyContinue
+  if ($matches) {
+    Write-Host "Security/path check warning for pattern '$pattern':" -ForegroundColor Yellow
+    $matches | ForEach-Object { Write-Host ("  " + $_.Path + ":" + $_.LineNumber + " " + $_.Line.Trim()) }
+  }
+}
 
 Write-Host ""
 Write-Host "Release checks passed." -ForegroundColor Green
