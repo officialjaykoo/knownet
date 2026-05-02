@@ -306,6 +306,69 @@ maintenance, raw database, backups, shell/code execution, filesystem reads,
 direct page writes, raw tokens, token hashes, sessions, users
 ```
 
+## Kimi / Moonshot Direction
+
+Kimi uses the same server-side model-runner pattern as MiniMax and GLM.
+The web chat remains a pasted-pack fallback; the useful API shape is
+Moonshot/Kimi's OpenAI-compatible chat completions endpoint:
+
+```txt
+KnowNet
+-> build safe context
+-> call Kimi / Moonshot Chat Completions API
+-> allow only read-only knownet_* tool calls inside the runner
+-> request final structured JSON
+-> normalize to review Markdown
+-> dry-run parse
+-> operator chooses whether to import
+```
+
+Kimi official docs describe `https://api.moonshot.ai/v1/chat/completions`,
+Bearer auth, OpenAI SDK compatibility, and API-key based access. KnowNet keeps
+tool execution local and sends only sanitized context.
+
+Current local state as of 2026-05-03:
+
+```txt
+provider: kimi
+real_adapter: implemented
+mock_adapter: working
+operator_import_required: true
+default_model: kimi-k2-0905-preview
+local_api_key: not verified
+```
+
+Mock smoke path:
+
+```txt
+POST /api/model-runs/kimi/reviews
+mock: true
+status: dry_run_ready
+```
+
+Non-mock safety:
+
+```txt
+KIMI_RUNNER_ENABLED=false blocks real calls by default.
+KIMI_API_KEY is required before a live Kimi run.
+Kimi output remains dry-run-ready until an operator imports it.
+```
+
+Allowed Kimi runner tools:
+
+```txt
+knownet_state_summary
+knownet_ai_state
+knownet_list_findings
+```
+
+Forbidden:
+
+```txt
+maintenance, raw database, backups, shell/code execution, filesystem reads,
+direct page writes, raw tokens, token hashes, sessions, users
+```
+
 ## GLM / Z.AI Direction
 
 GLM uses the same server-side model-runner pattern as MiniMax:

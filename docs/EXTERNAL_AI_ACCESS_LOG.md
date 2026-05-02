@@ -252,13 +252,18 @@ Qwen free web:
   GET preview or `scripts\qwen_review_pack.py --copy`
 
 Qwen paid/API/Qwen-Agent/Qwen Code:
-  Future Agent Runner or Qwen-Agent/MCP path.
+  Implemented config/profile path:
+  apps/mcp/configs/qwen_agent_mcp.example.json
+  Use Qwen-Agent MCP as the preferred higher-capability route.
 
 Kimi free web:
   `scripts\kimi_review_pack.py --copy` only. Do not ask it to decide MCP setup.
 
 Kimi paid/API/Kimi Code/Playground:
-  Future API runner or Kimi Code/Playground MCP path.
+  Implemented REST/model tool-calling runner:
+  POST /api/model-runs/kimi/reviews
+  Kimi Code/Playground MCP config remains available:
+  apps/mcp/configs/kimi_mcp.example.json
 
 MiniMax free web:
   `scripts\minimax_review_pack.py --copy`
@@ -279,6 +284,11 @@ GLM paid/API:
 
 GLM Coding Plan / MCP-capable coding tools:
   Use KnowNet MCP endpoint directly with an agent token.
+
+Manus paid/agent:
+  Implemented config/profile path:
+  apps/mcp/configs/manus_custom_mcp.example.json
+  Use protected HTTPS Custom MCP or Custom API; do not use localhost.
 ```
 
 ## Qwen Web

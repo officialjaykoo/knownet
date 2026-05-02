@@ -1,15 +1,20 @@
 {
   "id": "kimi",
-  "display_name": "Kimi Code CLI",
+  "display_name": "Kimi / Moonshot",
   "github_references": [
     "https://github.com/MoonshotAI/kimi-cli"
   ],
-  "best_paid_path": "Kimi Code CLI with KnowNet MCP over stdio or HTTP.",
+  "best_paid_path": "Kimi API runner for reviews, or Kimi Code CLI with KnowNet MCP over stdio or HTTP.",
   "realistic_free_path": "Kimi web chat GET preview; Kimi CLI if installed.",
-  "implemented_surface": "apps/mcp/configs/kimi_mcp.example.json",
-  "test_status": "config_template_ready_unverified",
+  "implemented_surface": "POST /api/model-runs/kimi/reviews and apps/mcp/configs/kimi_mcp.example.json",
+  "test_status": "api_runner_mock_ready_mcp_config_template_ready_unverified",
   "requires_paid_or_external_setup": true,
   "connection_modes": [
+    {
+      "mode": "provider_runner",
+      "endpoint": "POST /api/model-runs/kimi/reviews",
+      "provider_family": "openai_compatible_tool_calling"
+    },
     {
       "mode": "kimi_mcp_config_file",
       "config_template": "apps/mcp/configs/kimi_mcp.example.json"

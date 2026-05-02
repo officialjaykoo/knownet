@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     minimax_model: str = "MiniMax-M2.7"
     minimax_runner_enabled: bool = False
     minimax_timeout_seconds: float = 90.0
+    kimi_api_key: str | None = None
+    kimi_base_url: str = "https://api.moonshot.ai/v1"
+    kimi_model: str = "kimi-k2-0905-preview"
+    kimi_runner_enabled: bool = False
+    kimi_timeout_seconds: float = 90.0
     glm_api_key: str | None = None
     glm_base_url: str = "https://api.z.ai/api/paas/v4"
     glm_model: str = "glm-5.1"

@@ -15,6 +15,7 @@ from ..services.model_runner import (
     GeminiApiAdapter,
     GeminiMockAdapter,
     GlmApiAdapter,
+    KimiApiAdapter,
     MiniMaxApiAdapter,
     MockModelReviewAdapter,
     assert_no_active_run,
@@ -49,6 +50,14 @@ class DeepSeekReviewRunRequest(BaseModel):
 class MiniMaxReviewRunRequest(BaseModel):
     vault_id: str = "local-default"
     prompt_profile: str = Field(default="minimax_external_reviewer_v1", max_length=120)
+    review_focus: str | None = Field(default=None, max_length=800)
+    max_pages: int = Field(default=20, ge=1, le=50)
+    mock: bool = True
+
+
+class KimiReviewRunRequest(BaseModel):
+    vault_id: str = "local-default"
+    prompt_profile: str = Field(default="kimi_external_reviewer_v1", max_length=120)
     review_focus: str | None = Field(default=None, max_length=800)
     max_pages: int = Field(default=20, ge=1, le=50)
     mock: bool = True
@@ -331,6 +340,22 @@ async def create_minimax_review_run(payload: MiniMaxReviewRunRequest, request: R
         else MiniMaxApiAdapter(api_key=settings.minimax_api_key, base_url=settings.minimax_base_url, model=settings.minimax_model, timeout_seconds=settings.minimax_timeout_seconds)
     )
     return await _create_provider_review_run(provider="minimax", model=settings.minimax_model, payload=payload, request=request, actor=actor, adapter=adapter, source_agent="minimax-mock" if payload.mock else "minimax")
+
+
+@router.post("/kimi/reviews")
+async def create_kimi_review_run(payload: KimiReviewRunRequest, request: Request, actor: Actor = Depends(require_admin_access)):
+    settings = request.app.state.settings
+    if not payload.mock:
+        if not settings.kimi_runner_enabled:
+            raise HTTPException(status_code=503, detail={"code": "kimi_disabled", "message": "Kimi runner is disabled. Use mock=true until a real provider is enabled.", "details": {}})
+        if not settings.kimi_api_key:
+            raise HTTPException(status_code=503, detail={"code": "kimi_api_key_missing", "message": "KIMI_API_KEY is required for non-mock Kimi runs", "details": {}})
+    adapter = (
+        MockModelReviewAdapter(provider_id="kimi")
+        if payload.mock
+        else KimiApiAdapter(api_key=settings.kimi_api_key, base_url=settings.kimi_base_url, model=settings.kimi_model, timeout_seconds=settings.kimi_timeout_seconds)
+    )
+    return await _create_provider_review_run(provider="kimi", model=settings.kimi_model, payload=payload, request=request, actor=actor, adapter=adapter, source_agent="kimi-mock" if payload.mock else "kimi")
 
 
 @router.post("/glm/reviews")

@@ -8,7 +8,7 @@
   "best_paid_path": "Qwen-Agent with MCP or OpenAI-compatible function calling.",
   "realistic_free_path": "Qwen web chat GET preview; local/open Qwen-Agent if operator installs it.",
   "implemented_surface": "apps/mcp/configs/qwen_agent_mcp.example.json",
-  "test_status": "config_template_ready_unverified",
+  "test_status": "qwen_agent_mcp_config_ready_unverified",
   "requires_paid_or_external_setup": true,
   "connection_modes": [
     {

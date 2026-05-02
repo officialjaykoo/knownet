@@ -9,7 +9,7 @@
   "best_paid_path": "Manus Custom MCP Server or Custom API over protected HTTPS gateway.",
   "realistic_free_path": "GET preview only unless Custom MCP/API setup is available.",
   "implemented_surface": "apps/mcp/configs/manus_custom_mcp.example.json",
-  "test_status": "config_template_ready_unverified",
+  "test_status": "custom_mcp_config_ready_unverified",
   "requires_paid_or_external_setup": true,
   "connection_modes": [
     {

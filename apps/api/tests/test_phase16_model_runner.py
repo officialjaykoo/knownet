@@ -17,6 +17,8 @@ def _isolate_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
     monkeypatch.setenv("MINIMAX_RUNNER_ENABLED", "false")
     monkeypatch.setenv("MINIMAX_MODEL", "MiniMax-M2.7")
+    monkeypatch.setenv("KIMI_RUNNER_ENABLED", "false")
+    monkeypatch.setenv("KIMI_MODEL", "kimi-k2-0905-preview")
     monkeypatch.setenv("GLM_RUNNER_ENABLED", "false")
     monkeypatch.setenv("GLM_MODEL", "glm-5.1")
     monkeypatch.setenv("GEMINI_MAX_CONTEXT_TOKENS", "32000")
@@ -279,6 +281,72 @@ def test_glm_mock_run_and_disabled_real_path(tmp_path, monkeypatch):
         assert real.json()["detail"]["code"] == "glm_disabled"
 
 
+def test_kimi_mock_run_and_disabled_real_path(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        settings = get_settings()
+        _seed_ai_state(settings.sqlite_path)
+
+        mock = client.post("/api/model-runs/kimi/reviews", json={"mock": True, "review_focus": "Kimi path"})
+        assert mock.status_code == 200, mock.text
+        data = mock.json()["data"]
+        assert data["run"]["provider"] == "kimi"
+        assert data["run"]["status"] == "dry_run_ready"
+        assert data["run"]["response"]["mock"] is True
+        assert data["dry_run"]["finding_count"] == 1
+
+        real = client.post("/api/model-runs/kimi/reviews", json={"mock": False})
+        assert real.status_code == 503
+        assert real.json()["detail"]["code"] == "kimi_disabled"
+
+
+def test_kimi_non_mock_uses_provider_adapter(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    monkeypatch.setenv("KIMI_RUNNER_ENABLED", "true")
+    monkeypatch.setenv("KIMI_API_KEY", "test-kimi-key")
+
+    class FakeKimiAdapter:
+        provider_id = "kimi"
+
+        def __init__(self, *, api_key, base_url, model, timeout_seconds):
+            assert api_key == "test-kimi-key"
+            assert base_url == "https://api.moonshot.ai/v1"
+            assert model == "kimi-k2-0905-preview"
+            assert timeout_seconds > 0
+
+        async def generate_review(self, request):
+            assert request["request"]["mock"] is False
+            assert request["context"]["pages"]
+            return {
+                "review_title": "Fake Kimi live adapter review",
+                "overall_assessment": "Kimi provider adapter route wiring works.",
+                "findings": [
+                    {
+                        "title": "Kimi adapter should stay dry-run-first",
+                        "severity": "medium",
+                        "area": "API",
+                        "evidence": "The non-mock Kimi route used the provider adapter and returned dry_run_ready.",
+                        "proposed_change": "Keep Kimi output behind the same operator import gate as Gemini, DeepSeek, MiniMax, and GLM.",
+                        "confidence": 0.86,
+                    }
+                ],
+                "summary": "Fake Kimi provider result.",
+            }
+
+    monkeypatch.setattr("knownet_api.routes.model_runs.KimiApiAdapter", FakeKimiAdapter)
+    with TestClient(app) as client:
+        settings = get_settings()
+        _seed_ai_state(settings.sqlite_path)
+        response = client.post("/api/model-runs/kimi/reviews", json={"mock": False, "review_focus": "adapter smoke"})
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["run"]["provider"] == "kimi"
+        assert data["run"]["status"] == "dry_run_ready"
+        assert data["run"]["response"]["mock"] is False
+        assert data["dry_run"]["finding_count"] == 1
+        assert data["dry_run"]["parser_errors"] == []
+
+
 def test_glm_non_mock_uses_provider_adapter(tmp_path, monkeypatch):
     _isolate_settings(monkeypatch, tmp_path)
     monkeypatch.setenv("GLM_RUNNER_ENABLED", "true")
@@ -356,6 +424,13 @@ def test_model_context_rejects_secret_like_ai_state(tmp_path, monkeypatch):
             connection.execute("UPDATE ai_state_pages SET state_json = ? WHERE id = 'state_secret'", ('{"summary":"MINIMAX_API_KEY=do-not-send-this"}',))
             connection.commit()
         response = client.post("/api/model-runs/minimax/reviews", json={"mock": True})
+        assert response.status_code == 422
+        assert response.json()["detail"]["code"] == "model_context_secret_detected"
+
+        with sqlite3.connect(settings.sqlite_path) as connection:
+            connection.execute("UPDATE ai_state_pages SET state_json = ? WHERE id = 'state_secret'", ('{"summary":"KIMI_API_KEY=do-not-send-this"}',))
+            connection.commit()
+        response = client.post("/api/model-runs/kimi/reviews", json={"mock": True})
         assert response.status_code == 422
         assert response.json()["detail"]["code"] == "model_context_secret_detected"
 

@@ -60,6 +60,12 @@ Done:
   - structured model output normalization
   - conversion from model JSON output to existing Finding Markdown
   - Gemini mock adapter only
+  - DeepSeek API adapter
+  - MiniMax API adapter
+  - Kimi API adapter
+  - GLM/Z.AI API adapter
+  - Qwen-Agent MCP config/profile
+  - Manus Custom MCP config/profile
   - operator-only /api/model-runs endpoints
   - dry-run-ready run storage
   - explicit operator import into collaboration_reviews/collaboration_findings
@@ -68,10 +74,11 @@ Done:
 
 Not done in this step:
   - real Gemini network adapter
-  - DeepSeek/Qwen/Kimi/MiniMax/GLM adapters
   - operator UI
   - provider cost accounting beyond token estimates
   - paid/API live verification
+  - Qwen API runner
+  - Manus live Custom MCP/API registration
 ```
 
 ## Fixed Decisions
@@ -1340,6 +1347,19 @@ Manus has a documented, scoped, HTTPS-based path into KnowNet that does not
 depend on localhost access and does not require raw write privileges.
 ```
 
+Implementation note 2026-05-03:
+
+```txt
+Implemented:
+  apps/mcp/configs/manus_custom_mcp.example.json
+  apps/mcp/client_profiles/manus.json
+  docs/MANUS_INTEGRATION.md
+
+The current implemented Manus surface is configuration and documentation only.
+Live Manus Custom MCP/API registration remains unverified until the operator
+tests Manus integration access with a protected HTTPS endpoint.
+```
+
 ## P16-012 DeepSeek API Agent Runner
 
 Goal:
@@ -1629,6 +1649,19 @@ preview, while preserving KnowNet's same read-first and dry-run-first safety
 model.
 ```
 
+Implementation note 2026-05-03:
+
+```txt
+Implemented:
+  apps/mcp/configs/qwen_agent_mcp.example.json
+  apps/mcp/client_profiles/qwen.json
+  docs/QWEN_INTEGRATION.md
+
+The current implemented Qwen surface follows the open-source Qwen-Agent MCP
+pattern. A Qwen API provider runner remains intentionally unimplemented until
+the operator chooses to test DashScope/Qwen API credentials.
+```
+
 ## P16-014 Kimi API And Kimi Code MCP Profiles
 
 Goal:
@@ -1760,6 +1793,21 @@ Done when:
 Kimi has documented API and Kimi Code MCP paths that are stronger than web-chat
 preview, while preserving KnowNet's same read-first and dry-run-first safety
 model.
+```
+
+Implementation note 2026-05-03:
+
+```txt
+Implemented:
+  POST /api/model-runs/kimi/reviews
+  Kimi mock adapter through shared MockModelReviewAdapter
+  Kimi/Moonshot OpenAI-compatible REST adapter
+  apps/mcp/configs/kimi_mcp.example.json
+  apps/mcp/client_profiles/kimi.json
+  docs/KIMI_INTEGRATION.md
+
+The Kimi runner remains disabled by default and requires KIMI_API_KEY plus
+KIMI_RUNNER_ENABLED=true for live calls.
 ```
 
 ## P16-015 MiniMax API, Mini-Agent, And MCP Profiles
