@@ -225,6 +225,58 @@ Proposed change:
 Separate DeepSeek API runner status is recorded in
 [MODEL_RUNS.md](MODEL_RUNS.md).
 
+## Qwen Web
+
+User observation:
+
+```txt
+Qwen web can use built-in web_search / web_extractor style tools.
+It does not need a separate Qwen API runner for the current free web test.
+```
+
+Free realistic route:
+
+```txt
+Use GET discovery and GET preview through Qwen's extractor/search tools.
+```
+
+Useful URLs:
+
+```txt
+GET https://dealers-spirituality-marker-compute.trycloudflare.com/mcp
+GET https://dealers-spirituality-marker-compute.trycloudflare.com/mcp?resource=agent:onboarding
+GET https://dealers-spirituality-marker-compute.trycloudflare.com/mcp?resource=agent:state-summary
+```
+
+Result:
+
+```txt
+Qwen free web can inspect KnowNet through GET preview.
+It cannot perform KnowNet JSON-RPC tool calls unless a separate MCP/API client is provided.
+No Qwen API provider runner is needed at this stage.
+```
+
+Recommended prompt for Qwen free web:
+
+```txt
+Use web_extractor or equivalent browsing tools to read these KnowNet URLs:
+
+1. https://dealers-spirituality-marker-compute.trycloudflare.com/mcp
+2. https://dealers-spirituality-marker-compute.trycloudflare.com/mcp?resource=agent:onboarding
+3. https://dealers-spirituality-marker-compute.trycloudflare.com/mcp?resource=agent:state-summary
+
+Review KnowNet as a first-time external AI contributor.
+Do not submit a review.
+Return findings in this format:
+
+### Finding
+Title:
+Severity:
+Area:
+Evidence:
+Proposed change:
+```
+
 ## Current Judgment
 
 Confirmed:
@@ -234,6 +286,7 @@ ChatGPT/Codex: full MCP JSON-RPC works
 ChatGPT PC Web: custom MCP connector works
 Claude: connector/integration registration works
 DeepSeek Web/Desktop free: GET discovery/preview works
+Qwen Web free: GET discovery/preview works through extractor/search tools
 ```
 
 Next infrastructure step:
