@@ -1,0 +1,24 @@
+services:
+  knownet:
+    build:
+      context: .
+      args:
+        NEXT_PUBLIC_API_BASE: ""
+    image: knownet:local
+    environment:
+      APP_ENV: docker
+      DATA_DIR: /data
+      SQLITE_PATH: /data/knownet.db
+      RUST_CORE_PATH: /app/bin/knownet-core
+      LOCAL_EMBEDDING_AUTO_LOAD: "false"
+      LOCAL_EMBEDDING_LOCAL_FILES_ONLY: "true"
+      PUBLIC_MODE: "false"
+      KNOWNET_API_INTERNAL: http://127.0.0.1:8000
+    ports:
+      - "3000:3000"
+    volumes:
+      - knownet-data:/data
+    restart: unless-stopped
+
+volumes:
+  knownet-data:
