@@ -50,6 +50,12 @@ Example stdio configuration:
 }
 ```
 
+The same example is checked into:
+
+```txt
+apps/mcp/configs/claude_desktop_config.example.json
+```
+
 Claude Desktop should use this local stdio path first. Do not route Claude
 Desktop through Cloudflare unless testing a remote connector specifically.
 
@@ -58,6 +64,12 @@ Desktop through Cloudflare unless testing a remote connector specifically.
 Use the same command, args, and environment values in Cursor's MCP server
 configuration. Keep the token in the client environment entry and never paste it
 into prompt text.
+
+Template:
+
+```txt
+apps/mcp/configs/cursor_mcp.example.json
+```
 
 ## Codex Or Local Agent
 
@@ -70,6 +82,17 @@ apps/api/.venv/Scripts/python.exe apps/mcp/knownet_mcp/server.py
 ```
 
 The process speaks JSON-RPC over stdin/stdout. Logs are written to stderr.
+
+To verify that a stdio client can at least initialize and list tools/resources:
+
+```powershell
+$env:KNOWNET_BASE_URL="http://127.0.0.1:8000"
+$env:KNOWNET_AGENT_TOKEN="<token shown once by the operator dashboard>"
+apps/api/.venv/Scripts/python.exe apps/mcp/scripts/mcp_stdio_smoke.py
+```
+
+This smoke test does not submit reviews. It checks `initialize`,
+`tools/list`, `resources/list`, and `prompts/list`.
 
 ## ChatGPT Quick Tunnel Test
 
@@ -121,6 +144,13 @@ https://<quick-tunnel-host>/mcp
 The HTTP discovery response now includes `transport_profiles` and
 `client_profiles` so connector-capable clients can see whether they are using
 local stdio, HTTP bridge, or GET preview fallback.
+
+Templates:
+
+```txt
+apps/mcp/configs/http_bridge.env.example
+apps/mcp/configs/chatgpt_custom_connector.example.json
+```
 
 ## Preferred State Tool
 

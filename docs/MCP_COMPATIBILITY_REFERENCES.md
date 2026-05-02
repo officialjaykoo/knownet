@@ -50,10 +50,12 @@ Implemented:
   - strict additionalProperties=false schemas
   - stdio server
   - HTTP bridge with JSON-RPC POST /mcp
+  - executable stdio smoke test
+  - checked-in client config templates
 
 Still useful:
   - broader Streamable HTTP compatibility testing with MCP Inspector/client
-  - packaged examples for more clients
+  - packaged .mcpb desktop extension after the plain stdio path is stable
 ```
 
 ### Claude Desktop Local MCP Pattern
@@ -162,6 +164,21 @@ Before claiming a client is supported:
      static_spec_fallback
 ```
 
+Local verification command:
+
+```powershell
+apps/api/.venv/Scripts/python.exe apps/mcp/scripts/mcp_stdio_smoke.py
+```
+
+Configuration templates:
+
+```txt
+apps/mcp/configs/claude_desktop_config.example.json
+apps/mcp/configs/cursor_mcp.example.json
+apps/mcp/configs/http_bridge.env.example
+apps/mcp/configs/chatgpt_custom_connector.example.json
+```
+
 ## Implementation Guidance
 
 Keep one MCP tool family:
@@ -191,4 +208,3 @@ kimi_find_pages
 
 Provider-specific work belongs in Phase 16 model adapters, not in the MCP
 surface.
-
