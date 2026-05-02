@@ -57,6 +57,7 @@ def test_agent_token_lifecycle_and_self_read(tmp_path, monkeypatch):
         assert data["start_here_hint"] == "recommended"
         assert data["start_here_status"]["hint_reason"] == "no_recent_start_seen"
         assert data["onboarding_endpoint"] == "/api/agent/onboarding"
+        assert "token creation label" in data["model_label_note"]
         assert data["recommended_start_pages"][0]["slug"] == "start-here-for-external-ai-agents"
         assert "raw_token" not in str(data)
         assert "token_hash" not in str(data)
@@ -139,6 +140,8 @@ def test_agent_me_warns_when_token_has_no_expiry(tmp_path, monkeypatch):
         assert data["expires_at"] is None
         assert data["token_warning"] == "no_expiry"
         assert data["token_management"]["warning"] == "no_expiry"
+        assert data["token_management"]["operator_alert_available"] is False
+        assert data["token_management"]["escalation_endpoint"] is None
         assert "Agent Dashboard" in data["token_management"]["operator_action"]
         assert "raw token" in data["token_management"]["agent_rule"]
 
@@ -312,6 +315,7 @@ def test_agent_state_summary_explains_counts(tmp_path, monkeypatch):
         assert "graph_node_breakdown" in data
         assert data["collaboration_status"]["ready_for_review"] is True
         assert data["first_agent_brief"]["current_phase"] >= 14
+        assert "current_phase" in data["first_agent_brief"]["phase_label_note"]
         assert data["first_agent_brief"]["current_priorities"]
         assert data["phase_status"]["implemented"] is True
         assert data["phase_status"]["release_ready_blockers"]

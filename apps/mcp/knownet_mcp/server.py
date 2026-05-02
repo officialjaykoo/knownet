@@ -167,7 +167,11 @@ class KnowNetMcpServer:
             {"name": "knownet_start_here", "description": "Read first-contact onboarding guidance for external AI agents.", "inputSchema": TOOL_SCHEMAS["knownet_start_here"]},
             {"name": "knownet_me", "description": "Inspect the current agent's scoped permissions and role. Raw token values are never returned.", "inputSchema": TOOL_SCHEMAS["knownet_me"]},
             {"name": "knownet_state_summary", "description": "Read scoped KnowNet state counts.", "inputSchema": TOOL_SCHEMAS["knownet_state_summary"]},
-            {"name": "knownet_ai_state", "description": "Read structured JSON state derived from KnowNet pages.", "inputSchema": TOOL_SCHEMAS["knownet_ai_state"]},
+            {
+                "name": "knownet_ai_state",
+                "description": "Read paginated structured JSON state derived from KnowNet pages. Check meta.has_more/meta.truncated and use offset to continue.",
+                "inputSchema": TOOL_SCHEMAS["knownet_ai_state"],
+            },
             {"name": "knownet_list_pages", "description": "List scoped pages.", "inputSchema": TOOL_SCHEMAS["knownet_list_pages"]},
             {"name": "knownet_read_page", "description": "Read one scoped page.", "inputSchema": TOOL_SCHEMAS["knownet_read_page"]},
             {"name": "knownet_list_reviews", "description": "List scoped collaboration reviews.", "inputSchema": TOOL_SCHEMAS["knownet_list_reviews"]},
@@ -651,6 +655,8 @@ class KnowNetMcpServer:
             meta["warning"] = "result_paginated_use_next_offset"
         elif len(text) > 50000:
             meta["warning"] = "large_result_use_pagination"
+        if meta.get("warning"):
+            result.setdefault("warning", meta["warning"])
 
     def _log(self, method: str, name: str, status: str, *, duration_ms: int | None = None, error_code: str | None = None, request_id: str | None = None, active_requests: int | None = None) -> None:
         if self.log_level == "off":

@@ -153,6 +153,8 @@ def _token_management(agent: AgentAuth) -> dict | None:
         "warning": warning,
         "expires_at": agent.expires_at,
         "expires_in_seconds": agent.expires_in_seconds,
+        "operator_alert_available": False,
+        "escalation_endpoint": None,
         "operator_action": operator_action,
         "dashboard_hint": "Open User Panel -> Agent Dashboard.",
         "agent_rule": "Do not ask for raw token values. Ask the operator to rotate or create a new token.",
@@ -301,6 +303,7 @@ async def agent_me(request: Request, agent: AgentAuth = Depends(require_agent)):
             "label": agent.label,
             "agent_name": agent.agent_name,
             "agent_model": agent.agent_model,
+            "model_label_note": "agent_model is the token creation label and may not reflect the actual calling model. Review submissions should set source_model for the actual model.",
             "purpose": agent.purpose,
             "role": agent.role,
             "vault_id": agent.vault_id,
@@ -536,6 +539,7 @@ async def agent_state_summary(request: Request, agent: AgentAuth = Depends(requi
     await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.state_summary", status="ok")
     first_agent_brief = {
         "current_phase": 14,
+        "phase_label_note": "Token labels may reference a target or test phase. current_phase reflects the last verified project state summary.",
         "current_focus": "External AI onboarding, protected system/managed pages, and MCP connector reliability.",
         "current_priorities": ONBOARDING_PRIORITIES,
         "implementation_status": "active_hardening",

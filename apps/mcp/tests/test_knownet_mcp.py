@@ -136,6 +136,9 @@ def test_tool_schemas_are_strict():
         assert schema["additionalProperties"] is False
     page_schema = next(spec["inputSchema"] for spec in server.tool_specs() if spec["name"] == "knownet_list_pages")
     assert page_schema["properties"]["limit"]["maximum"] == 200
+    ai_state_tool = next(spec for spec in server.tool_specs() if spec["name"] == "knownet_ai_state")
+    assert "paginated" in ai_state_tool["description"]
+    assert "offset" in ai_state_tool["description"]
 
 
 def test_tool_input_validation_happens_before_http_call():
@@ -212,6 +215,7 @@ def test_mcp_pagination_warning_is_not_page_truncation():
     response = {"ok": True, "data": {"items": [1]}, "meta": {"truncated": True}}
     server._annotate_result(response, request_id="req_page")
     assert response["meta"]["warning"] == "result_paginated_use_next_offset"
+    assert response["warning"] == "result_paginated_use_next_offset"
 
 
 def test_scope_denied_includes_current_scope_hint():
