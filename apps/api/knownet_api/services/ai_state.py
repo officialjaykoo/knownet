@@ -14,20 +14,29 @@ def page_id_from_slug(slug: str) -> str:
 
 
 def strip_frontmatter(markdown: str) -> str:
-    if not markdown.startswith("---\n"):
-        return markdown
-    end = markdown.find("\n---\n", 4)
-    return markdown[end + 5 :] if end != -1 else markdown
+    if markdown.startswith("---\n"):
+        end = markdown.find("\n---\n", 4)
+        return markdown[end + 5 :] if end != -1 else markdown
+    if markdown.startswith("---\r\n"):
+        end = markdown.find("\r\n---\r\n", 5)
+        return markdown[end + 7 :] if end != -1 else markdown
+    return markdown
 
 
 def parse_frontmatter(markdown: str) -> dict[str, str]:
-    if not markdown.startswith("---\n"):
+    if markdown.startswith("---\r\n"):
+        marker = "\r\n---\r\n"
+        start = 5
+    elif markdown.startswith("---\n"):
+        marker = "\n---\n"
+        start = 4
+    else:
         return {}
-    end = markdown.find("\n---\n", 4)
+    end = markdown.find(marker, start)
     if end == -1:
         return {}
     result: dict[str, str] = {}
-    for line in markdown[4:end].splitlines():
+    for line in markdown[start:end].splitlines():
         if ":" not in line:
             continue
         key, value = line.split(":", 1)
