@@ -1,0 +1,168 @@
+# Agent Access Contract
+
+This document is the short contract for external AI agents that connect to
+KnowNet.
+
+## Authentication
+
+Use:
+
+```txt
+Authorization: Bearer kn_agent_...
+```
+
+The token is scoped. It is not an admin token and cannot access maintenance
+operations.
+
+## Read Endpoints
+
+```txt
+GET /api/agent/ping
+GET /api/agent/me
+GET /api/agent/context
+GET /api/agent/pages
+GET /api/agent/pages/{page_id}
+GET /api/agent/reviews
+GET /api/agent/findings
+GET /api/agent/graph
+GET /api/agent/citations
+GET /api/agent/state-summary
+```
+
+`/api/agent/ping` needs no token and returns only:
+
+```json
+{ "ok": true, "version": "9.0" }
+```
+
+## Response Shape
+
+Agent read responses use:
+
+```json
+{
+  "ok": true,
+  "data": {},
+  "meta": {
+    "schema_version": 1,
+    "vault_id": "local-default",
+    "agent_scope": ["pages:read"],
+    "truncated": false,
+    "total_count": 0,
+    "returned_count": 0,
+    "generated_at": "2026-05-02T00:00:00Z"
+  }
+}
+```
+
+If the token has an expiry, responses include:
+
+```txt
+X-Token-Expires-In: {seconds}
+```
+
+## Scopes
+
+Common scopes:
+
+```txt
+pages:read
+reviews:read
+findings:read
+graph:read
+citations:read
+messages:create
+reviews:create
+```
+
+Scope presets are expanded when the token is created:
+
+```txt
+preset:reader
+preset:reviewer
+preset:contributor
+```
+
+Wildcard scopes are not used.
+
+## Write Gateway
+
+Agents never write to the database directly.
+
+Allowed write routes depend on token role and scope:
+
+```txt
+POST /api/messages
+POST /api/collaboration/reviews
+POST /api/collaboration/reviews?dry_run=true
+POST /api/collaboration/findings/{finding_id}/decision
+POST /api/collaboration/findings/{finding_id}/implementation
+```
+
+Use dry-run before submitting a review when unsure:
+
+```txt
+POST /api/collaboration/reviews?dry_run=true
+```
+
+Dry-run parses findings but does not create review or finding records.
+
+## Finding Format
+
+```md
+### Finding
+
+Severity: critical | high | medium | low | info
+Area: API | UI | Rust | Security | Data | Ops | Docs
+
+Evidence:
+...
+
+Proposed change:
+...
+```
+
+## Context Budget
+
+Agents receive scoped, bounded context. Large reads may return:
+
+```json
+{ "truncated": true }
+```
+
+Large writes may return HTTP `413`.
+
+## Forbidden Data
+
+Agent APIs must not return:
+
+```txt
+raw database files
+secret values
+sessions
+users
+token_hash
+raw tokens
+backup paths
+maintenance state that grants control
+```
+
+## Example Read Flow
+
+```txt
+1. GET /api/agent/ping
+2. GET /api/agent/me
+3. GET /api/agent/state-summary
+4. GET /api/agent/pages
+5. GET /api/agent/findings
+```
+
+## Example Review Flow
+
+```txt
+1. GET /api/agent/me
+2. GET /api/agent/context
+3. POST /api/collaboration/reviews?dry_run=true
+4. Fix format if needed
+5. POST /api/collaboration/reviews
+```

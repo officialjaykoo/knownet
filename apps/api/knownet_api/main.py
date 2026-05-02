@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .db.sqlite import fetch_one
+from .routes.agent import router as agent_router
+from .routes.agents import router as agents_router
 from .routes.auth import router as auth_router
 from .routes.audit import router as audit_router
 from .routes.citations import router as citations_router
@@ -216,8 +218,13 @@ async def add_security_headers(request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
     response.headers.setdefault("X-Frame-Options", "DENY")
+    expires_in = getattr(request.state, "agent_expires_in_seconds", None)
+    if expires_in is not None:
+        response.headers["X-Token-Expires-In"] = str(expires_in)
     return response
 app.include_router(messages_router)
+app.include_router(agent_router)
+app.include_router(agents_router)
 app.include_router(auth_router)
 app.include_router(citations_router)
 app.include_router(collaboration_router)

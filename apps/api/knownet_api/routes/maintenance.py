@@ -759,6 +759,23 @@ async def verify_index(request: Request, actor: Actor = Depends(require_admin_ac
             if any(term in normalized for term in forbidden_terms):
                 issues.append({"code": "context_bundle_forbidden_reference", "bundle_id": row["id"]})
 
+    if await _table_exists(settings.sqlite_path, "agent_tokens"):
+        agent_rows = await fetch_all(
+            settings.sqlite_path,
+            "SELECT id, scopes, expires_at, revoked_at FROM agent_tokens",
+            (),
+        )
+        now = utc_now()
+        for row in agent_rows:
+            try:
+                scopes = json.loads(row["scopes"] or "[]")
+            except json.JSONDecodeError:
+                scopes = None
+            if not isinstance(scopes, list):
+                issues.append({"code": "agent_token_invalid_scope_json", "token_id": row["id"]})
+            if row["expires_at"] and row["expires_at"] <= now and not row["revoked_at"]:
+                issues.append({"code": "agent_token_expired_cleanup_candidate", "token_id": row["id"]})
+
     stale_patterns = ("Markdown" + "-first",)
     scan_paths = [
         REPO_ROOT / "README.md",

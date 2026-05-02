@@ -386,6 +386,46 @@ CREATE INDEX IF NOT EXISTS idx_implementation_records_finding
 CREATE INDEX IF NOT EXISTS idx_context_bundle_manifests_vault
   ON context_bundle_manifests(vault_id, created_at);
 
+CREATE TABLE IF NOT EXISTS agent_tokens (
+  id TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  agent_name TEXT NOT NULL,
+  agent_model TEXT,
+  purpose TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'agent_reader',
+  vault_id TEXT NOT NULL DEFAULT 'local-default',
+  scopes TEXT NOT NULL DEFAULT '[]',
+  max_pages_per_request INTEGER NOT NULL DEFAULT 20,
+  max_chars_per_request INTEGER NOT NULL DEFAULT 60000,
+  expires_at TEXT,
+  revoked_at TEXT,
+  last_used_at TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS agent_access_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  token_id TEXT,
+  vault_id TEXT NOT NULL DEFAULT 'local-default',
+  agent_name TEXT,
+  action TEXT NOT NULL,
+  target_type TEXT,
+  target_id TEXT,
+  request_id TEXT,
+  status TEXT NOT NULL,
+  meta TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_tokens_hash
+  ON agent_tokens(token_hash);
+
+CREATE INDEX IF NOT EXISTS idx_agent_access_events_token
+  ON agent_access_events(token_id, created_at);
+
 CREATE TABLE IF NOT EXISTS maintenance_locks (
   id TEXT PRIMARY KEY,
   operation TEXT NOT NULL,

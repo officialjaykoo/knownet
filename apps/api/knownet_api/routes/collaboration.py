@@ -12,7 +12,17 @@ from pydantic import BaseModel, Field
 
 from ..audit import write_audit_event
 from ..db.sqlite import fetch_all, fetch_one
-from ..security import Actor, ensure_text_size, require_admin_access, require_review_access, require_write_access, utc_now
+from ..security import (
+    Actor,
+    authenticate_agent_token,
+    ensure_text_size,
+    record_agent_access,
+    require_admin_access,
+    require_actor,
+    require_review_access,
+    require_write_access,
+    utc_now,
+)
 from ..services.rust_core import RustCoreError
 
 try:
@@ -258,12 +268,41 @@ def _assert_no_secret_text(text: str, settings, *, page_id: str | None = None) -
 
 
 @router.post("/reviews")
-async def import_review(payload: ImportReviewRequest, request: Request, actor: Actor = Depends(require_write_access)):
+async def import_review(payload: ImportReviewRequest, request: Request, dry_run: bool = False):
     settings = request.app.state.settings
+    agent = None
+    if (request.headers.get("authorization") or "").lower().startswith("bearer kn_agent_"):
+        agent = await authenticate_agent_token(request, settings)
+        if "reviews:create" not in agent.scopes or agent.role not in {"agent_reviewer", "agent_contributor"}:
+            await record_agent_access(settings.sqlite_path, agent=agent, action="review.import", status="denied", meta={"reason": "scope_or_role"})
+            raise HTTPException(status_code=403, detail={"code": "agent_scope_forbidden", "message": "Agent cannot create reviews", "details": {}})
+        actor = agent.actor
+    else:
+        actor = await require_write_access(await require_actor(request, settings))
     ensure_text_size(payload.markdown, MAX_REVIEW_BYTES, "markdown")
     metadata, findings, parser_errors = parse_review_markdown(payload.markdown)
     if not findings:
         raise HTTPException(status_code=422, detail={"code": "collaboration_no_findings", "message": "No findings found", "details": {}})
+    if dry_run:
+        if agent:
+            await record_agent_access(
+                settings.sqlite_path,
+                agent=agent,
+                action="review.dry_run",
+                status="ok",
+                meta={"finding_count": len(findings), "parser_errors": parser_errors, "truncated_findings": bool(metadata.get("truncated_findings"))},
+            )
+        return {
+            "ok": True,
+            "data": {
+                "dry_run": True,
+                "metadata": metadata,
+                "finding_count": len(findings),
+                "findings": findings,
+                "parser_errors": parser_errors,
+                "truncated_findings": bool(metadata.get("truncated_findings")),
+            },
+        }
 
     review_id = f"review_{uuid4().hex[:12]}"
     now = utc_now()
@@ -318,6 +357,8 @@ async def import_review(payload: ImportReviewRequest, request: Request, actor: A
         target_id=review_id,
         metadata={"source_agent": source_agent, "findings": len(created_findings), "parser_errors": parser_errors, "graph_rebuild": graph_rebuild},
     )
+    if agent:
+        await record_agent_access(settings.sqlite_path, agent=agent, action="review.import", status="ok", target_type="collaboration_review", target_id=review_id, meta={"finding_count": len(created_findings)})
     return {"ok": True, "data": {"review": review, "findings": created_findings, "graph_rebuild": graph_rebuild}}
 
 
