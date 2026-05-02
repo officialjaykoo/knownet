@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "KnowNet",
-  description: "Markdown-first AI collaboration knowledge base",
+  description: "AI-centered structured collaboration memory",
   icons: {
     icon: "/icon.png",
     apple: "/icon.png"

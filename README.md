@@ -2,10 +2,11 @@
 
 AI-centered collaboration knowledge base.
 
-KnowNet is designed around durable AI-to-AI project memory: context pages,
-structured findings, implementation decisions, verification records, and safe
-context bundles. Markdown is the long-form writing surface; JSON and SQLite hold
-the machine-readable state. See [AI-Centered Design](./docs/AI_CENTERED_DESIGN.md).
+KnowNet is designed around durable AI-to-AI project memory: structured findings,
+implementation decisions, verification records, context manifests, and safe
+context bundles. SQLite/JSON records are the canonical AI collaboration state;
+Markdown is a narrative attachment for long reasoning, source review text, and
+operator-facing context. See [AI-Centered Design](./docs/AI_CENTERED_DESIGN.md).
 
 ## Quick Start
 

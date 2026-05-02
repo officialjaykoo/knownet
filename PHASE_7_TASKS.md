@@ -29,17 +29,19 @@ The product shape is a local-first AI collaboration tool for reviews,
 decisions, and implementation records.
 ```
 
-Design reference: [AI-Centered Design](./docs/AI_CENTERED_DESIGN.md). Markdown is the
-long-form artifact format; JSON and SQLite are the machine-readable structure.
+Design reference: [AI-Centered Design](./docs/AI_CENTERED_DESIGN.md). SQLite/JSON
+records are the canonical AI collaboration state. Markdown is preserved as a
+narrative attachment for source review text and long-form context.
 
 ## Fixed Decisions
 
 ```txt
 Primary goal: AI-centered review and implementation workflow.
-External agents: read/write Markdown review context only.
+External agents: read context bundles and return structured findings with
+optional Markdown narrative.
 Implementation authority: local coding agent with repository access.
-Canonical review text: Markdown.
-Canonical machine state: SQLite rows and JSON metadata.
+Canonical collaboration state: SQLite rows and JSON metadata.
+Narrative attachment: Markdown review text.
 Operational status: SQLite.
 Default mode: local-first, single operator.
 Security rule: never expose secrets, .env, DB files, or backups in context bundles.
@@ -74,17 +76,18 @@ Graph:
 Operations:
   Phase 6 verify-index gains review/finding orphan checks.
   Phase 6 backup/restore automatically covers collaboration tables and review
-  Markdown files because they live under data/pages/reviews/.
+  narrative attachments.
 
 Write rule:
-  Rust daemon remains the write owner for Markdown files and core SQLite state.
+  Rust daemon remains the write owner for canonical page files, review narrative
+  attachments, and core SQLite state.
   Python routes may orchestrate and validate, but must not directly create
-  review Markdown files or collaboration SQLite rows.
+  review narrative files or collaboration SQLite rows.
 ```
 
 ## Data Model
 
-Add collaboration-oriented metadata without replacing Markdown knowledge pages.
+Add collaboration-oriented records without replacing page context.
 
 ```sql
 CREATE TABLE collaboration_reviews (
@@ -237,24 +240,27 @@ create_context_bundle_manifest
 Review import writes:
 
 ```txt
-Review Markdown file:
-  Path: data/pages/reviews/{review_id}.md
-  Created by Rust daemon write path, not direct Python file write.
-
 SQLite rows:
   collaboration_reviews row created by create_collaboration_review.
   collaboration_findings rows created by create_collaboration_finding.
+  These rows are the canonical review/finding state.
+
+Review narrative attachment:
+  Preserve source review prose through the Rust daemon write path when present.
+  Do not require narrative prose when the import already provides complete
+  structured finding data.
 
 Python role:
   Validate request.
-  Parse Markdown.
+  Parse review input into structured records.
   Call Rust daemon commands.
   Record audit event after command success.
 ```
 
-## Markdown Format
+## Review Input Format
 
-Agent reviews should be easy to paste in as Markdown.
+Agent reviews may arrive as Markdown prose with structured finding sections, or
+as already structured finding data. SQLite/JSON rows are canonical after import.
 
 Recommended frontmatter:
 
@@ -292,7 +298,7 @@ Proposed change:
 ...
 ```
 
-## Markdown Parser Rules
+## Review Parser Rules
 
 The parser rules are fixed so external review format and importer behavior stay
 aligned.
@@ -306,7 +312,7 @@ Frontmatter:
     source_agent = "unknown" when absent
 
 Finding split:
-  A finding begins at a Markdown heading that starts with:
+  For Markdown narrative input, a finding begins at a heading that starts with:
     ### Finding
   The finding ends at the next "### " heading or document end.
 
@@ -353,7 +359,7 @@ Minimal endpoints:
 
 ```txt
 POST /api/collaboration/reviews
-  Import Markdown review text.
+  Import review input and create canonical structured collaboration rows.
   Body:
     { "vault_id": "local-default", "markdown": "...", "source_agent": "claude" }
   Returns:
@@ -378,7 +384,7 @@ POST /api/collaboration/findings/{finding_id}/implementation
     { "commit_sha": "...", "changed_files": [...], "verification": "...", "notes": "..." }
 
 POST /api/collaboration/context-bundles
-  Create a curated Markdown context bundle from selected pages.
+  Create a curated AI context bundle from selected pages and structured records.
   Body:
     { "vault_id": "local-default", "page_ids": [...], "include_graph_summary": true }
   Returns:
@@ -390,13 +396,18 @@ write through the Rust daemon when they mutate SQLite state.
 
 ## Context Bundle Rules
 
-Context bundles are for external AI review. They should be useful but narrow.
+Context bundles are for external AI review. They should be useful, narrow, and
+structured-record first.
 
 Allowed content:
 
 ```txt
 Selected active pages:
-  slug, title, tags/frontmatter, latest Markdown content.
+  slug, title, tags/frontmatter, latest page content.
+
+Structured collaboration summary:
+  review ids, finding ids, severity, status, area, decision status,
+  implementation record ids.
 
 Citation audit summary:
   citation_key, status, verifier_type, short reason.
@@ -425,7 +436,8 @@ raw citation evidence snapshots unless explicitly added by owner/admin
 Output format:
 
 ```txt
-Default: single Markdown file.
+Default: single Markdown file containing structured JSON summary blocks plus
+selected narrative context.
 Archive format when multiple assets are needed: .tar.gz.
 Archive format is fixed; do not introduce another archive format for KnowNet
 snapshots or context bundle archives.
@@ -445,7 +457,7 @@ Page section:
   ## Page: {title}
   slug: {slug}
 
-  {latest Markdown content}
+  {latest page content}
 
 Citation section:
   ### Citation Audit Summary
@@ -467,7 +479,7 @@ Generated bundle path:
   data/context-bundles/{filename}
 
 Write rule:
-  The Markdown bundle file is created by the Rust daemon.
+  The bundle file is created by the Rust daemon.
   API response may also return content for copy/paste convenience.
 
 Retention:
@@ -502,7 +514,7 @@ Build this as a focused operations surface.
    List pending agent reviews and finding counts.
 
 2. Review Detail
-   Show Markdown review, extracted findings, severity, and proposed changes.
+   Show source review narrative, extracted findings, severity, and proposed changes.
 
 3. Triage Controls
    Accept, reject, defer, or request more context with a short decision note.
@@ -511,7 +523,8 @@ Build this as a focused operations surface.
    Attach commit hash, changed files, and test result summary.
 
 5. Context Bundle Builder
-   Select pages and produce one Markdown packet for another AI agent.
+   Select structured records and page context to produce one context bundle for
+   another AI agent.
 ```
 
 Avoid chat-style UI for now. The work unit is a review/finding/decision, not a
@@ -545,17 +558,17 @@ the most review risk.
 ## Implementation Order
 
 ```txt
-P7-001 Document type and Markdown parser
-  Parse agent_review Markdown into review + finding candidates using the fixed
-  "### Finding" rules above.
+P7-001 Document type and review parser
+  Parse agent review input into canonical review + finding records using the
+  fixed parser rules above.
 
 P7-002 SQLite schema and Rust commands
   Add collaboration_reviews, collaboration_findings, implementation_records.
   Add create/update Rust commands listed above.
 
 P7-003 Review import API
-  Import Markdown, create data/pages/reviews/{review_id}.md through Rust,
-  extract findings, record audit event.
+  Import review input, preserve narrative attachment through Rust when present,
+  extract findings, create canonical rows, and record audit event.
 
 P7-004 Triage API
   Accept/reject/defer findings with decision notes.
@@ -567,7 +580,7 @@ P7-006 Implementation record API/UI
   Attach commit/test evidence after code changes.
 
 P7-007 Context bundle export
-  Generate curated Markdown packets for external agents.
+  Generate curated AI context bundles for external agents.
 
 P7-008 Graph integration
   Add review/finding nodes and edges after the workflow is stable.
@@ -578,7 +591,7 @@ P7-008 Graph integration
 Required MVP tests:
 
 ```txt
-Markdown parser:
+Review parser:
   Parses multiple ### Finding sections.
   Falls back to info/general for missing severity/area.
   Stores raw_text and needs_more_context on malformed findings.
@@ -607,7 +620,7 @@ UI:
 Phase 7 MVP is complete when these five workflows work:
 
 ```txt
-1. Markdown review paste/import creates a review and extracts findings.
+1. Review import creates canonical review/finding records.
 2. Each finding can be accepted, rejected, deferred, or marked needs_more_context.
 3. Accepted findings can be linked to commit hash and verification summary.
 4. Context bundle generation excludes secrets and restricted data.
@@ -633,9 +646,9 @@ Chat-style collaboration UI:
   chat may be added later only if it produces review/finding records.
 
 Remote agent execution:
-  Not implemented. External agents may receive context bundles and return review
-  Markdown, but KnowNet does not grant repository, shell, database, or backup
-  access to remote agents.
+  Not implemented. External agents may receive context bundles and return
+  structured findings with optional narrative text, but KnowNet does not grant
+  repository, shell, database, or backup access to remote agents.
 
 Full issue tracker replacement:
   Not implemented. Phase 7 keeps review/finding/decision records only.

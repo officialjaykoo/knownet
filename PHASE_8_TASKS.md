@@ -3,11 +3,64 @@
 Phase 8 turns the Phase 7 collaboration workflow into a stricter AI-centered
 operating layer.
 
+Implementation status: completed in the codebase.
+
+Implemented surface:
+
+```txt
+P8-001:
+  Current terminology checks for active docs and app code.
+
+P8-002:
+  Context bundle secret/path guard with no bypass flag, ADMIN_TOKEN value
+  matching, line-based assignment matching, and false-positive boundary tests.
+
+P8-003:
+  Case-insensitive finding parser, area normalization, 50-finding truncation,
+  256 KiB review body limit, and 2000-character decision note limit.
+
+P8-004:
+  Collaboration review/finding/decision/implementation/context bundle state is
+  persisted in existing Phase 7 tables.
+
+P8-005:
+  Collaboration read routes reuse viewer-or-higher access; mutating routes keep
+  write/admin access.
+
+P8-006:
+  verify-index reports collaboration and context bundle drift.
+
+P8-007:
+  Default seed file is KnowNet AI state content, not sample/demo content.
+
+P8-008:
+  API regression tests, Rust test build, and web production build cover the
+  hardening path.
+```
+
 Phase 7 remains the implementation phase for collaboration MVP features:
 review import, finding triage, implementation records, context bundle export,
 Review Inbox UI, and graph integration. Phase 8 does not replace Phase 7. It
 hardens the rules around AI-to-AI handoff, context bundle safety, and project
 state clarity.
+
+Implementation posture:
+
+```txt
+Phase 8 is a tightening pass, not a feature expansion phase.
+
+Prefer:
+  small additive validation
+  tests for existing Phase 7 behavior
+  clearer terminology
+  safer context export
+
+Avoid:
+  changing Phase 1-7 endpoint contracts
+  new auth/token systems
+  new archive formats
+  broad rewrites or product expansion
+```
 
 ## Document Roles
 
@@ -41,11 +94,12 @@ PHASE_8_TASKS.md:
 Product identity:
   AI-centered collaboration knowledge base.
 
-Long-form artifact:
-  Markdown.
-
-Machine-readable state:
+Canonical collaboration state:
   SQLite rows and JSON metadata.
+
+Narrative attachment:
+  Markdown for long reasoning, source review prose, runbooks, and selected page
+  context.
 
 Page storage:
   data/pages only.
@@ -118,6 +172,12 @@ Implementation rule:
 
 ```txt
 New documentation and UI copy must use only the current terms above.
+Only rename terms when they refer to KnowNet content units, storage, API
+descriptions, or user-facing labels.
+
+Do not rename unrelated programming terms such as DOM document, Markdown
+document, JSON document, or third-party API wording when they are not KnowNet
+content-unit labels.
 ```
 
 Done when:
@@ -125,6 +185,8 @@ Done when:
 ```txt
 Search checks confirm active docs, UI copy, and API descriptions use the current
 terms above.
+The search result list is reviewed before edits so unrelated technical terms are
+not renamed mechanically.
 ```
 
 ## P8-002 Context Bundle Secret Guard
@@ -143,6 +205,8 @@ Before a context bundle is returned or written:
 
 1. Reject any response JSON object that contains keys matching:
    token, secret, password, key
+   Match keys case-insensitively. Apply this to generated bundle metadata and
+   response JSON, not to every word in page prose.
 
 2. Reject any included file path containing:
    .env
@@ -154,7 +218,9 @@ Before a context bundle is returned or written:
 
 3. Reject bundle content if it contains the configured ADMIN_TOKEN value.
    Read ADMIN_TOKEN from configuration and perform a direct string match when
-   the token is non-empty.
+   the token is non-empty and at least ADMIN_TOKEN_MIN_CHARS characters long.
+   Skip this direct-value check when ADMIN_TOKEN is empty or shorter than the
+   configured minimum.
 
 4. Reject bundle content if it contains common secret assignment patterns:
    ADMIN_TOKEN=
@@ -162,6 +228,11 @@ Before a context bundle is returned or written:
    API_KEY=
    SECRET=
    PASSWORD=
+   Check line-by-line, case-insensitively.
+   Ignore lines that start with "#".
+   Match only assignments at the start of a line with optional whitespace around
+   "=".
+   Do not flag names such as ADMIN_TOKEN_MIN_CHARS.
 
 5. Reject raw table exports for:
    users
@@ -189,6 +260,12 @@ Done when:
 ```txt
 Tests prove context bundle export rejects .env, *.db, backups, inbox paths,
 ADMIN_TOKEN values, and secret-like keys.
+Tests prove boundary cases do not false-positive:
+  empty ADMIN_TOKEN
+  short ADMIN_TOKEN below ADMIN_TOKEN_MIN_CHARS
+  "# ADMIN_TOKEN=example"
+  "ADMIN_TOKEN_MIN_CHARS=32"
+  prose such as "my_password_field"
 ```
 
 ## P8-003 Finding Parser Contract
@@ -217,12 +294,22 @@ Proposed change:
 Parsing rules:
 
 ```txt
-Split findings by "### Finding" headings.
+Split findings by "### Finding" headings, case-insensitively.
 Severity values outside the enum fall back to info.
+Area values are normalized before enum comparison:
+  api -> API
+  ui -> UI
+  rust -> Rust
+  security -> Security
+  data -> Data
+  ops -> Ops
+  docs -> Docs
 Area values outside the enum fall back to Docs.
 Missing Evidence or Proposed change marks the finding as needs_more_context.
 Malformed finding text is stored in raw_text.
 Maximum findings per review: 50.
+If a review contains more than 50 findings, parse the first 50, set
+review.meta.truncated_findings=true, and do not fail the whole import.
 Maximum review Markdown body: 256 KiB.
 Maximum decision_note: 2000 characters.
 ```
@@ -233,6 +320,10 @@ Done when:
 Parser tests cover valid findings, multiple findings, malformed findings,
 unknown severity/area fallback, over-limit review body, and over-limit finding
 count.
+Parser tests also cover:
+  "### finding" and "### FINDING"
+  lower-case area values such as api and ui
+  51 findings producing 50 parsed findings plus truncated_findings=true
 ```
 
 ## P8-004 Durable Artifact Enforcement
@@ -247,9 +338,9 @@ Rules:
 
 ```txt
 Review import:
-  Store the original review Markdown under data/pages/reviews/{review_id}.md or
-  the current review page storage path used by Phase 7.
-  Store collaboration_reviews and collaboration_findings rows.
+  Store collaboration_reviews and collaboration_findings rows as canonical
+  state.
+  Preserve source review prose as a narrative attachment when present.
 
 Decision:
   Store finding status, decision_note, decided_by, and decided_at.
@@ -261,8 +352,8 @@ Implementation record:
   Record audit action: implementation.record.
 
 Context bundle:
-  Store context_bundle_manifest with content_hash, selected_pages, and excluded
-  sections.
+  Store context_bundle_manifest with content_hash, selected_pages, included
+  structured record ids, and excluded sections.
 ```
 
 Done when:
@@ -270,6 +361,8 @@ Done when:
 ```txt
 Restarting API/web does not lose imported reviews, parsed findings, decisions,
 implementation records, or bundle manifests.
+Tests verify persistence using the existing Phase 7 collaboration tables. Do not
+create replacement tables for this check.
 ```
 
 ## P8-005 Permission Tightening
@@ -299,6 +392,8 @@ Mutating endpoints:
   Reuse existing write auth dependency.
   Record audit_events.
   Do not create a parallel token system.
+  Do not add new middleware when the existing FastAPI dependency pattern already
+  covers the route.
 ```
 
 Done when:
@@ -375,6 +470,17 @@ Rules:
 Seed pages must live under data/pages.
 Old sample or demo pages must not remain active, tombstoned, hidden in
 data/revisions, or visible in graph/search.
+Seed pages must describe current state, not aspirational plans.
+Do not create empty placeholders.
+
+Each seed page should include:
+  Current State
+  Boundaries
+  Known Issues
+  Review Targets
+
+If a fact cannot be verified yet, write:
+  [TBD - Codex should fill this after implementation verification]
 ```
 
 Done when:
@@ -394,6 +500,7 @@ API tests:
   Context bundle secret guard tests.
   Finding parser contract tests.
   Verify-index collaboration drift tests.
+  Terminology search tests for app code and active docs.
 
 Web checks:
   Review Inbox still renders.

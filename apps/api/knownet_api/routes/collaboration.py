@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 
 from ..audit import write_audit_event
 from ..db.sqlite import fetch_all, fetch_one
-from ..security import Actor, ensure_text_size, require_admin_access, require_write_access, utc_now
+from ..security import Actor, ensure_text_size, require_admin_access, require_review_access, require_write_access, utc_now
 from ..services.rust_core import RustCoreError
 
 try:
@@ -24,7 +24,14 @@ except Exception:  # pragma: no cover - fallback is for minimally installed dev 
 router = APIRouter(prefix="/api/collaboration", tags=["collaboration"])
 
 SEVERITIES = {"critical", "high", "medium", "low", "info"}
+AREAS = {"API": "API", "UI": "UI", "Rust": "Rust", "Security": "Security", "Data": "Data", "Ops": "Ops", "Docs": "Docs"}
+AREA_NORMALIZE = {key.lower(): value for key, value in AREAS.items()}
 DECISION_STATUSES = {"accepted", "rejected", "deferred", "needs_more_context"}
+MAX_REVIEW_BYTES = 256 * 1024
+MAX_FINDINGS_PER_REVIEW = 50
+SECRET_ASSIGNMENT_NAMES = ("ADMIN_TOKEN", "OPENAI_API_KEY", "API_KEY", "SECRET", "PASSWORD")
+SECRET_JSON_KEYS = ("token", "secret", "password", "key")
+FORBIDDEN_BUNDLE_PATH_NAMES = {"backups", "inbox", "sessions", "users"}
 EXCLUDED_SECTIONS = [
     ".env files and API key values",
     "knownet.db and *.db files",
@@ -35,10 +42,7 @@ EXCLUDED_SECTIONS = [
     "audit_events IP hashes and session_meta",
     "raw citation evidence snapshots",
 ]
-SECRET_PATTERNS = [
-    re.compile(r"sk-[A-Za-z0-9_-]{16,}"),
-    re.compile(r"(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*['\"]?[A-Za-z0-9_\-]{12,}"),
-]
+SECRET_ASSIGNMENT_RE = re.compile(r"^\s*(ADMIN_TOKEN|OPENAI_API_KEY|API_KEY|SECRET|PASSWORD)\s*=", re.IGNORECASE)
 
 
 class ImportReviewRequest(BaseModel):
@@ -51,7 +55,7 @@ class ImportReviewRequest(BaseModel):
 
 class FindingDecisionRequest(BaseModel):
     status: str
-    decision_note: str | None = Field(default=None, max_length=1000)
+    decision_note: str | None = Field(default=None, max_length=2000)
 
 
 class ImplementationRecordRequest(BaseModel):
@@ -109,6 +113,12 @@ def _section(block: str, start: str, end: str | None = None) -> str | None:
     return value or None
 
 
+def _normalize_area(value: str | None) -> str:
+    if not value:
+        return "Docs"
+    return AREA_NORMALIZE.get(value.strip().lower(), "Docs")
+
+
 def parse_review_markdown(markdown: str) -> tuple[dict, list[dict], list[str]]:
     metadata, body = _parse_frontmatter(markdown)
     errors: list[str] = []
@@ -116,13 +126,13 @@ def parse_review_markdown(markdown: str) -> tuple[dict, list[dict], list[str]]:
     metadata.setdefault("status", "pending_review")
     metadata.setdefault("source_agent", "unknown")
 
-    heading_matches = list(re.finditer(r"(?m)^###\s+Finding\b.*$", body))
+    heading_matches = list(re.finditer(r"(?im)^###\s+finding\b.*$", body))
     if not heading_matches:
         errors.append("no_finding_headings")
         return metadata, [
             {
                 "severity": "info",
-                "area": "general",
+                "area": "Docs",
                 "title": _title_from_markdown(markdown, "Unparsed review"),
                 "evidence": None,
                 "proposed_change": None,
@@ -132,7 +142,10 @@ def parse_review_markdown(markdown: str) -> tuple[dict, list[dict], list[str]]:
         ], errors
 
     findings: list[dict] = []
-    for index, match in enumerate(heading_matches):
+    if len(heading_matches) > MAX_FINDINGS_PER_REVIEW:
+        metadata["truncated_findings"] = True
+        errors.append("truncated_findings")
+    for index, match in enumerate(heading_matches[:MAX_FINDINGS_PER_REVIEW]):
         next_start = heading_matches[index + 1].start() if index + 1 < len(heading_matches) else len(body)
         block = body[match.start() : next_start].strip()
         title = match.group(0).replace("###", "", 1).strip() or f"Finding {index + 1}"
@@ -140,7 +153,7 @@ def parse_review_markdown(markdown: str) -> tuple[dict, list[dict], list[str]]:
         if severity not in SEVERITIES:
             errors.append(f"unknown_severity:{severity}")
             severity = "info"
-        area = _field(block, "Area") or "general"
+        area = _normalize_area(_field(block, "Area"))
         evidence = _section(block, "Evidence", "Proposed change")
         proposed_change = _section(block, "Proposed change")
         status = "pending"
@@ -152,7 +165,7 @@ def parse_review_markdown(markdown: str) -> tuple[dict, list[dict], list[str]]:
         findings.append(
             {
                 "severity": severity,
-                "area": area[:120],
+                "area": area,
                 "title": title[:220],
                 "evidence": evidence,
                 "proposed_change": proposed_change,
@@ -195,10 +208,59 @@ async def _rebuild_collaboration_graph(request: Request, vault_id: str) -> dict:
         return {"status": "failed", "code": error.code, "message": error.message}
 
 
+def _assert_no_forbidden_json_keys(value, path: str = "data") -> None:
+    if isinstance(value, dict):
+        for key, child in value.items():
+            key_text = str(key).lower()
+            if any(part in key_text for part in SECRET_JSON_KEYS):
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": "context_bundle_secret_detected", "message": "Forbidden secret-like JSON key detected", "details": {"path": f"{path}.{key}"}},
+                )
+            _assert_no_forbidden_json_keys(child, f"{path}.{key}")
+    elif isinstance(value, list):
+        for index, child in enumerate(value):
+            _assert_no_forbidden_json_keys(child, f"{path}[{index}]")
+
+
+def _assert_allowed_bundle_path(path_text: str, *, page_id: str | None = None) -> None:
+    normalized = path_text.replace("\\", "/").lower()
+    parts = [part for part in normalized.split("/") if part]
+    forbidden = any(part in FORBIDDEN_BUNDLE_PATH_NAMES for part in parts)
+    forbidden = forbidden or any(part == ".env" or part.endswith(".db") for part in parts)
+    if forbidden:
+        raise HTTPException(
+            status_code=400,
+            detail={"code": "context_bundle_forbidden_path", "message": "Forbidden path in context bundle", "details": {"path": path_text, "page_id": page_id}},
+        )
+
+
+def _assert_no_secret_text(text: str, settings, *, page_id: str | None = None) -> None:
+    token = settings.admin_token or ""
+    if token and len(token) >= settings.admin_token_min_chars and token in text:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "context_bundle_secret_detected", "message": "Configured admin token detected", "details": {"page_id": page_id}},
+        )
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.lstrip()
+        if stripped.startswith("#"):
+            continue
+        if SECRET_ASSIGNMENT_RE.match(line):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "context_bundle_secret_detected",
+                    "message": "Secret assignment detected",
+                    "details": {"page_id": page_id, "line": line_number},
+                },
+            )
+
+
 @router.post("/reviews")
 async def import_review(payload: ImportReviewRequest, request: Request, actor: Actor = Depends(require_write_access)):
     settings = request.app.state.settings
-    ensure_text_size(payload.markdown, settings.max_message_bytes, "markdown")
+    ensure_text_size(payload.markdown, MAX_REVIEW_BYTES, "markdown")
     metadata, findings, parser_errors = parse_review_markdown(payload.markdown)
     if not findings:
         raise HTTPException(status_code=422, detail={"code": "collaboration_no_findings", "message": "No findings found", "details": {}})
@@ -267,7 +329,7 @@ async def list_reviews(
     source_agent: str | None = None,
     area: str | None = None,
     limit: int = 50,
-    actor: Actor = Depends(require_write_access),
+    actor: Actor = Depends(require_review_access),
 ):
     settings = request.app.state.settings
     limit = min(max(limit, 1), 200)
@@ -294,7 +356,7 @@ async def list_reviews(
 
 
 @router.get("/reviews/{review_id}")
-async def get_review(review_id: str, request: Request, actor: Actor = Depends(require_write_access)):
+async def get_review(review_id: str, request: Request, actor: Actor = Depends(require_review_access)):
     return {"ok": True, "data": await _review_with_findings(request.app.state.settings.sqlite_path, review_id)}
 
 
@@ -391,10 +453,6 @@ async def record_implementation(
     return {"ok": True, "data": {**result, "graph_rebuild": graph_rebuild}}
 
 
-def _contains_secret(text: str) -> bool:
-    return any(pattern.search(text) for pattern in SECRET_PATTERNS)
-
-
 def _strip_frontmatter(markdown: str) -> str:
     if markdown.startswith("---\n"):
         end = markdown.find("\n---\n", 4)
@@ -416,6 +474,7 @@ async def create_context_bundle(payload: ContextBundleRequest, request: Request,
     )
     if not rows:
         raise HTTPException(status_code=422, detail={"code": "context_bundle_empty_selection", "message": "No active pages selected", "details": {}})
+    _assert_no_forbidden_json_keys({"vault_id": payload.vault_id, "page_ids": payload.page_ids, "include_graph_summary": payload.include_graph_summary})
 
     sections = [
         "# KnowNet Context Bundle",
@@ -425,14 +484,39 @@ async def create_context_bundle(payload: ContextBundleRequest, request: Request,
         "warning: Do not include secrets in this bundle.",
         "",
     ]
+    collaboration_summary = await fetch_all(
+        settings.sqlite_path,
+        "SELECT r.id AS review_id, r.title AS review_title, r.status AS review_status, "
+        "f.id AS finding_id, f.severity, f.area, f.status AS finding_status, "
+        "ir.id AS implementation_record_id "
+        "FROM collaboration_reviews r "
+        "LEFT JOIN collaboration_findings f ON f.review_id = r.id "
+        "LEFT JOIN implementation_records ir ON ir.finding_id = f.id "
+        "WHERE r.vault_id = ? "
+        "ORDER BY r.updated_at DESC, f.updated_at DESC LIMIT 50",
+        (payload.vault_id,),
+    )
+    if collaboration_summary:
+        summary_rows = [dict(row) for row in collaboration_summary]
+        _assert_no_forbidden_json_keys({"structured_records": summary_rows})
+        sections.extend(
+            [
+                "## Structured Collaboration Summary",
+                "",
+                "```json",
+                json.dumps(summary_rows, ensure_ascii=False, indent=2),
+                "```",
+                "",
+            ]
+        )
     for row in rows:
         path = Path(row["path"]).resolve()
         data_dir = settings.data_dir.resolve()
         if data_dir not in path.parents:
             raise HTTPException(status_code=400, detail={"code": "context_bundle_forbidden_path", "message": "Page path is outside data directory", "details": {"page_id": row["id"]}})
+        _assert_allowed_bundle_path(str(path.relative_to(data_dir)), page_id=row["id"])
         content = _strip_frontmatter(path.read_text(encoding="utf-8"))
-        if _contains_secret(content):
-            raise HTTPException(status_code=422, detail={"code": "context_bundle_secret_detected", "message": "Secret-like value detected", "details": {"page_id": row["id"]}})
+        _assert_no_secret_text(content, settings, page_id=row["id"])
         sections.extend(["---", "", f"## Page: {row['title']}", f"slug: {row['slug']}", "", content.strip(), ""])
 
         audits = await fetch_all(
@@ -457,10 +541,23 @@ async def create_context_bundle(payload: ContextBundleRequest, request: Request,
         sections.extend(["---", "", "## Graph Summary", f"nodes: {graph_counts['nodes'] if graph_counts else 0}", f"edges: {graph_counts['edges'] if graph_counts else 0}", ""])
 
     content = "\n".join(sections).strip() + "\n"
+    _assert_no_secret_text(content, settings)
     content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
     filename = f"knownet-context-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid4().hex[:8]}.md"
     manifest_id = f"bundle_{uuid4().hex[:12]}"
     try:
+        included_sections = ["pages", "structured_records", "citation_summary", "graph_summary" if payload.include_graph_summary else "no_graph"]
+        manifest_payload = {
+            "manifest_id": manifest_id,
+            "vault_id": payload.vault_id,
+            "filename": filename,
+            "selected_pages": payload.page_ids,
+            "included_sections": included_sections,
+            "excluded_sections": EXCLUDED_SECTIONS,
+            "content_hash": content_hash,
+            "created_by": actor.actor_id,
+        }
+        _assert_no_forbidden_json_keys(manifest_payload)
         manifest = await request.app.state.rust_core.request(
             "create_context_bundle_manifest",
             {
@@ -471,7 +568,7 @@ async def create_context_bundle(payload: ContextBundleRequest, request: Request,
                 "filename": filename,
                 "content": content,
                 "selected_pages": json.dumps(payload.page_ids, ensure_ascii=True),
-                "included_sections": json.dumps(["pages", "citation_summary", "graph_summary" if payload.include_graph_summary else "no_graph"], ensure_ascii=True),
+                "included_sections": json.dumps(included_sections, ensure_ascii=True),
                 "excluded_sections": json.dumps(EXCLUDED_SECTIONS, ensure_ascii=True),
                 "content_hash": content_hash,
                 "created_by": actor.actor_id,

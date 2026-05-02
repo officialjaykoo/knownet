@@ -11,6 +11,7 @@ the local implementation agent decide what to apply in code.
 
 ```txt
 KnowNet stores:
+  structured collaboration records
   project context pages
   AI review documents
   structured findings
@@ -21,7 +22,7 @@ KnowNet stores:
 
 External AI agents:
   read curated context bundles
-  write review documents
+  return structured findings and optional review prose
   do not write source code through KnowNet
 
 Codex:
@@ -54,8 +55,8 @@ No remote code authority:
 
 ```txt
 1. Generate a curated context bundle.
-2. External AI writes an agent review.
-3. KnowNet imports the review and parses findings.
+2. External AI returns structured findings with optional narrative review text.
+3. KnowNet imports the review and stores canonical structured records.
 4. Codex or the operator triages findings.
 5. Accepted findings become implementation work.
 6. Codex edits code, runs checks, and records evidence.

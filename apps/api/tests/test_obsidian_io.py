@@ -1,6 +1,6 @@
 from pathlib import Path
+import tarfile
 from types import SimpleNamespace
-from zipfile import ZipFile
 
 import aiosqlite
 from fastapi.testclient import TestClient
@@ -46,9 +46,11 @@ def test_obsidian_import_dry_run_and_export(tmp_path):
     exported = client.post("/api/maintenance/obsidian/export")
     assert exported.status_code == 200
     export_path = Path(exported.json()["data"]["path"])
-    with ZipFile(export_path) as archive:
-        assert "vault/sample.md" in archive.namelist()
-        assert "manifest.json" in archive.namelist()
+    assert export_path.name.endswith(".tar.gz")
+    with tarfile.open(export_path, "r:gz") as archive:
+        names = archive.getnames()
+        assert "vault/sample.md" in names
+        assert "manifest.json" in names
 
 
 def test_obsidian_import_writes_canonical_state_through_rust(tmp_path, monkeypatch):

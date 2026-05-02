@@ -10,7 +10,6 @@ from pathlib import Path
 from shutil import copy2, move, rmtree
 from typing import Any
 from uuid import uuid4
-from zipfile import ZIP_DEFLATED, ZipFile
 
 import yaml
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -73,16 +72,16 @@ def _snapshot_name() -> str:
 
 
 def _export_name() -> str:
-    return "obsidian-export-" + utc_now().replace(":", "").replace("-", "").replace(".", "") + ".zip"
+    return "obsidian-export-" + utc_now().replace(":", "").replace("-", "").replace(".", "") + ".tar.gz"
 
 
-def _add_tree(zip_file: ZipFile, source: Path, arc_prefix: str) -> int:
+def _add_tree_to_tar(archive: tarfile.TarFile, source: Path, arc_prefix: str) -> int:
     count = 0
     if not source.exists():
         return count
     for path in sorted(source.rglob("*")):
         if path.is_file():
-            zip_file.write(path, Path(arc_prefix) / path.relative_to(source))
+            archive.add(path, _posix(Path(arc_prefix) / path.relative_to(source)))
             count += 1
     return count
 
@@ -609,9 +608,9 @@ async def obsidian_export(request: Request, actor: Actor = Depends(require_admin
     tmp_export_path = tmp_dir / f"{export_path.name}.tmp"
     pages_dir = page_storage_dir(settings.data_dir)
     count = 0
-    with ZipFile(tmp_export_path, "w", ZIP_DEFLATED) as zip_file:
-        count = _add_tree(zip_file, pages_dir, "vault")
-        zip_file.writestr("manifest.json", yaml.safe_dump({"kind": "knownet-obsidian-export", "files": count}))
+    with tarfile.open(tmp_export_path, "w:gz") as archive:
+        count = _add_tree_to_tar(archive, pages_dir, "vault")
+        _add_bytes_to_tar(archive, "manifest.json", yaml.safe_dump({"kind": "knownet-obsidian-export", "files": count}).encode("utf-8"))
     tmp_export_path.replace(export_path)
     result = {
         "name": export_path.name,
@@ -670,7 +669,7 @@ async def embedding_load(
 @router.post("/seed/dry-run")
 async def seed_dry_run(
     request: Request,
-    path: str = "seeds/game-ai.yml",
+    path: str = "seeds/knownet-ai-state.yml",
     actor: Actor = Depends(require_admin_access),
 ):
     requested_path = Path(path)
@@ -888,6 +887,72 @@ async def verify_index(request: Request, actor: Actor = Depends(require_admin_ac
         )
         for row in orphaned_graph_rows:
             issues.append({"code": "graph_target_missing", "node_id": row["id"], "target_type": row["target_type"], "target_id": row["target_id"]})
+
+    if await _table_exists(settings.sqlite_path, "collaboration_reviews"):
+        missing_review_page_rows = await fetch_all(
+            settings.sqlite_path,
+            "SELECT r.id, r.page_id FROM collaboration_reviews r "
+            "LEFT JOIN pages p ON p.id = r.page_id "
+            "WHERE r.page_id IS NOT NULL AND p.id IS NULL",
+            (),
+        )
+        for row in missing_review_page_rows:
+            issues.append({"code": "collaboration_review_missing_page", "review_id": row["id"], "page_id": row["page_id"]})
+
+    if await _table_exists(settings.sqlite_path, "collaboration_findings"):
+        orphan_finding_rows = await fetch_all(
+            settings.sqlite_path,
+            "SELECT f.id, f.review_id FROM collaboration_findings f "
+            "LEFT JOIN collaboration_reviews r ON r.id = f.review_id "
+            "WHERE r.id IS NULL",
+            (),
+        )
+        for row in orphan_finding_rows:
+            issues.append({"code": "collaboration_finding_orphan", "finding_id": row["id"], "review_id": row["review_id"]})
+
+    if await _table_exists(settings.sqlite_path, "implementation_records"):
+        orphan_record_rows = await fetch_all(
+            settings.sqlite_path,
+            "SELECT ir.id, ir.finding_id FROM implementation_records ir "
+            "LEFT JOIN collaboration_findings f ON f.id = ir.finding_id "
+            "WHERE ir.finding_id IS NOT NULL AND f.id IS NULL",
+            (),
+        )
+        for row in orphan_record_rows:
+            issues.append({"code": "implementation_record_orphan", "record_id": row["id"], "finding_id": row["finding_id"]})
+
+    if await _table_exists(settings.sqlite_path, "context_bundle_manifests"):
+        forbidden_terms = (".env", ".db", "backups/", "inbox/", "sessions", "users")
+        bundle_rows = await fetch_all(
+            settings.sqlite_path,
+            "SELECT id, path, selected_pages, included_sections FROM context_bundle_manifests",
+            (),
+        )
+        for row in bundle_rows:
+            values = [str(row["path"] or ""), str(row["selected_pages"] or ""), str(row["included_sections"] or "")]
+            normalized = " ".join(values).replace("\\", "/").lower()
+            if any(term in normalized for term in forbidden_terms):
+                issues.append({"code": "context_bundle_forbidden_reference", "bundle_id": row["id"]})
+
+    stale_patterns = ("data/" + "wiki", "/api/" + "wiki", "Markdown" + "-first")
+    scan_paths = [
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "PHASE_7_TASKS.md",
+        REPO_ROOT / "PHASE_8_TASKS.md",
+        REPO_ROOT / "docs",
+        REPO_ROOT / "apps" / "api" / "knownet_api",
+        REPO_ROOT / "apps" / "web" / "app",
+        REPO_ROOT / "apps" / "web" / "components",
+    ]
+    for scan_root in scan_paths:
+        paths = [scan_root] if scan_root.is_file() else list(scan_root.rglob("*")) if scan_root.exists() else []
+        for path in paths:
+            if not path.is_file() or path.suffix.lower() not in {".md", ".py", ".tsx", ".ts", ".css"}:
+                continue
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            for pattern in stale_patterns:
+                if pattern in text:
+                    issues.append({"code": "current_terminology_mismatch", "path": _posix(path.relative_to(REPO_ROOT)), "pattern": pattern})
 
     await write_audit_event(
         settings.sqlite_path,

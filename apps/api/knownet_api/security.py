@@ -191,10 +191,10 @@ async def require_message_actor(request: Request, settings: Settings = Depends(g
 
 
 async def require_review_access(actor: Actor = Depends(require_actor)) -> Actor:
-    if actor.role not in {"owner", "admin", "editor", "reviewer"}:
+    if actor.role not in {"owner", "admin", "editor", "reviewer", "viewer"}:
         raise HTTPException(
             status_code=403,
-            detail={"code": "forbidden", "message": "Reviewer role required", "details": {"role": actor.role}},
+            detail={"code": "forbidden", "message": "Viewer role required", "details": {"role": actor.role}},
         )
     return actor
 

@@ -24,20 +24,22 @@ Core loop:
   verification -> updated context.
 ```
 
-## Format Split
+## Canonical State
 
 ```txt
-Markdown:
-  Long-form context, rationale, review text, implementation notes, runbooks,
-  architecture explanations, and project memory.
-
 SQLite / JSON:
   Findings, severity, status, decisions, graph links, audit events, context
   bundle manifests, implementation records, and machine-checkable state.
+  This is the canonical AI collaboration state.
+
+Markdown:
+  Long-form rationale, source review prose, implementation notes, runbooks,
+  architecture explanations, and operator-facing context.
+  This is a narrative attachment, not the canonical collaboration state.
 ```
 
-Markdown is the durable writing surface. SQLite and JSON are the structure that
-keeps AI agents from guessing.
+AI-to-AI handoff should prefer structured records first. Markdown is preserved
+when long reasoning or original prose matters.
 
 ## Page Quality
 
