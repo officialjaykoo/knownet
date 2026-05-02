@@ -48,8 +48,8 @@ Do not:
 ```txt
 1. P13-001 Dashboard Information Architecture
 2. P13-002 Token List And Filters
-3. P13-003 Token Detail View
-4. P13-004 Create And Rotate Workflows
+3. P13-004 Create And Rotate Workflows
+4. P13-003 Token Detail View
 5. P13-005 Activity Events And Failure Triage
 6. P13-006 Health And Expiry Signals
 7. P13-007 UX Polish And Accessibility
@@ -90,6 +90,8 @@ recent rate-limited events
 Rules:
 
 ```txt
+Summary row is calculated on page load and manual refresh only.
+Do not add automatic polling in Phase 13.
 Keep the UI dense and operational.
 Do not make a marketing-style hero section.
 Do not add charts unless a simple count/chip is insufficient.
@@ -138,6 +140,8 @@ Rules:
 Default sort: active first, then expiring, then last_used_at desc.
 Revoked tokens stay visible but visually subdued.
 Long labels and scopes must not break layout.
+Show scope count in the row.
+Show the scope list in a hover/focus tooltip or accessible disclosure.
 ```
 
 Done when:
@@ -177,7 +181,7 @@ revoked_at
 Detail actions:
 
 ```txt
-copy safe token id
+copy token id
 rotate
 revoke
 refresh events
@@ -186,6 +190,9 @@ refresh events
 Rules:
 
 ```txt
+Label token id clearly as "Token ID".
+Label raw secret token clearly as "Raw token shown once".
+Never confuse token id with the raw agent token.
 Do not show token_hash.
 Do not show raw token except immediately after create/rotate.
 Confirm revoke and rotate actions.
@@ -231,6 +238,15 @@ Convert datetime-local to API-safe UTC ISO.
 Show raw token once in a dedicated copy panel.
 Require explicit dismissal of raw token panel.
 Show "store this in your MCP/SDK environment" instruction.
+Raw token panel has visually distinct warning styling.
+Raw token panel includes: "This token cannot be viewed again after dismissal."
+Raw token panel is dismissed only by explicit button click.
+Copy action does not dismiss the raw token panel.
+Copy action shows "Copied" feedback for about 2 seconds.
+Do not close the raw token panel on Escape or outside click.
+Do not store raw token in localStorage, sessionStorage, URL, console logs, or
+analytics.
+Add MCP setup and SDK setup links in the raw token panel.
 ```
 
 Rotate flow:
@@ -288,6 +304,9 @@ Sanitize token, secret, password, key, authorization, and content-like fields.
 Show required/current scopes when present.
 Show retry_after_seconds when present.
 Do not show raw request bodies.
+Show relative time in the row, such as "3 minutes ago".
+Show absolute timestamp in a tooltip/title.
+Keep filters in local component state, not URL query parameters.
 ```
 
 Done when:
@@ -320,6 +339,11 @@ Rules:
 
 ```txt
 Warnings should be chips/badges near the token, not a separate chart.
+Use icon plus color, never color alone.
+Priority:
+  critical: revoked, expired
+  warning: expiring within 7 days, no scopes, recent denied events
+  info: unused for 30 days
 Do not block token use from the UI; the backend remains authoritative.
 ```
 
@@ -353,6 +377,9 @@ Visual rules:
 ```txt
 Operational UI, compact and readable.
 No nested cards.
+No card inside card.
+No nested shadows.
+No modal inside modal.
 No decorative background effects.
 No oversized headings inside the dashboard.
 ```
@@ -380,10 +407,16 @@ agentAccess helper tests:
   payload normalization
   event metadata sanitization
   expiry warning calculation
+  relative time formatting
+  scope tooltip text
+  raw token is not persisted to localStorage/sessionStorage
+  raw token does not appear in URLs
+  raw token disappears after page reload/state reset
 
 component-level or DOM tests if available:
   raw token appears after create
   raw token disappears after dismissal
+  copy action shows copied feedback without dismissing the token
   revoked tokens show disabled actions
   event filters work
 ```
@@ -422,6 +455,13 @@ Revocation workflow
 How to interpret denied/rate-limited events
 When to rotate expiring tokens
 MCP/SDK environment update after rotate
+```
+
+Explicitly out of scope:
+
+```txt
+Scope editing for existing tokens is deferred to Phase 14.
+Event CSV export is deferred to Phase 14.
 ```
 
 Done when:
