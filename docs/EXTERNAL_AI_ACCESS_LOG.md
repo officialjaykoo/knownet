@@ -261,13 +261,28 @@ Assisted local MCP mode:
 
 ```txt
 Qwen Web
--> writes/explains local Python MCP client code
--> operator runs the script on the KnowNet PC
--> script sends JSON-RPC POST to KnowNet /mcp
--> operator gives the result back to Qwen
+-> operator runs one local helper on the KnowNet PC
+-> helper sends JSON-RPC POST calls to KnowNet /mcp
+-> helper writes one paste-ready Markdown review pack
+-> operator pastes or uploads that single file to Qwen
 ```
 
-KnowNet includes a shared local client for this:
+Easy mode:
+
+```powershell
+python scripts\qwen_review_pack.py --copy
+```
+
+This writes:
+
+```txt
+data/tmp/qwen-review-pack.md
+```
+
+and, with `--copy`, also places the full review pack on the Windows clipboard.
+Paste it into Qwen free web and ask it to review the pack.
+
+Manual mode is still available when debugging a single MCP call:
 
 ```powershell
 python scripts\knownet_mcp_post_client.py --preset start-here
