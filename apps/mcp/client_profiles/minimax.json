@@ -1,0 +1,27 @@
+{
+  "id": "minimax",
+  "display_name": "MiniMax Mini-Agent",
+  "github_references": [
+    "https://github.com/MiniMax-AI/Mini-Agent",
+    "https://github.com/PsychArch/minimax-mcp-tools"
+  ],
+  "best_paid_path": "Mini-Agent with KnowNet HTTP tools or KnowNet MCP.",
+  "realistic_free_path": "MiniMax web chat GET preview; Mini-Agent local setup if operator installs it.",
+  "implemented_surface": "apps/mcp/configs/minimax_agent.example.json",
+  "test_status": "config_template_ready_unverified",
+  "requires_paid_or_external_setup": true,
+  "connection_modes": [
+    {
+      "mode": "mini_agent_mcp",
+      "config_template": "apps/mcp/configs/minimax_agent.example.json"
+    },
+    {
+      "mode": "provider_runner",
+      "provider_family": "openai_compatible_tool_calling"
+    }
+  ],
+  "do_not_add": [
+    "MiniMax media generation MCP tools",
+    "minimax_* KnowNet tools"
+  ]
+}

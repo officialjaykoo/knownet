@@ -1,0 +1,26 @@
+{
+  "id": "kimi",
+  "display_name": "Kimi Code CLI",
+  "github_references": [
+    "https://github.com/MoonshotAI/kimi-cli"
+  ],
+  "best_paid_path": "Kimi Code CLI with KnowNet MCP over stdio or HTTP.",
+  "realistic_free_path": "Kimi web chat GET preview; Kimi CLI if installed.",
+  "implemented_surface": "apps/mcp/configs/kimi_mcp.example.json",
+  "test_status": "config_template_ready_unverified",
+  "requires_paid_or_external_setup": true,
+  "connection_modes": [
+    {
+      "mode": "kimi_mcp_config_file",
+      "config_template": "apps/mcp/configs/kimi_mcp.example.json"
+    },
+    {
+      "mode": "kimi_cli_add_http",
+      "command": "kimi mcp add --transport http knownet https://REPLACE_WITH_PROTECTED_DOMAIN/mcp"
+    }
+  ],
+  "do_not_add": [
+    "Kimi web chat MCP assumptions",
+    "kimi_* MCP tools"
+  ]
+}

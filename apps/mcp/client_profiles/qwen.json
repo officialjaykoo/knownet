@@ -1,0 +1,27 @@
+{
+  "id": "qwen",
+  "display_name": "Qwen / Qwen-Agent",
+  "github_references": [
+    "https://github.com/QwenLM/Qwen-Agent",
+    "https://github.com/QwenLM/qwen-code"
+  ],
+  "best_paid_path": "Qwen-Agent with MCP or OpenAI-compatible function calling.",
+  "realistic_free_path": "Qwen web chat GET preview; local/open Qwen-Agent if operator installs it.",
+  "implemented_surface": "apps/mcp/configs/qwen_agent_mcp.example.json",
+  "test_status": "config_template_ready_unverified",
+  "requires_paid_or_external_setup": true,
+  "connection_modes": [
+    {
+      "mode": "qwen_agent_mcp",
+      "config_template": "apps/mcp/configs/qwen_agent_mcp.example.json"
+    },
+    {
+      "mode": "provider_runner",
+      "provider_family": "openai_compatible_tool_calling"
+    }
+  ],
+  "do_not_add": [
+    "qwen_* MCP tools",
+    "separate finding tables"
+  ]
+}

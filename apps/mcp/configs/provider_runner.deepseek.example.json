@@ -1,0 +1,21 @@
+{
+  "provider": "deepseek",
+  "status": "profile_only_provider_not_implemented",
+  "runner_pattern": "openai_compatible_tool_calling",
+  "knownet_surface": "common knownet_* tools through the runner",
+  "base_url": "https://api.deepseek.com",
+  "api_key_env": "DEEPSEEK_API_KEY",
+  "allowed_actions": [
+    "knownet_start_here",
+    "knownet_state_summary",
+    "knownet_ai_state",
+    "knownet_review_dry_run"
+  ],
+  "forbidden_actions": [
+    "maintenance",
+    "raw_database",
+    "backup_archive",
+    "shell",
+    "filesystem"
+  ]
+}

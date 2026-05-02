@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "knownet": {
+      "command": "C:\\knownet\\apps\\api\\.venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\knownet\\apps\\mcp\\knownet_mcp\\server.py"
+      ],
+      "env": {
+        "KNOWNET_BASE_URL": "http://127.0.0.1:8000",
+        "KNOWNET_AGENT_TOKEN": "kn_agent_REPLACE_WITH_ONE_TIME_TOKEN",
+        "KNOWNET_MCP_LOG_FORMAT": "json"
+      }
+    },
+    "knownet-http": {
+      "url": "https://REPLACE_WITH_PROTECTED_DOMAIN/mcp",
+      "headers": {
+        "Authorization": "Bearer REPLACE_WITH_SCOPED_AGENT_TOKEN_IF_CLIENT_HOLDS_TOKEN"
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "id": "deepseek",
+  "display_name": "DeepSeek API Runner",
+  "github_references": [
+    "https://github.com/aiamblichus/mcp-chat-adapter",
+    "https://github.com/lgcyaxi/oh-my-claude",
+    "https://github.com/grll/mcpadapt"
+  ],
+  "best_paid_path": "DeepSeek API function/tool calling through a KnowNet-controlled runner.",
+  "realistic_free_path": "DeepSeek web chat GET preview or copied JSON; no direct MCP POST.",
+  "implemented_surface": "apps/mcp/configs/provider_runner.deepseek.example.json",
+  "test_status": "profile_only_provider_not_implemented",
+  "requires_paid_or_external_setup": true,
+  "connection_modes": [
+    {
+      "mode": "provider_runner",
+      "provider_family": "openai_compatible_tool_calling",
+      "tool_schema": "common_knownet_tools",
+      "config_template": "apps/mcp/configs/provider_runner.deepseek.example.json"
+    }
+  ],
+  "do_not_add": [
+    "deepseek_* MCP tools",
+    "direct DB access",
+    "maintenance tools"
+  ]
+}

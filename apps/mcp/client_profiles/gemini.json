@@ -1,0 +1,31 @@
+{
+  "id": "gemini",
+  "display_name": "Gemini CLI",
+  "github_references": [
+    "https://github.com/google-gemini/gemini-cli",
+    "https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md",
+    "https://github.com/GoogleCloudPlatform/gemini-cloud-assist-mcp"
+  ],
+  "best_paid_path": "Gemini CLI mcpServers config with stdio or HTTP KnowNet MCP.",
+  "realistic_free_path": "Gemini web chat cannot call local MCP; use GET preview or Gemini CLI if installed.",
+  "implemented_surface": "apps/mcp/configs/gemini_cli_settings.example.json",
+  "test_status": "config_template_ready",
+  "requires_paid_or_external_setup": true,
+  "connection_modes": [
+    {
+      "mode": "local_stdio",
+      "settings_file": "~/.gemini/settings.json or .gemini/settings.json",
+      "trust": false,
+      "config_template": "apps/mcp/configs/gemini_cli_settings.example.json"
+    },
+    {
+      "mode": "streamable_http_bridge",
+      "url": "https://REPLACE_WITH_PROTECTED_DOMAIN/mcp",
+      "trust": false
+    }
+  ],
+  "do_not_add": [
+    "Gemini web chat MCP assumptions",
+    "Gemini-specific KnowNet MCP tools"
+  ]
+}

@@ -5,6 +5,7 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from .client_profiles import load_client_profiles
 from .server import KnowNetMcpServer, SERVER_VERSION
 
 
@@ -48,13 +49,7 @@ def capability_payload(mcp: KnowNetMcpServer) -> dict[str, Any]:
                 "note": "Read-only preview only. It cannot dry-run or submit reviews.",
             },
         },
-        "client_profiles": {
-            "claude_desktop": {"best_path": "local_stdio", "free_or_realistic_path": "desktop local MCP if available", "config_doc": "docs/MCP_CLIENTS.md#claude-desktop"},
-            "chatgpt_pc_app": {"best_path": "streamable_http_bridge", "free_or_realistic_path": "custom connector quick-tunnel test", "config_doc": "docs/MCP_CLIENTS.md#chatgpt-quick-tunnel-test"},
-            "cursor": {"best_path": "local_stdio", "free_or_realistic_path": "local stdio MCP", "config_doc": "docs/MCP_CLIENTS.md#cursor"},
-            "manus": {"best_path": "protected_https_custom_mcp_or_api", "free_or_realistic_path": "GET preview / captured JSON unless Custom MCP is available", "config_doc": "docs/MCP_COMPATIBILITY_REFERENCES.md"},
-            "api_agent_runners": {"best_path": "provider tool-calling runner over KnowNet API/MCP", "free_or_realistic_path": "mock runner and GET previews", "config_doc": "PHASE_16_TASKS.md"},
-        },
+        "client_profiles": load_client_profiles(),
         "auth": {
             "method": "bridge-held bearer token",
             "note": "Agent tokens are scoped and never returned in discovery, tool, resource, or event responses.",

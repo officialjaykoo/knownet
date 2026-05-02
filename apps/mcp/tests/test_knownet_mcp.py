@@ -95,9 +95,21 @@ def test_http_discovery_exposes_mcp_client_profiles():
     payload = capability_payload(server)
     assert payload["transport_profiles"]["local_stdio"]["auth_location"] == "environment variable KNOWNET_AGENT_TOKEN"
     assert payload["transport_profiles"]["streamable_http_bridge"]["endpoint"] == "/mcp"
-    assert payload["client_profiles"]["claude_desktop"]["best_path"] == "local_stdio"
-    assert payload["client_profiles"]["chatgpt_pc_app"]["best_path"] == "streamable_http_bridge"
-    assert payload["client_profiles"]["manus"]["best_path"] == "protected_https_custom_mcp_or_api"
+    assert set(payload["client_profiles"]) == {
+        "chatgpt",
+        "claude",
+        "deepseek",
+        "gemini",
+        "glm",
+        "kimi",
+        "manus",
+        "minimax",
+        "qwen",
+    }
+    assert payload["client_profiles"]["claude"]["connection_modes"][0]["mode"] == "local_stdio"
+    assert payload["client_profiles"]["chatgpt"]["connection_modes"][0]["mode"] == "streamable_http_bridge"
+    assert payload["client_profiles"]["manus"]["connection_modes"][0]["mode"] == "protected_https_custom_mcp"
+    assert payload["client_profiles"]["deepseek"]["test_status"] == "profile_only_provider_not_implemented"
 
 
 def test_jsonrpc_strict_errors_and_capabilities():

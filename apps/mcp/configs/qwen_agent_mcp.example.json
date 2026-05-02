@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "knownet": {
+      "command": "C:\\knownet\\apps\\api\\.venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\knownet\\apps\\mcp\\knownet_mcp\\server.py"
+      ],
+      "env": {
+        "KNOWNET_BASE_URL": "http://127.0.0.1:8000",
+        "KNOWNET_AGENT_TOKEN": "kn_agent_REPLACE_WITH_ONE_TIME_TOKEN",
+        "KNOWNET_MCP_LOG_FORMAT": "json"
+      }
+    }
+  },
+  "recommended_first_prompt": "Use KnowNet MCP. Call knownet_start_here, knownet_me, knownet_state_summary, then dry-run any review before submission."
+}

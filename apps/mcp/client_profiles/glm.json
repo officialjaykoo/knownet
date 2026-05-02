@@ -1,0 +1,28 @@
+{
+  "id": "glm",
+  "display_name": "GLM / Z.AI Coding Tools",
+  "github_references": [
+    "https://github.com/geoh/z.ai-powered-claude-code",
+    "https://github.com/lgcyaxi/oh-my-claude",
+    "https://github.com/grll/mcpadapt"
+  ],
+  "best_paid_path": "GLM Coding Plan through an MCP-capable coding client connected to KnowNet MCP.",
+  "realistic_free_path": "GLM web chat GET preview; coding-tool setup unverified until operator has access.",
+  "implemented_surface": "apps/mcp/configs/glm_coding_mcp.example.json",
+  "test_status": "config_template_ready_unverified",
+  "requires_paid_or_external_setup": true,
+  "connection_modes": [
+    {
+      "mode": "mcp_capable_coding_tool",
+      "config_template": "apps/mcp/configs/glm_coding_mcp.example.json"
+    },
+    {
+      "mode": "provider_runner",
+      "provider_family": "openai_compatible_tool_calling"
+    }
+  ],
+  "do_not_add": [
+    "glm_* MCP tools",
+    "Zread as substitute for live KnowNet state"
+  ]
+}

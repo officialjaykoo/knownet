@@ -145,11 +145,30 @@ The HTTP discovery response now includes `transport_profiles` and
 `client_profiles` so connector-capable clients can see whether they are using
 local stdio, HTTP bridge, or GET preview fallback.
 
+Provider profile files live in:
+
+```txt
+apps/mcp/client_profiles/
+```
+
+KnowNet currently ships profiles for ChatGPT, Claude, Gemini, Manus, DeepSeek,
+Qwen, Kimi, MiniMax, and GLM/Z.AI. These profiles do not create separate tool
+families. They map each client to the same `knownet_*` MCP surface and record
+whether the path is locally tested, HTTP-only, or provider-runner-only.
+
 Templates:
 
 ```txt
 apps/mcp/configs/http_bridge.env.example
 apps/mcp/configs/chatgpt_custom_connector.example.json
+apps/mcp/configs/claude_desktop_config.example.json
+apps/mcp/configs/gemini_cli_settings.example.json
+apps/mcp/configs/manus_custom_mcp.example.json
+apps/mcp/configs/provider_runner.deepseek.example.json
+apps/mcp/configs/qwen_agent_mcp.example.json
+apps/mcp/configs/kimi_mcp.example.json
+apps/mcp/configs/minimax_agent.example.json
+apps/mcp/configs/glm_coding_mcp.example.json
 ```
 
 ## Preferred State Tool

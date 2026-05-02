@@ -1,0 +1,32 @@
+{
+  "id": "claude",
+  "display_name": "Claude Desktop",
+  "github_references": [
+    "https://github.com/modelcontextprotocol/servers",
+    "https://github.com/modelcontextprotocol/typescript-sdk",
+    "https://github.com/modelcontextprotocol/example-remote-server"
+  ],
+  "best_paid_path": "Claude Desktop local stdio MCP server.",
+  "realistic_free_path": "Claude Desktop local stdio MCP if local MCP is available on the installed plan.",
+  "implemented_surface": "apps/mcp/knownet_mcp/server.py",
+  "test_status": "stdio_smoke_tested",
+  "requires_paid_or_external_setup": false,
+  "connection_modes": [
+    {
+      "mode": "local_stdio",
+      "command": "C:\\knownet\\apps\\api\\.venv\\Scripts\\python.exe",
+      "args": [
+        "C:\\knownet\\apps\\mcp\\knownet_mcp\\server.py"
+      ],
+      "env": {
+        "KNOWNET_BASE_URL": "http://127.0.0.1:8000",
+        "KNOWNET_AGENT_TOKEN": "kn_agent_REPLACE_WITH_ONE_TIME_TOKEN"
+      },
+      "config_template": "apps/mcp/configs/claude_desktop_config.example.json"
+    }
+  ],
+  "do_not_add": [
+    "Cloudflare as default Claude Desktop path",
+    "filesystem tools outside KnowNet"
+  ]
+}

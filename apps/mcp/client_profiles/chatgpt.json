@@ -1,0 +1,34 @@
+{
+  "id": "chatgpt",
+  "display_name": "ChatGPT PC App",
+  "github_references": [
+    "https://github.com/openai/openai-apps-sdk-examples",
+    "https://github.com/modelcontextprotocol/typescript-sdk",
+    "https://github.com/modelcontextprotocol/example-remote-server"
+  ],
+  "best_paid_path": "ChatGPT custom connector over protected HTTPS MCP bridge.",
+  "realistic_free_path": "Developer-mode quick tunnel test when available; otherwise GET preview and copied JSON.",
+  "implemented_surface": "apps/mcp/knownet_mcp/http_bridge.py",
+  "test_status": "local_http_bridge_template_ready",
+  "requires_paid_or_external_setup": true,
+  "connection_modes": [
+    {
+      "mode": "streamable_http_bridge",
+      "endpoint": "https://REPLACE_WITH_DOMAIN_OR_TUNNEL/mcp",
+      "auth": "bridge-held KNOWNET_AGENT_TOKEN",
+      "config_template": "apps/mcp/configs/chatgpt_custom_connector.example.json"
+    },
+    {
+      "mode": "get_preview",
+      "endpoints": [
+        "/mcp",
+        "/mcp?resource=agent:onboarding",
+        "/mcp?resource=agent:state-summary"
+      ]
+    }
+  ],
+  "do_not_add": [
+    "ChatGPT-specific knownet tools",
+    "Apps SDK widgets before MCP review flow is stable"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "knownet",
+  "display_name": "KnowNet",
+  "transport": "streamable_http",
+  "url": "https://REPLACE_WITH_PROTECTED_DOMAIN/mcp",
+  "auth": {
+    "type": "bearer",
+    "token_source": "scoped KnowNet agent token or gateway-held token"
+  },
+  "recommended_scopes": [
+    "preset:reader",
+    "preset:reviewer"
+  ],
+  "start_read_only": true,
+  "notes": [
+    "Use Custom MCP/API only over protected HTTPS.",
+    "Do not provide ADMIN_TOKEN.",
+    "Do not provide raw database files.",
+    "Do not enable write access until read-only behavior is verified."
+  ]
+}

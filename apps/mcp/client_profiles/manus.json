@@ -1,0 +1,31 @@
+{
+  "id": "manus",
+  "display_name": "Manus",
+  "github_references": [
+    "https://github.com/nanameru/Manus-MCP",
+    "https://github.com/gianlucamazza/mcp-manus-server",
+    "https://github.com/kyopark2014/mcp-manus"
+  ],
+  "best_paid_path": "Manus Custom MCP Server or Custom API over protected HTTPS gateway.",
+  "realistic_free_path": "GET preview only unless Custom MCP/API setup is available.",
+  "implemented_surface": "apps/mcp/configs/manus_custom_mcp.example.json",
+  "test_status": "config_template_ready_unverified",
+  "requires_paid_or_external_setup": true,
+  "connection_modes": [
+    {
+      "mode": "protected_https_custom_mcp",
+      "url": "https://REPLACE_WITH_PROTECTED_DOMAIN/mcp",
+      "auth": "scoped bearer token held by gateway/client",
+      "config_template": "apps/mcp/configs/manus_custom_mcp.example.json"
+    },
+    {
+      "mode": "custom_api_read_only",
+      "base_url": "https://REPLACE_WITH_PROTECTED_DOMAIN"
+    }
+  ],
+  "do_not_add": [
+    "Manus task orchestration inside KnowNet",
+    "ADMIN_TOKEN exposure",
+    "broad write access before read-only testing"
+  ]
+}

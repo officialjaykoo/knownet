@@ -177,12 +177,25 @@ apps/mcp/configs/claude_desktop_config.example.json
 apps/mcp/configs/cursor_mcp.example.json
 apps/mcp/configs/http_bridge.env.example
 apps/mcp/configs/chatgpt_custom_connector.example.json
+apps/mcp/configs/gemini_cli_settings.example.json
+apps/mcp/configs/manus_custom_mcp.example.json
+apps/mcp/configs/provider_runner.deepseek.example.json
+apps/mcp/configs/qwen_agent_mcp.example.json
+apps/mcp/configs/kimi_mcp.example.json
+apps/mcp/configs/minimax_agent.example.json
+apps/mcp/configs/glm_coding_mcp.example.json
 ```
 
 Provider-specific GitHub references are tracked separately:
 
 ```txt
 docs/MCP_PROVIDER_GITHUB_REFERENCES.md
+```
+
+Provider profile JSON used by MCP discovery:
+
+```txt
+apps/mcp/client_profiles/
 ```
 
 ## Implementation Guidance
