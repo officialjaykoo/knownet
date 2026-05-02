@@ -9,7 +9,7 @@ import os
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Create one paste-ready review pack for Qwen free web from live KnowNet MCP calls.",
+        description="Create one paste-ready review pack for Kimi web from live KnowNet MCP calls.",
     )
     parser.add_argument("--url", default=os.getenv("KNOWNET_MCP_URL", DEFAULT_URL), help="KnowNet MCP HTTP URL.")
     parser.add_argument("--output", help="Markdown output path.")
@@ -17,10 +17,10 @@ def main() -> int:
     parser.add_argument("--copy", action="store_true", help="Copy the generated Markdown to the Windows clipboard.")
     args = parser.parse_args()
 
-    path = write_pack("qwen", args.url, args.output, args.ai_state_limit, args.copy)
-    print(f"Wrote Qwen review pack: {path}")
+    path = write_pack("kimi", args.url, args.output, args.ai_state_limit, args.copy)
+    print(f"Wrote Kimi review pack: {path}")
     if args.copy:
-        print("Copied Qwen review pack to clipboard.")
+        print("Copied Kimi review pack to clipboard.")
     return 0
 
 

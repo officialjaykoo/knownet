@@ -318,6 +318,59 @@ Evidence:
 Proposed change:
 ```
 
+## Kimi Web And Kimi Code
+
+User observation:
+
+```txt
+Kimi web chat does not expose MCP directly.
+It uses Moonshot/Kimi's own tool system, such as web search and browser visit.
+Kimi Code CLI and Kimi Playground can register MCP servers.
+Kimi has a desktop app, but the web chat itself should not be treated as a
+direct KnowNet MCP client.
+```
+
+Practical split:
+
+```txt
+Kimi web:
+  Use GET discovery/preview or paste a generated review pack.
+
+Kimi Code / Kimi Playground:
+  Register KnowNet MCP and test direct tool calls there.
+
+Kimi API:
+  Future Agent Runner path using OpenAI-compatible tool calls.
+```
+
+Easy mode for Kimi web:
+
+```powershell
+python scripts\kimi_review_pack.py --copy
+```
+
+This writes:
+
+```txt
+data/tmp/kimi-review-pack.md
+```
+
+and, with `--copy`, places the full review pack on the Windows clipboard.
+Paste it into Kimi web and ask it to review the pack.
+
+Equivalent generic command:
+
+```powershell
+python scripts\knownet_review_pack.py --provider kimi --copy
+```
+
+Kimi Code MCP command shape to test later:
+
+```bash
+kimi mcp add --transport http knownet https://YOUR_KNOWNET_DOMAIN_OR_TUNNEL/mcp
+kimi mcp list
+```
+
 ## Current Judgment
 
 Confirmed:
@@ -328,6 +381,8 @@ ChatGPT PC Web: custom MCP connector works
 Claude: connector/integration registration works
 DeepSeek Web/Desktop free: GET discovery/preview works
 Qwen Web free: GET discovery/preview works through extractor/search tools
+Kimi Web: no direct MCP in web chat; use GET preview or generated review pack
+Kimi Code/Playground: MCP-capable path to test later
 ```
 
 Next infrastructure step:
