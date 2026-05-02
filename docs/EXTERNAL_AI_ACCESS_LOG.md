@@ -427,7 +427,8 @@ MiniMax web/free:
   Use pasted review pack or safe GET preview.
 
 MiniMax API:
-  Future Agent Runner path, similar to DeepSeek/Qwen/Kimi.
+  Implemented server-side model-runner path using OpenAI-compatible REST.
+  The runner, not MiniMax itself, executes allowed KnowNet read tools.
 
 Mini-Agent / MCP:
   Future higher-capability route after the shared Agent Runner contract is
@@ -473,7 +474,7 @@ DeepSeek Web/Desktop free: GET discovery/preview works
 Qwen Web free: GET discovery/preview works through extractor/search tools
 Kimi Web: no direct MCP in web chat; too unreliable for access decisions; use generated review pack only
 Kimi Code/Playground: MCP-capable path to test later
-MiniMax: direct API-to-MCP mismatch understood; use review pack now, REST/Agent Runner later
+MiniMax: direct API-to-MCP mismatch understood; use review pack for web, REST/Agent Runner implemented for API path
 ```
 
 Next infrastructure step:

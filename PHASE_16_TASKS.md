@@ -1898,6 +1898,23 @@ preview, while preserving KnowNet's same read-first and dry-run-first safety
 model.
 ```
 
+Implementation note:
+
+```txt
+Implemented in codebase:
+  POST /api/model-runs/minimax/reviews
+  MiniMax mock adapter through shared MockModelReviewAdapter
+  MiniMax OpenAI-compatible REST adapter
+  Read-only in-run tool schema:
+    knownet_state_summary
+    knownet_ai_state
+    knownet_list_findings
+  Default live model: MiniMax-M2.7
+
+The MiniMax runner remains disabled by default and requires MINIMAX_API_KEY plus
+MINIMAX_RUNNER_ENABLED=true for live calls.
+```
+
 ## P16-016 GLM Coding Plan, MCP Coding Tools, And Zread
 
 Goal:

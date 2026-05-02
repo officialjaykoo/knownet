@@ -20,7 +20,7 @@ MODEL_REVIEW_RUN_STATUSES = {"queued", "running", "dry_run_ready", "imported", "
 SEVERITIES = {"critical", "high", "medium", "low", "info"}
 AREAS = {"API", "UI", "Rust", "Security", "Data", "Ops", "Docs"}
 ACTIVE_STATUSES = {"queued", "running"}
-SECRET_ASSIGNMENT_RE = re.compile(r"^\s*(ADMIN_TOKEN|OPENAI_API_KEY|GEMINI_API_KEY|DEEPSEEK_API_KEY|API_KEY|SECRET|PASSWORD)\s*=", re.IGNORECASE)
+SECRET_ASSIGNMENT_RE = re.compile(r"^\s*(ADMIN_TOKEN|OPENAI_API_KEY|GEMINI_API_KEY|DEEPSEEK_API_KEY|MINIMAX_API_KEY|API_KEY|SECRET|PASSWORD)\s*=", re.IGNORECASE)
 LOCAL_PATH_RE = re.compile(r"(?i)\b[A-Z]:[\\/][^\s\"']+")
 FORBIDDEN_TEXT_MARKERS = (
     "token_hash",
@@ -581,6 +581,61 @@ def build_openai_compatible_review_messages(request: dict[str, Any], *, provider
     return [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}]
 
 
+MINIMAX_KNOWNET_TOOLS: list[dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "knownet_state_summary",
+            "description": "Read the sanitized KnowNet state summary already prepared for this model run.",
+            "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "knownet_ai_state",
+            "description": "Read sampled sanitized ai_state pages from the prepared model-run context.",
+            "parameters": {
+                "type": "object",
+                "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10}},
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "knownet_list_findings",
+            "description": "Read open findings from the prepared model-run context.",
+            "parameters": {
+                "type": "object",
+                "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20}},
+                "additionalProperties": False,
+            },
+        },
+    },
+]
+
+
+def _execute_minimax_knownet_tool(context: dict[str, Any], name: str, arguments_json: str | None) -> dict[str, Any]:
+    try:
+        arguments = json.loads(arguments_json or "{}")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail={"code": "minimax_invalid_tool_args", "message": "MiniMax returned invalid tool arguments", "details": {"tool": name}})
+    if not isinstance(arguments, dict):
+        raise HTTPException(status_code=502, detail={"code": "minimax_invalid_tool_args", "message": "MiniMax tool arguments must be a JSON object", "details": {"tool": name}})
+    if name == "knownet_state_summary":
+        return {"summary": context.get("summary") or {}, "rules": context.get("rules") or {}}
+    if name == "knownet_ai_state":
+        limit = min(max(int(arguments.get("limit") or 10), 1), 20)
+        return {"pages": (context.get("pages") or [])[:limit], "returned_count": len((context.get("pages") or [])[:limit])}
+    if name == "knownet_list_findings":
+        limit = min(max(int(arguments.get("limit") or 20), 1), 50)
+        findings = context.get("open_findings") or []
+        return {"findings": findings[:limit], "returned_count": len(findings[:limit])}
+    raise HTTPException(status_code=502, detail={"code": "minimax_invalid_tool", "message": "MiniMax requested a tool that is not allowed", "details": {"tool": name}})
+
+
 class DeepSeekApiAdapter:
     provider_id = "deepseek"
 
@@ -639,6 +694,94 @@ class DeepSeekApiAdapter:
             raise HTTPException(status_code=502, detail={"code": "deepseek_invalid_response", "message": "DeepSeek API response content was not valid JSON", "details": {}}) from error
 
 
+class MiniMaxApiAdapter:
+    provider_id = "minimax"
+
+    def __init__(self, *, api_key: str, base_url: str, model: str, timeout_seconds: float = 90.0) -> None:
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.timeout_seconds = timeout_seconds
+
+    async def generate_review(self, request: dict[str, Any]) -> dict[str, Any]:
+        messages: list[dict[str, Any]] = build_openai_compatible_review_messages(request, provider_name="MiniMax")
+        messages[0]["content"] += "\nYou may use the provided knownet_* tools for read-only context lookup. Final answer must be strict JSON only."
+        body = {
+            "model": self.model,
+            "messages": messages,
+            "tools": MINIMAX_KNOWNET_TOOLS,
+            "temperature": 0.2,
+            "max_tokens": 4000,
+            "stream": False,
+        }
+        first_payload = await self._post_chat(body)
+        first_message = _extract_openai_compatible_message(first_payload, provider_code="minimax")
+        tool_calls = first_message.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            messages.append(first_message)
+            context = request.get("context") or {}
+            for tool_call in tool_calls[:5]:
+                function = tool_call.get("function") if isinstance(tool_call, dict) else None
+                name = function.get("name") if isinstance(function, dict) else None
+                arguments = function.get("arguments") if isinstance(function, dict) else None
+                if not isinstance(name, str):
+                    raise HTTPException(status_code=502, detail={"code": "minimax_invalid_tool", "message": "MiniMax returned a malformed tool call", "details": {}})
+                tool_result = _execute_minimax_knownet_tool(context, name, arguments if isinstance(arguments, str) else "{}")
+                messages.append({"role": "tool", "tool_call_id": tool_call.get("id"), "content": json.dumps(tool_result, ensure_ascii=False)})
+            final_payload = await self._post_chat({**body, "messages": messages, "tools": MINIMAX_KNOWNET_TOOLS})
+            final_message = _extract_openai_compatible_message(final_payload, provider_code="minimax")
+            content = str(final_message.get("content") or "").strip()
+        else:
+            content = str(first_message.get("content") or "").strip()
+        content = _strip_think_tags(content)
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as error:
+            extracted = _extract_json_object_text(content)
+            if extracted:
+                try:
+                    return json.loads(extracted)
+                except json.JSONDecodeError:
+                    pass
+            raise HTTPException(status_code=502, detail={"code": "minimax_invalid_response", "message": "MiniMax API response content was not valid JSON", "details": {}}) from error
+
+    async def _post_chat(self, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                    json=body,
+                )
+        except httpx.TimeoutException as error:
+            raise HTTPException(status_code=504, detail={"code": "minimax_timeout", "message": "MiniMax API request timed out", "details": {}}) from error
+        except httpx.HTTPError as error:
+            raise HTTPException(status_code=502, detail={"code": "minimax_request_failed", "message": sanitize_error_message(str(error)), "details": {}}) from error
+        if response.status_code >= 400:
+            message = _extract_openai_compatible_error_message(response)
+            if response.status_code == 429:
+                code = "minimax_rate_limited"
+            elif response.status_code in {401, 403}:
+                code = "minimax_auth_failed"
+            else:
+                code = "minimax_request_failed"
+            raise HTTPException(status_code=502, detail={"code": code, "message": sanitize_error_message(message) or "MiniMax API request failed", "details": {"status_code": response.status_code}})
+        try:
+            return response.json()
+        except json.JSONDecodeError as error:
+            raise HTTPException(status_code=502, detail={"code": "minimax_invalid_response", "message": "MiniMax API response was not JSON", "details": {}}) from error
+
+
+def _extract_openai_compatible_message(payload: dict[str, Any], *, provider_code: str) -> dict[str, Any]:
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise HTTPException(status_code=502, detail={"code": f"{provider_code}_invalid_response", "message": "Provider returned no choices", "details": {}})
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    if not isinstance(message, dict):
+        raise HTTPException(status_code=502, detail={"code": f"{provider_code}_invalid_response", "message": "Provider returned no message", "details": {}})
+    return message
+
+
 def _extract_openai_compatible_error_message(response: httpx.Response) -> str:
     try:
         payload = response.json()
@@ -651,14 +794,23 @@ def _extract_openai_compatible_error_message(response: httpx.Response) -> str:
 
 
 def _extract_openai_compatible_message_content(payload: dict[str, Any], *, provider_code: str) -> str:
-    choices = payload.get("choices")
-    if not isinstance(choices, list) or not choices:
-        raise HTTPException(status_code=502, detail={"code": f"{provider_code}_invalid_response", "message": "Provider returned no choices", "details": {}})
-    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    message = _extract_openai_compatible_message(payload, provider_code=provider_code)
     content = message.get("content") if isinstance(message, dict) else None
     if not isinstance(content, str) or not content.strip():
         raise HTTPException(status_code=502, detail={"code": f"{provider_code}_invalid_response", "message": "Provider returned empty message content", "details": {}})
     return content.strip()
+
+
+def _strip_think_tags(text: str) -> str:
+    return re.sub(r"(?is)<think>.*?</think>", "", text).strip()
+
+
+def _extract_json_object_text(text: str) -> str | None:
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    return text[start : end + 1]
 
 
 def sanitize_error_message(message: str | None) -> str | None:

@@ -223,3 +223,66 @@ DEEPSEEK_MODEL=deepseek-v4-flash
 
 Until a local key is present, non-mock DeepSeek calls are intentionally blocked
 with `deepseek_disabled` or `deepseek_api_key_missing`.
+
+## MiniMax Direction
+
+MiniMax uses the same server-side model-runner pattern as Gemini and DeepSeek,
+but its strongest API shape is OpenAI-compatible REST with tool calls:
+
+```txt
+KnowNet
+-> build safe context
+-> call MiniMax Chat Completions API
+-> allow only read-only knownet_* tool calls inside the runner
+-> request final structured JSON
+-> normalize to review Markdown
+-> dry-run parse
+-> operator chooses whether to import
+```
+
+MiniMax official docs describe an OpenAI-compatible endpoint at
+`https://api.minimax.io/v1/chat/completions`, Bearer auth, and tool calls through
+the `tools` parameter. The implementation follows that model while keeping
+KnowNet as the tool executor.
+
+Current local state as of 2026-05-03:
+
+```txt
+provider: minimax
+real_adapter: implemented
+mock_adapter: working
+operator_import_required: true
+default_model: MiniMax-M2.7
+local_api_key: not configured
+```
+
+Mock smoke path:
+
+```txt
+POST /api/model-runs/minimax/reviews
+mock: true
+status: dry_run_ready
+```
+
+Non-mock safety:
+
+```txt
+MINIMAX_RUNNER_ENABLED=false blocks real calls by default.
+MINIMAX_API_KEY is required before a live MiniMax run.
+MiniMax output remains dry-run-ready until an operator imports it.
+```
+
+Allowed MiniMax runner tools:
+
+```txt
+knownet_state_summary
+knownet_ai_state
+knownet_list_findings
+```
+
+Forbidden:
+
+```txt
+maintenance, raw database, backups, shell/code execution, filesystem reads,
+direct page writes, raw tokens, token hashes, sessions, users
+```

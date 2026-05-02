@@ -14,6 +14,7 @@ from ..services.model_runner import (
     DeepSeekApiAdapter,
     GeminiApiAdapter,
     GeminiMockAdapter,
+    MiniMaxApiAdapter,
     MockModelReviewAdapter,
     assert_no_active_run,
     build_safe_context,
@@ -39,6 +40,14 @@ class GeminiReviewRunRequest(BaseModel):
 class DeepSeekReviewRunRequest(BaseModel):
     vault_id: str = "local-default"
     prompt_profile: str = Field(default="deepseek_external_reviewer_v1", max_length=120)
+    review_focus: str | None = Field(default=None, max_length=800)
+    max_pages: int = Field(default=20, ge=1, le=50)
+    mock: bool = True
+
+
+class MiniMaxReviewRunRequest(BaseModel):
+    vault_id: str = "local-default"
+    prompt_profile: str = Field(default="minimax_external_reviewer_v1", max_length=120)
     review_focus: str | None = Field(default=None, max_length=800)
     max_pages: int = Field(default=20, ge=1, le=50)
     mock: bool = True
@@ -297,6 +306,22 @@ async def create_deepseek_review_run(payload: DeepSeekReviewRunRequest, request:
         else DeepSeekApiAdapter(api_key=settings.deepseek_api_key, model=settings.deepseek_model, timeout_seconds=settings.deepseek_timeout_seconds)
     )
     return await _create_provider_review_run(provider="deepseek", model=settings.deepseek_model, payload=payload, request=request, actor=actor, adapter=adapter, source_agent="deepseek-mock" if payload.mock else "deepseek")
+
+
+@router.post("/minimax/reviews")
+async def create_minimax_review_run(payload: MiniMaxReviewRunRequest, request: Request, actor: Actor = Depends(require_admin_access)):
+    settings = request.app.state.settings
+    if not payload.mock:
+        if not settings.minimax_runner_enabled:
+            raise HTTPException(status_code=503, detail={"code": "minimax_disabled", "message": "MiniMax runner is disabled. Use mock=true until a real provider is enabled.", "details": {}})
+        if not settings.minimax_api_key:
+            raise HTTPException(status_code=503, detail={"code": "minimax_api_key_missing", "message": "MINIMAX_API_KEY is required for non-mock MiniMax runs", "details": {}})
+    adapter = (
+        MockModelReviewAdapter(provider_id="minimax")
+        if payload.mock
+        else MiniMaxApiAdapter(api_key=settings.minimax_api_key, base_url=settings.minimax_base_url, model=settings.minimax_model, timeout_seconds=settings.minimax_timeout_seconds)
+    )
+    return await _create_provider_review_run(provider="minimax", model=settings.minimax_model, payload=payload, request=request, actor=actor, adapter=adapter, source_agent="minimax-mock" if payload.mock else "minimax")
 
 
 @router.get("")
