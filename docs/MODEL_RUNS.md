@@ -173,6 +173,24 @@ status: blocked
 code: deepseek_disabled
 ```
 
+Real API attempt after `DEEPSEEK_API_KEY` was configured locally:
+
+```txt
+model: deepseek-v4-flash
+run_id: modelrun_bdf7b8d76a6c
+status: failed
+code: deepseek_request_failed
+reason: Insufficient Balance
+```
+
+Interpretation:
+
+```txt
+The local key was accepted far enough to reach the DeepSeek API.
+The run did not produce a review because the DeepSeek account had no usable balance.
+No collaboration review or finding was imported.
+```
+
 Local settings needed for a real run:
 
 ```txt
