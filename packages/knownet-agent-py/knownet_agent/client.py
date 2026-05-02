@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -60,9 +61,22 @@ class KnowNetResponse:
 
 class KnowNetClient:
     def __init__(self, *, base_url: str = "http://127.0.0.1:8000", token: str, timeout: float = 30.0):
+        if not token:
+            raise ValueError("token is required")
         self.base_url = base_url.rstrip("/")
         self.token = token
         self.timeout = timeout
+
+    @classmethod
+    def from_env(cls) -> "KnowNetClient":
+        token = os.environ.get("KNOWNET_AGENT_TOKEN")
+        if not token:
+            raise ValueError("KNOWNET_AGENT_TOKEN is required")
+        return cls(
+            base_url=os.environ.get("KNOWNET_BASE_URL", "http://127.0.0.1:8000"),
+            token=token,
+            timeout=float(os.environ.get("KNOWNET_AGENT_TIMEOUT_SECONDS", "30")),
+        )
 
     def ping(self) -> KnowNetResponse:
         return self._request("GET", "/api/agent/ping", auth=False)

@@ -40,6 +40,18 @@ def test_auth_header_and_metadata():
     assert response.expires_in_seconds == 42
 
 
+def test_from_env_requires_token(monkeypatch):
+    monkeypatch.delenv("KNOWNET_AGENT_TOKEN", raising=False)
+    with pytest.raises(ValueError):
+        KnowNetClient.from_env()
+
+    monkeypatch.setenv("KNOWNET_AGENT_TOKEN", "kn_agent_env")
+    monkeypatch.setenv("KNOWNET_BASE_URL", "http://knownet")
+    client = KnowNetClient.from_env()
+    assert client.base_url == "http://knownet"
+    assert client.token == "kn_agent_env"
+
+
 def test_error_mapping():
     client = KnowNetClient(base_url="http://knownet", token="kn_agent_test")
     for status, error_type in [(401, KnowNetAuthError), (403, KnowNetScopeError), (413, KnowNetPayloadTooLargeError), (429, KnowNetRateLimitError)]:

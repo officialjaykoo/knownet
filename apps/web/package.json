@@ -1,9 +1,11 @@
 {
   "name": "knownet-web",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "test:agent": "node --experimental-strip-types --test tests/agentAccess.test.mjs",
     "start": "next start",
     "lint": "next lint"
   },

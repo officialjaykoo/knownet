@@ -212,15 +212,13 @@ packages/knownet-agent-py/
 Use environment variables for tokens:
 
 ```python
-import os
 from knownet_agent import KnowNetClient
 
-client = KnowNetClient(
-    base_url=os.getenv("KNOWNET_BASE_URL", "http://127.0.0.1:8000"),
-    token=os.environ["KNOWNET_AGENT_TOKEN"],
-)
+client = KnowNetClient.from_env()
 
 print(client.me().data)
 ```
 
-Do not hard-code agent tokens in source files.
+Do not hard-code agent tokens in source files. The SDK reads
+`KNOWNET_AGENT_TOKEN`, `KNOWNET_BASE_URL`, and optional
+`KNOWNET_AGENT_TIMEOUT_SECONDS`.

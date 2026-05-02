@@ -62,6 +62,31 @@ def test_agent_token_lifecycle_and_self_read(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
+def test_agent_token_expiry_validation_and_missing_revoke(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        invalid = client.post(
+            "/api/agents/tokens",
+            json={
+                "label": "Bad expiry",
+                "agent_name": "agent",
+                "purpose": "test",
+                "role": "agent_reader",
+                "scopes": ["pages:read"],
+                "expires_at": "2099-01-01T00:00:00",
+            },
+        )
+        assert invalid.status_code == 422
+        assert invalid.json()["detail"]["code"] == "agent_expiry_invalid"
+
+        valid = _create_token(client, ["pages:read"], expires_at="2099-01-01T09:00:00+09:00")
+        assert valid["expires_at"] == "2099-01-01T00:00:00Z"
+
+        missing = client.post("/api/agents/tokens/agent_missing/revoke")
+        assert missing.status_code == 404
+    get_settings.cache_clear()
+
+
 def test_agent_scoped_read_and_denied_write(tmp_path, monkeypatch):
     _isolate_settings(monkeypatch, tmp_path)
     with TestClient(app) as client:

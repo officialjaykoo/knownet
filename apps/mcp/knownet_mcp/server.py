@@ -31,6 +31,11 @@ class KnowNetHttpError(Exception):
     payload: dict[str, Any]
 
 
+@dataclass
+class McpToolInputError(Exception):
+    message: str
+
+
 class KnowNetMcpServer:
     def __init__(self, base_url: str | None = None, token: str | None = None, timeout: float | None = None):
         self.base_url = (base_url or os.getenv("KNOWNET_BASE_URL") or "http://127.0.0.1:8000").rstrip("/")
@@ -71,10 +76,14 @@ class KnowNetMcpServer:
         }
         try:
             return table[name](args)
+        except (KeyError, TypeError, McpToolInputError) as error:
+            return {"ok": False, "error": {"code": "invalid_tool_input", "message": str(error) or "Invalid tool arguments."}}
         except KnowNetHttpError as error:
             return {"ok": False, "error": self._map_error(error.status, error.payload)}
 
     def _review(self, args: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
+        if not isinstance(args.get("markdown"), str) or not args["markdown"].strip():
+            raise McpToolInputError("markdown is required.")
         payload = {"markdown": args["markdown"]}
         if args.get("source_agent"):
             payload["source_agent"] = args["source_agent"]
@@ -121,6 +130,8 @@ class KnowNetMcpServer:
         return {"code": detail.get("code", "knownet_error"), "message": detail.get("message", "KnowNet request failed.")}
 
     def handle_jsonrpc(self, message: dict[str, Any]) -> dict[str, Any] | None:
+        if not isinstance(message, dict):
+            return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600, "message": "Invalid Request"}}
         method = message.get("method")
         request_id = message.get("id")
         if method == "initialize":
@@ -129,8 +140,17 @@ class KnowNetMcpServer:
             return {"jsonrpc": "2.0", "id": request_id, "result": {"tools": self.tool_specs()}}
         if method == "tools/call":
             params = message.get("params") or {}
-            result = self.call_tool(str(params.get("name")), params.get("arguments") or {})
-            return {"jsonrpc": "2.0", "id": request_id, "result": {"content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}]}}
+            if not isinstance(params, dict) or not isinstance(params.get("name"), str):
+                return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32602, "message": "Invalid params"}}
+            result = self.call_tool(params["name"], params.get("arguments") or {})
+            return {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "isError": not result.get("ok", False),
+                    "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False)}],
+                },
+            }
         if method == "notifications/initialized":
             return None
         return {"jsonrpc": "2.0", "id": request_id, "error": {"code": -32601, "message": f"Unknown method: {method}"}}
@@ -141,7 +161,13 @@ def main() -> None:
     for line in sys.stdin:
         if not line.strip():
             continue
-        response = server.handle_jsonrpc(json.loads(line))
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            response = {"jsonrpc": "2.0", "id": None, "error": {"code": -32700, "message": "Parse error"}}
+            print(json.dumps(response), flush=True)
+            continue
+        response = server.handle_jsonrpc(message)
         if response is not None:
             print(json.dumps(response), flush=True)
 

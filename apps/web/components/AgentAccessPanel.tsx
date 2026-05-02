@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { Copy, KeyRound, RefreshCw, RotateCcw, Shield, X } from "lucide-react";
+import { buildCreateAgentTokenPayload, sanitizeEventMeta } from "../lib/agentAccess";
 
 type AgentToken = {
   id: string;
@@ -93,24 +94,20 @@ export function AgentAccessPanel({ sessionToken, vaultId }: { sessionToken: stri
 
   async function createToken(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const explicitScopes = form.scopes.split(",").map((scope) => scope.trim()).filter(Boolean);
+    let payload;
+    try {
+      payload = buildCreateAgentTokenPayload(form);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Invalid agent token form");
+      return;
+    }
     try {
       const data = await fetchJson<{ token: AgentToken & { raw_token: string } }>(
         "/api/agents/tokens",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            label: form.label,
-            agent_name: form.agent_name,
-            agent_model: form.agent_model || null,
-            purpose: form.purpose,
-            role: form.role,
-            scopes: [form.scope_preset, ...explicitScopes],
-            expires_at: form.expires_at || null,
-            max_pages_per_request: Number(form.max_pages_per_request),
-            max_chars_per_request: Number(form.max_chars_per_request),
-          }),
+          body: JSON.stringify(payload),
         },
         sessionToken,
         vaultId,
@@ -215,6 +212,7 @@ export function AgentAccessPanel({ sessionToken, vaultId }: { sessionToken: stri
                 <span>{event.status}</span>
                 <strong>{event.action}</strong>
                 <small>{event.created_at}</small>
+                {Object.keys(sanitizeEventMeta(event.meta)).length ? <code>{JSON.stringify(sanitizeEventMeta(event.meta))}</code> : null}
               </div>
             ))}
           </div>

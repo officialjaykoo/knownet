@@ -35,6 +35,18 @@ class CreateAgentTokenRequest(BaseModel):
     expires_at: str | None = None
 
 
+def _validate_expires_at(value: str | None) -> str | None:
+    if not value:
+        return None
+    try:
+        expires = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail={"code": "agent_expiry_invalid", "message": "expires_at must be an ISO datetime", "details": {}}) from exc
+    if expires.tzinfo is None:
+        raise HTTPException(status_code=422, detail={"code": "agent_expiry_invalid", "message": "expires_at must include timezone", "details": {}})
+    return expires.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
 def _expand_scopes(scopes: list[str]) -> list[str]:
     expanded: list[str] = []
     for scope in scopes:
@@ -72,6 +84,7 @@ async def _create_token_row(request: Request, payload: CreateAgentTokenRequest, 
     if payload.role not in ROLE_VALUES:
         raise HTTPException(status_code=422, detail={"code": "agent_role_invalid", "message": "Invalid agent role", "details": {"role": payload.role}})
     scopes = _expand_scopes(payload.scopes)
+    expires_at = _validate_expires_at(payload.expires_at)
     token_id = f"agent_{uuid4().hex[:12]}"
     raw_token = TOKEN_PREFIX + secrets.token_urlsafe(32)
     now = utc_now()
@@ -92,7 +105,7 @@ async def _create_token_row(request: Request, payload: CreateAgentTokenRequest, 
             json.dumps(scopes, ensure_ascii=True),
             payload.max_pages_per_request,
             payload.max_chars_per_request,
-            payload.expires_at,
+            expires_at,
             actor.actor_id,
             now,
             now,
@@ -124,6 +137,11 @@ async def list_agent_tokens(request: Request, actor: Actor = Depends(require_adm
 
 @router.post("/tokens/{token_id}/revoke")
 async def revoke_agent_token(token_id: str, request: Request, actor: Actor = Depends(require_admin_access)):
+    row = await fetch_one(request.app.state.settings.sqlite_path, "SELECT id, revoked_at FROM agent_tokens WHERE id = ?", (token_id,))
+    if not row:
+        raise HTTPException(status_code=404, detail={"code": "agent_token_not_found", "message": "Agent token not found", "details": {"token_id": token_id}})
+    if row["revoked_at"]:
+        return {"ok": True, "data": {"token_id": token_id, "revoked_at": row["revoked_at"], "already_revoked": True}}
     now = utc_now()
     await execute(request.app.state.settings.sqlite_path, "UPDATE agent_tokens SET revoked_at = ?, updated_at = ? WHERE id = ?", (now, now, token_id))
     await write_audit_event(request.app.state.settings.sqlite_path, action="agent_token.revoke", actor=actor, target_type="agent_token", target_id=token_id, metadata={})

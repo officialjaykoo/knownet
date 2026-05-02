@@ -24,6 +24,11 @@ P10-004:
 
 P10-005:
   Agent access contract, README, and runbook updates.
+
+P10 hardening:
+  Dashboard token form validation, UTC expiry normalization, sanitized event
+  metadata display, MCP JSON-RPC error handling, SDK from_env helper, package
+  README, and MCP HTTP roundtrip coverage.
 ```
 
 Phase 10 has exactly three product goals:

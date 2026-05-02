@@ -1,5 +1,7 @@
 import json
+import threading
 import urllib.error
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import patch
 
 from knownet_mcp.server import ALLOWED_TOOLS, KnowNetMcpServer
@@ -39,3 +41,41 @@ def test_jsonrpc_tools_list():
     response = server.handle_jsonrpc({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
     assert response["id"] == 1
     assert {tool["name"] for tool in response["result"]["tools"]} == ALLOWED_TOOLS
+
+
+def test_jsonrpc_invalid_tool_input_returns_tool_error():
+    server = KnowNetMcpServer(token="kn_agent_test")
+    response = server.handle_jsonrpc({"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": {"name": "knownet_review_dry_run", "arguments": {}}})
+    assert response["result"]["isError"] is True
+    payload = json.loads(response["result"]["content"][0]["text"])
+    assert payload["error"]["code"] == "invalid_tool_input"
+
+
+def test_mcp_roundtrip_over_http():
+    seen = {}
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen["path"] = self.path
+            seen["authorization"] = self.headers.get("Authorization")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True, "data": {"token_id": "agent_test"}, "meta": {}}).encode("utf-8"))
+
+        def log_message(self, *_):
+            return
+
+    httpd = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        server = KnowNetMcpServer(base_url=f"http://127.0.0.1:{httpd.server_port}", token="kn_agent_test")
+        response = server.call_tool("knownet_me")
+    finally:
+        httpd.shutdown()
+        thread.join(timeout=2)
+
+    assert response["ok"] is True
+    assert seen["path"] == "/api/agent/me"
+    assert seen["authorization"] == "Bearer kn_agent_test"
