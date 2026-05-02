@@ -252,8 +252,34 @@ Result:
 
 ```txt
 Qwen free web can inspect KnowNet through GET preview.
-It cannot perform KnowNet JSON-RPC tool calls unless a separate MCP/API client is provided.
+It cannot directly perform KnowNet JSON-RPC tool calls from the web UI.
+It can still help generate or inspect a local MCP client script that the operator runs on this PC.
 No Qwen API provider runner is needed at this stage.
+```
+
+Assisted local MCP mode:
+
+```txt
+Qwen Web
+-> writes/explains local Python MCP client code
+-> operator runs the script on the KnowNet PC
+-> script sends JSON-RPC POST to KnowNet /mcp
+-> operator gives the result back to Qwen
+```
+
+KnowNet includes a shared local client for this:
+
+```powershell
+python scripts\knownet_mcp_post_client.py --preset start-here
+python scripts\knownet_mcp_post_client.py --preset state-summary
+python scripts\knownet_mcp_post_client.py --preset tools
+python scripts\knownet_mcp_post_client.py --preset ai-state
+```
+
+Use a tunnel URL when testing from outside the PC:
+
+```powershell
+python scripts\knownet_mcp_post_client.py --url https://dealers-spirituality-marker-compute.trycloudflare.com/mcp --preset start-here
 ```
 
 Recommended prompt for Qwen free web:
