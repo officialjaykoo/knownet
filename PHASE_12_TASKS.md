@@ -3,7 +3,40 @@
 Phase 12 turns the Phase 10 Python SDK from a thin HTTP wrapper into a reliable
 client library for external AI scripts and custom automation.
 
-Implementation status: pending.
+Implementation status: completed in the codebase.
+
+Implemented surface:
+
+```txt
+P12-001:
+  Package metadata upgraded for local editable installs.
+
+P12-002:
+  Dataclass models and typed response helpers for pages, reviews, findings,
+  citations, and metadata.
+
+P12-003:
+  Sync client context manager plus AsyncKnowNetClient placeholder.
+
+P12-004:
+  Bounded iter_pages, iter_reviews, iter_findings, and iter_citations helpers.
+
+P12-005:
+  require_scopes, token_expires_soon, read_context_for_review, and
+  dry_run_then_submit_review workflow helpers.
+
+P12-006:
+  Robust error properties, connection error mapping, and schema version checks.
+
+P12-007:
+  SDK end-to-end test against a local KnowNet API server.
+
+P12-008:
+  SDK README, SDK client docs, contract updates, and workflow examples.
+
+P12-009:
+  SDK/API/MCP/Rust/web verification checks.
+```
 
 Phase 12 is SDK-only. MCP was hardened in Phase 11. The Agent Dashboard should
 be improved later as Phase 13.

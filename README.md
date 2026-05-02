@@ -108,6 +108,7 @@ Use `KNOWNET_AGENT_TOKEN` from the environment for MCP and SDK examples. Do not
 hard-code agent tokens in source files.
 
 Client setup examples live in [MCP client docs](./docs/MCP_CLIENTS.md).
+Python SDK setup and workflow examples live in [SDK client docs](./docs/SDK_CLIENTS.md).
 
 ## Project Docs
 
@@ -124,6 +125,7 @@ Implementation task lists:
 - [Phase 9 Tasks](./PHASE_9_TASKS.md)
 - [Phase 10 Tasks](./PHASE_10_TASKS.md)
 - [Phase 11 Tasks](./PHASE_11_TASKS.md)
+- [Phase 12 Tasks](./PHASE_12_TASKS.md)
 
 Operational docs:
 

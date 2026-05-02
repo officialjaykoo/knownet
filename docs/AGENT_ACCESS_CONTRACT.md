@@ -247,7 +247,7 @@ maintenance controls.
 
 ## Python SDK
 
-Phase 10 includes a small Python SDK at:
+KnowNet includes a Python SDK at:
 
 ```txt
 packages/knownet-agent-py/
@@ -266,3 +266,9 @@ print(client.me().data)
 Do not hard-code agent tokens in source files. The SDK reads
 `KNOWNET_AGENT_TOKEN`, `KNOWNET_BASE_URL`, and optional
 `KNOWNET_AGENT_TIMEOUT_SECONDS`.
+
+Phase 12 adds typed models, bounded pagination helpers, context manager support,
+safe review workflow helpers, and actionable SDK errors. Use
+`dry_run_then_submit_review` for custom review scripts so parsing is checked
+before final import. `AsyncKnowNetClient` is reserved for a later phase and does
+not perform async HTTP yet.

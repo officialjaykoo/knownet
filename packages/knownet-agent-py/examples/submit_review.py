@@ -1,3 +1,5 @@
+import os
+
 from knownet_agent import KnowNetClient
 
 
