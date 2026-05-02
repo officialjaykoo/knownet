@@ -53,8 +53,9 @@ Do not:
 5. P13-005 Activity Events And Failure Triage
 6. P13-006 Health And Expiry Signals
 7. P13-007 UX Polish And Accessibility
-8. P13-008 UI Tests
-9. P13-009 Documentation And Runbook Updates
+8. P13-008 Failure And Safety States
+9. P13-009 UI Tests
+10. P13-010 Documentation And Runbook Updates
 ```
 
 ## P13-001 Dashboard Information Architecture
@@ -390,7 +391,104 @@ Done when:
 The dashboard is usable at desktop and narrow widths without overlapping text.
 ```
 
-## P13-008 UI Tests
+## P13-008 Failure And Safety States
+
+Goal:
+
+```txt
+Make the dashboard safe and understandable when something goes wrong.
+```
+
+Access control:
+
+```txt
+Viewer/editor users do not see the Agent Access dashboard.
+If an API call returns unauthorized/forbidden, do not render a raw token panel.
+Show a compact access message instead of partial privileged UI.
+```
+
+API failure states:
+
+```txt
+Token list load failure:
+  Keep existing token list if present.
+  Show error message and retry button.
+
+Event load failure:
+  Keep selected token detail visible.
+  Show event-specific error message.
+
+Create failure:
+  Do not show raw token panel.
+  Keep form values so the operator can fix input.
+
+Rotate failure:
+  Do not show raw token panel.
+  Keep old token detail visible.
+
+Revoke failure:
+  Keep token status unchanged.
+  Show action-specific error.
+```
+
+Destructive action confirmation:
+
+```txt
+Rotate and revoke require a second explicit confirmation.
+Confirmation shows the target token label and token id.
+Confirmation can be cancelled.
+One-click destructive actions are not allowed.
+```
+
+Clipboard failure:
+
+```txt
+Copy success shows "Copied" feedback for about 2 seconds.
+Copy failure shows "Copy failed; select the token manually."
+Raw token panel remains visible after both success and failure.
+```
+
+Empty/loading states:
+
+```txt
+No tokens
+No events for selected token
+No filter results
+Loading token list
+Loading events
+```
+
+Sensitive metadata sanitization:
+
+```txt
+Hide keys containing:
+  token
+  secret
+  password
+  key
+  authorization
+  cookie
+  session
+  content
+  body
+```
+
+Time display:
+
+```txt
+Rows show relative time.
+Tooltips/titles show absolute time with timezone.
+Expiry wording must avoid ambiguous "today" without a precise timestamp.
+```
+
+Done when:
+
+```txt
+Failures never create or reveal raw token UI accidentally.
+Destructive actions cannot be triggered by one accidental click.
+```
+
+## P13-009 UI Tests
 
 Goal:
 
@@ -402,6 +500,7 @@ Tests:
 
 ```txt
 agentAccess helper tests:
+  access role gating helpers
   status calculation
   filters
   payload normalization
@@ -412,6 +511,9 @@ agentAccess helper tests:
   raw token is not persisted to localStorage/sessionStorage
   raw token does not appear in URLs
   raw token disappears after page reload/state reset
+  copy success/failure feedback state
+  destructive action confirmation state
+  empty/loading state helpers
 
 component-level or DOM tests if available:
   raw token appears after create
@@ -435,7 +537,7 @@ Done when:
 npm run test:agent covers the critical dashboard behavior.
 ```
 
-## P13-009 Documentation And Runbook Updates
+## P13-010 Documentation And Runbook Updates
 
 Update:
 
@@ -455,6 +557,23 @@ Revocation workflow
 How to interpret denied/rate-limited events
 When to rotate expiring tokens
 MCP/SDK environment update after rotate
+```
+
+Add operator checklist:
+
+```txt
+Before creating an agent token:
+  Confirm the minimum required scope.
+  Set an expiry date.
+  Fill in purpose.
+  Decide whether the token is for MCP or SDK.
+  Confirm where the token will be stored.
+
+After creating or rotating:
+  Copy the raw token once.
+  Store it in the target MCP/SDK environment.
+  Dismiss the raw token panel only after storage is confirmed.
+  Run a small ping/me test from the target client.
 ```
 
 Explicitly out of scope:
@@ -510,9 +629,10 @@ Phase 13 is complete when:
 4. Create/rotate flows preserve one-time raw token safety.
 5. Events are sanitized and useful for failure triage.
 6. Expiry/failure warnings are visible before agents fail.
-7. Dashboard helper tests cover critical behavior.
-8. Docs explain the dashboard workflows.
-9. Existing API, MCP, SDK, Rust, and web checks still pass.
+7. Failure and destructive action states are safe and understandable.
+8. Dashboard helper tests cover critical behavior.
+9. Docs explain the dashboard workflows and operator checklist.
+10. Existing API, MCP, SDK, Rust, and web checks still pass.
 ```
 
 Phase 13 should make external AI agent operations easier for the human operator.
