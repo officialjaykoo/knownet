@@ -74,3 +74,25 @@ run verify-index. Migration should be safe to run twice.
 
 If no snapshot exists but Markdown files remain, recreate `knownet.db`, run
 migrate, re-index pages, rebuild citation audits, and rebuild the graph.
+
+## Agent Token Rotation
+
+List tokens in the Agent Access panel or with `GET /api/agents/tokens`.
+Rotate a token with `POST /api/agents/tokens/{token_id}/rotate`. The new raw
+token is shown once, so update the MCP or SDK environment immediately.
+
+Revoke unused tokens with `POST /api/agents/tokens/{token_id}/revoke`. Revoked
+tokens cannot call `/api/agent/*` and cannot use write gateways.
+
+## MCP Setup
+
+The Phase 10 MCP server runs over stdio from `apps/mcp/knownet_mcp/server.py`.
+Set:
+
+```txt
+KNOWNET_BASE_URL=http://127.0.0.1:8000
+KNOWNET_AGENT_TOKEN=<token shown once by the operator dashboard>
+```
+
+Use an agent token with only the scopes needed by the AI tool. The MCP server
+does not expose maintenance tools.

@@ -8,7 +8,7 @@ KnowNet.
 Use:
 
 ```txt
-Authorization: Bearer kn_agent_...
+Authorization: Bearer <agent token shown once by the operator dashboard>
 ```
 
 The token is scoped. It is not an admin token and cannot access maintenance
@@ -166,3 +166,61 @@ maintenance state that grants control
 4. Fix format if needed
 5. POST /api/collaboration/reviews
 ```
+
+## MCP Setup
+
+Phase 10 includes a stdio MCP server at:
+
+```txt
+apps/mcp/knownet_mcp/server.py
+```
+
+Set configuration through environment variables:
+
+```txt
+KNOWNET_BASE_URL=http://127.0.0.1:8000
+KNOWNET_AGENT_TOKEN=<token shown once by the operator dashboard>
+KNOWNET_MCP_TIMEOUT_SECONDS=30
+```
+
+The MCP server exposes only these tools:
+
+```txt
+knownet_ping
+knownet_me
+knownet_state_summary
+knownet_list_pages
+knownet_read_page
+knownet_list_reviews
+knownet_list_findings
+knownet_graph_summary
+knownet_list_citations
+knownet_review_dry_run
+knownet_submit_review
+```
+
+No maintenance or admin tools are exposed.
+
+## Python SDK
+
+Phase 10 includes a small Python SDK at:
+
+```txt
+packages/knownet-agent-py/
+```
+
+Use environment variables for tokens:
+
+```python
+import os
+from knownet_agent import KnowNetClient
+
+client = KnowNetClient(
+    base_url=os.getenv("KNOWNET_BASE_URL", "http://127.0.0.1:8000"),
+    token=os.environ["KNOWNET_AGENT_TOKEN"],
+)
+
+print(client.me().data)
+```
+
+Do not hard-code agent tokens in source files.

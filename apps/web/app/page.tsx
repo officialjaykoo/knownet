@@ -21,6 +21,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { GraphPanel, GraphData, GraphNode } from "../components/GraphPanel";
+import { AgentAccessPanel } from "../components/AgentAccessPanel";
 import { OperationsPanel } from "../components/OperationsPanel";
 
 type PageSummary = {
@@ -1132,14 +1133,17 @@ export default function HomePage() {
           {bundleStatus ? <small>Last bundle: {bundleStatus}</small> : null}
         </section>
         {actor && ["owner", "admin"].includes(actor.role) ? (
-          <OperationsPanel
-            healthSummary={healthSummary}
-            snapshots={snapshots}
-            verifyIssues={verifyIssues}
-            onCreateSnapshot={createSnapshot}
-            onRunVerifyIndex={runVerifyIndex}
-            onRebuildGraph={rebuildGraph}
-          />
+          <>
+            <AgentAccessPanel sessionToken={sessionToken} vaultId={vaultId} />
+            <OperationsPanel
+              healthSummary={healthSummary}
+              snapshots={snapshots}
+              verifyIssues={verifyIssues}
+              onCreateSnapshot={createSnapshot}
+              onRunVerifyIndex={runVerifyIndex}
+              onRebuildGraph={rebuildGraph}
+            />
+          </>
         ) : null}
       </aside>
       <section className="workspace">

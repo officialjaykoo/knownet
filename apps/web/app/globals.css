@@ -442,6 +442,157 @@ h1 {
   box-shadow: var(--shadow-soft);
 }
 
+.agent-panel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 12px;
+  box-shadow: var(--shadow-soft);
+}
+
+.agent-panel-head,
+.agent-detail-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agent-panel button,
+.agent-create button,
+.raw-token button,
+.agent-detail-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 7px 8px;
+}
+
+.agent-create {
+  display: grid;
+  gap: 6px;
+}
+
+.agent-create input,
+.agent-create select {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 7px 8px;
+}
+
+.agent-create button {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: white;
+}
+
+.raw-token {
+  display: grid;
+  gap: 7px;
+  border: 1px solid #e8cf9c;
+  border-radius: 8px;
+  background: #fffaf0;
+  padding: 9px;
+}
+
+.raw-token code {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 6px;
+  font-size: 12px;
+}
+
+.agent-token-list {
+  display: grid;
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.agent-token-list button {
+  display: grid;
+  justify-items: start;
+  text-align: left;
+}
+
+.agent-token-list button.selected {
+  border-color: var(--accent);
+}
+
+.agent-chip {
+  border-radius: 999px;
+  background: #eef4ff;
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 900;
+  padding: 3px 7px;
+}
+
+.agent-chip.revoked,
+.agent-chip.expired {
+  background: #fff5f0;
+  color: var(--red);
+}
+
+.agent-chip.expiring {
+  background: #fffaf0;
+  color: var(--amber);
+}
+
+.agent-detail {
+  display: grid;
+  gap: 7px;
+  border-top: 1px solid var(--line);
+  padding-top: 9px;
+}
+
+.agent-detail small,
+.agent-panel small,
+.agent-event small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agent-events {
+  display: grid;
+  gap: 5px;
+}
+
+.agent-event {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  padding: 7px;
+}
+
+.agent-event.warn {
+  border-color: #efc8bc;
+  background: #fff8f5;
+}
+
+.agent-event span {
+  color: var(--accent-strong);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
 .ops-status {
   display: grid;
   gap: 3px;

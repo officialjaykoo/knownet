@@ -94,6 +94,17 @@ This starts the same API and web ports:
 Docker stores app data in the `knownet-data` volume. See
 [Docker docs](./docs/DOCKER.md) before exposing the app outside localhost.
 
+## Agent Tooling
+
+Phase 10 adds agent tooling on top of scoped Phase 9 access:
+
+- MCP server: `apps/mcp/knownet_mcp/server.py`
+- Python SDK: `packages/knownet-agent-py/`
+- Web Agent Access panel for token management and sanitized activity events
+
+Use `KNOWNET_AGENT_TOKEN` from the environment for MCP and SDK examples. Do not
+hard-code agent tokens in source files.
+
 ## Project Docs
 
 Implementation task lists:
@@ -106,6 +117,8 @@ Implementation task lists:
 - [Phase 6 Tasks](./PHASE_6_TASKS.md)
 - [Phase 7 Tasks](./PHASE_7_TASKS.md)
 - [Phase 8 Tasks](./PHASE_8_TASKS.md)
+- [Phase 9 Tasks](./PHASE_9_TASKS.md)
+- [Phase 10 Tasks](./PHASE_10_TASKS.md)
 
 Operational docs:
 
