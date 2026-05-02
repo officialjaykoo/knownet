@@ -330,11 +330,35 @@ Kimi has a desktop app, but the web chat itself should not be treated as a
 direct KnowNet MCP client.
 ```
 
+Actual test result:
+
+```txt
+Status: not useful enough for the current KnowNet review workflow.
+
+What happened:
+  Kimi web explained that it was not using MCP and instead used Moonshot/Kimi's
+  own XML/function-calling style web tools.
+  It then gave mixed guidance about desktop app, Kimi Code CLI, Playground MCP,
+  and API support.
+
+Operator judgment:
+  Kimi web was not reliable enough to decide its own access method.
+  Do not ask Kimi web to reason about MCP setup or live KnowNet connectivity.
+
+Safe use:
+  Treat Kimi web only as a pasted-document reviewer.
+  It may read `data/tmp/kimi-review-pack.md` and produce finding drafts.
+  It must not claim that it directly called KnowNet MCP/API unless an operator
+  ran the local helper and pasted the resulting pack.
+```
+
 Practical split:
 
 ```txt
 Kimi web:
-  Use GET discovery/preview or paste a generated review pack.
+  Paste a generated review pack.
+  GET discovery/preview may work, but do not rely on Kimi to choose the right
+  access path by itself.
 
 Kimi Code / Kimi Playground:
   Register KnowNet MCP and test direct tool calls there.
@@ -357,6 +381,15 @@ data/tmp/kimi-review-pack.md
 
 and, with `--copy`, places the full review pack on the Windows clipboard.
 Paste it into Kimi web and ask it to review the pack.
+
+Recommended prompt for Kimi web:
+
+```txt
+You are not connected to KnowNet directly.
+Do not claim that you called MCP, API, JSON-RPC, or local files.
+Read only the pasted KnowNet review pack below.
+Act as a first-time external AI reviewer and write finding drafts only.
+```
 
 Equivalent generic command:
 
@@ -381,7 +414,7 @@ ChatGPT PC Web: custom MCP connector works
 Claude: connector/integration registration works
 DeepSeek Web/Desktop free: GET discovery/preview works
 Qwen Web free: GET discovery/preview works through extractor/search tools
-Kimi Web: no direct MCP in web chat; use GET preview or generated review pack
+Kimi Web: no direct MCP in web chat; too unreliable for access decisions; use generated review pack only
 Kimi Code/Playground: MCP-capable path to test later
 ```
 
