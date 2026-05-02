@@ -14,6 +14,7 @@ from ..services.model_runner import (
     DeepSeekApiAdapter,
     GeminiApiAdapter,
     GeminiMockAdapter,
+    GlmApiAdapter,
     MiniMaxApiAdapter,
     MockModelReviewAdapter,
     assert_no_active_run,
@@ -48,6 +49,14 @@ class DeepSeekReviewRunRequest(BaseModel):
 class MiniMaxReviewRunRequest(BaseModel):
     vault_id: str = "local-default"
     prompt_profile: str = Field(default="minimax_external_reviewer_v1", max_length=120)
+    review_focus: str | None = Field(default=None, max_length=800)
+    max_pages: int = Field(default=20, ge=1, le=50)
+    mock: bool = True
+
+
+class GlmReviewRunRequest(BaseModel):
+    vault_id: str = "local-default"
+    prompt_profile: str = Field(default="glm_external_reviewer_v1", max_length=120)
     review_focus: str | None = Field(default=None, max_length=800)
     max_pages: int = Field(default=20, ge=1, le=50)
     mock: bool = True
@@ -322,6 +331,22 @@ async def create_minimax_review_run(payload: MiniMaxReviewRunRequest, request: R
         else MiniMaxApiAdapter(api_key=settings.minimax_api_key, base_url=settings.minimax_base_url, model=settings.minimax_model, timeout_seconds=settings.minimax_timeout_seconds)
     )
     return await _create_provider_review_run(provider="minimax", model=settings.minimax_model, payload=payload, request=request, actor=actor, adapter=adapter, source_agent="minimax-mock" if payload.mock else "minimax")
+
+
+@router.post("/glm/reviews")
+async def create_glm_review_run(payload: GlmReviewRunRequest, request: Request, actor: Actor = Depends(require_admin_access)):
+    settings = request.app.state.settings
+    if not payload.mock:
+        if not settings.glm_runner_enabled:
+            raise HTTPException(status_code=503, detail={"code": "glm_disabled", "message": "GLM runner is disabled. Use mock=true until a real provider is enabled.", "details": {}})
+        if not settings.glm_api_key:
+            raise HTTPException(status_code=503, detail={"code": "glm_api_key_missing", "message": "GLM_API_KEY is required for non-mock GLM runs", "details": {}})
+    adapter = (
+        MockModelReviewAdapter(provider_id="glm")
+        if payload.mock
+        else GlmApiAdapter(api_key=settings.glm_api_key, base_url=settings.glm_base_url, model=settings.glm_model, timeout_seconds=settings.glm_timeout_seconds)
+    )
+    return await _create_provider_review_run(provider="glm", model=settings.glm_model, payload=payload, request=request, actor=actor, adapter=adapter, source_agent="glm-mock" if payload.mock else "glm")
 
 
 @router.get("")

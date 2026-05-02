@@ -2051,6 +2051,24 @@ GLM has a documented path through MCP-capable coding tools plus KnowNet MCP,
 and future agents do not confuse Zread GitHub reading with live KnowNet state.
 ```
 
+Implementation note:
+
+```txt
+Implemented in codebase:
+  POST /api/model-runs/glm/reviews
+  GLM mock adapter through shared MockModelReviewAdapter
+  GLM/Z.AI OpenAI-compatible REST adapter
+  Read-only in-run tool schema:
+    knownet_state_summary
+    knownet_ai_state
+    knownet_list_findings
+  Default live model: glm-5.1
+  Default base URL: https://api.z.ai/api/paas/v4
+
+The GLM runner remains disabled by default and requires GLM_API_KEY plus
+GLM_RUNNER_ENABLED=true for live calls.
+```
+
 ## Completion Definition
 
 ```txt

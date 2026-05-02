@@ -305,3 +305,96 @@ Forbidden:
 maintenance, raw database, backups, shell/code execution, filesystem reads,
 direct page writes, raw tokens, token hashes, sessions, users
 ```
+
+## GLM / Z.AI Direction
+
+GLM uses the same server-side model-runner pattern as MiniMax:
+
+```txt
+KnowNet
+-> build safe context
+-> call Z.AI Chat Completions API
+-> allow only read-only knownet_* tool calls inside the runner
+-> request final structured JSON
+-> normalize to review Markdown
+-> dry-run parse
+-> operator chooses whether to import
+```
+
+Z.AI official docs describe an OpenAI-compatible endpoint at
+`https://api.z.ai/api/paas/v4/chat/completions`, Bearer auth, tool calls through
+the `tools` parameter, and structured output via
+`response_format: {"type":"json_object"}`.
+
+Current local state as of 2026-05-03:
+
+```txt
+provider: glm
+real_adapter: implemented
+mock_adapter: working
+operator_import_required: true
+default_model: glm-5.1
+local_api_key: configured
+```
+
+Mock smoke path:
+
+```txt
+POST /api/model-runs/glm/reviews
+mock: true
+status: dry_run_ready
+```
+
+Non-mock safety:
+
+```txt
+GLM_RUNNER_ENABLED=false blocks real calls by default.
+GLM_API_KEY is required before a live GLM run.
+GLM output remains dry-run-ready until an operator imports it.
+```
+
+Real API attempt after `GLM_API_KEY` was configured locally:
+
+```txt
+model: glm-5.1
+status: failed
+code: glm_auth_failed
+reason: Authentication Failed
+```
+
+Endpoint checks with the same key:
+
+```txt
+GET https://api.z.ai/api/paas/v4/models
+status: 401
+reason: Authentication Failed
+
+GET https://api.z.ai/api/coding/paas/v4/models
+status: 401
+reason: Authentication Failed
+```
+
+Interpretation:
+
+```txt
+The local value in GLM_API_KEY was not accepted as a Z.AI Bearer API key on
+either the general API endpoint or the coding endpoint.
+The runner wiring is implemented, but live GLM generation is blocked until the
+operator provides a valid Z.AI API key for the selected endpoint.
+No collaboration review or finding was imported.
+```
+
+Allowed GLM runner tools:
+
+```txt
+knownet_state_summary
+knownet_ai_state
+knownet_list_findings
+```
+
+Forbidden:
+
+```txt
+maintenance, raw database, backups, shell/code execution, filesystem reads,
+direct page writes, raw tokens, token hashes, sessions, users
+```

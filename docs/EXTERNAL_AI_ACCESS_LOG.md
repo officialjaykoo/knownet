@@ -267,6 +267,16 @@ MiniMax paid/API:
   Implemented REST/model tool-calling runner:
   POST /api/model-runs/minimax/reviews
   Live generation still requires account balance.
+
+GLM free web:
+  GET preview or pasted review pack if needed.
+
+GLM paid/API:
+  Implemented REST/model tool-calling runner:
+  POST /api/model-runs/glm/reviews
+
+GLM Coding Plan / MCP-capable coding tools:
+  Use KnowNet MCP endpoint directly with an agent token.
 ```
 
 ## Qwen Web
