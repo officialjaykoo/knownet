@@ -34,6 +34,17 @@ function Invoke-Json($Method, $Url, $Headers = @{}) {
   }
 }
 
+Step "Git secret tracking guard"
+$trackedSecretFiles = git -C $Root ls-files -- ".env" ".env.*" "apps/**/.env" "apps/**/.env.*" "data/**/*.env" "data/**/*.env.*"
+$trackedSecretFiles = @($trackedSecretFiles | Where-Object {
+  $_ -and
+  $_ -notmatch '(^|/)\.env\.example$' -and
+  $_ -notmatch '\.env\.example$'
+})
+if ($trackedSecretFiles.Count -gt 0) {
+  throw ("Secret env files are tracked by Git: " + ($trackedSecretFiles -join ", "))
+}
+
 Step "Rust tests"
 Push-Location $CoreDir
 cargo test

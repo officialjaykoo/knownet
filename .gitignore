@@ -24,4 +24,8 @@ data/pages/reviews/*.md
 !data/pages/.gitkeep
 !data/backups/.gitkeep
 
+# Local secrets and machine-specific configuration. Keep examples tracked.
 .env
+.env.*
+!.env.example
+!*.env.example
