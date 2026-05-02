@@ -1,174 +1,240 @@
 # External AI Access Log
 
-```json
-{
-  "schema": "knownet.external_ai_access_log.v1",
-  "purpose": "Record external AI reviewer access methods during the Phase 14 MCP and agent onboarding test round.",
-  "entries": [
-    {
-      "reviewer": "claude",
-      "environment": "pc_web",
-      "access_mode": "cloudflare_quick_tunnel_limited_fetch",
-      "live_mcp_post": false,
-      "get_discovery": false,
-      "get_preview_resources": false,
-      "fallback_used": true,
-      "result": "Could not call live tools directly; reviewed from provided API response data."
-    },
-    {
-      "reviewer": "chatgpt",
-      "environment": "pc_web",
-      "access_mode": "pc_web_with_and_without_custom_mcp_connector",
-      "live_mcp_post": true,
-      "get_discovery": true,
-      "get_preview_resources": true,
-      "fallback_used": true,
-      "attempts": [
-        {
-          "mode": "custom_mcp_connector_cloudflare_quick_tunnel",
-          "live_mcp_post": true,
-          "result": "Connector worked; knownet_start_here call succeeded."
-        },
-        {
-          "mode": "no_knownet_connector_in_web_session",
-          "live_mcp_post": false,
-          "result": "Could not call KnowNet tools directly; used GitHub/document fallback."
-        }
-      ],
-      "result": "One ChatGPT PC web attempt succeeded through the custom MCP connector; another web session lacked the connector and used fallback."
-    },
-    {
-      "reviewer": "gemini",
-      "environment": "pc_web",
-      "access_mode": "pc_web_gemini_fast_and_pro",
-      "live_mcp_post": false,
-      "get_discovery": false,
-      "get_preview_resources": false,
-      "fallback_used": true,
-      "attempts": [
-        {
-          "model": "fast",
-          "mode": "cloudflare_quick_tunnel_no_post",
-          "result": "Could not perform JSON-RPC POST; used provided documents/static fallback."
-        },
-        {
-          "model": "pro",
-          "mode": "cloudflare_quick_tunnel_unavailable",
-          "result": "Tunnel was unavailable or closed during attempt; used static fallback with stronger findings."
-        }
-      ],
-      "result": "Gemini fast and Pro were treated as one reviewer family; Pro produced stronger findings but used the same fallback class."
-    },
-    {
-      "reviewer": "manus",
-      "environment": "pc_web",
-      "access_mode": "supplied_markdown_summary",
-      "live_mcp_post": false,
-      "get_discovery": false,
-      "get_preview_resources": false,
-      "fallback_used": true,
-      "result": "Reviewed from supplied Markdown summary, not direct MCP tool calls."
-    },
-    {
-      "reviewer": "deepseek",
-      "environment": "pc_web",
-      "access_mode": "pc_web_multiple_attempts",
-      "live_mcp_post": false,
-      "get_discovery": true,
-      "get_preview_resources": true,
-      "fallback_used": true,
-      "attempts": [
-        {
-          "mode": "public_search_then_mcp_discovery",
-          "get_discovery": true,
-          "get_preview_resources": false,
-          "fallback_used": true,
-          "result": "First attempt confused public search results with KnowNet; later corrected toward MCP discovery."
-        },
-        {
-          "mode": "mcp_get_discovery_only",
-          "get_discovery": true,
-          "get_preview_resources": false,
-          "fallback_used": false,
-          "result": "Read discovery JSON; could not perform JSON-RPC POST tool calls."
-        },
-        {
-          "mode": "mcp_get_preview_resources",
-          "get_discovery": true,
-          "get_preview_resources": true,
-          "fallback_used": false,
-          "result": "Read safe preview resources; no POST tool calls."
-        }
-      ],
-      "result": "DeepSeek made multiple PC web attempts; the final useful path was GET discovery plus GET preview resources."
-    },
-    {
-      "reviewer": "qwen_3_6_plus",
-      "environment": "pc_web",
-      "access_mode": "mcp_get_discovery_and_preview_resources",
-      "live_mcp_post": false,
-      "get_discovery": true,
-      "get_preview_resources": true,
-      "fallback_used": false,
-      "result": "Reviewed from GET discovery and preview resources."
-    },
-    {
-      "reviewer": "kimi",
-      "environment": "pc_web",
-      "access_mode": "mcp_get_discovery_and_preview_resources",
-      "live_mcp_post": false,
-      "get_discovery": true,
-      "get_preview_resources": true,
-      "fallback_used": false,
-      "result": "Reviewed from GET discovery and preview resources."
-    },
-    {
-      "reviewer": "minimax_agent",
-      "environment": "pc_web",
-      "access_mode": "mcp_get_discovery_and_preview_resources",
-      "live_mcp_post": false,
-      "get_discovery": true,
-      "get_preview_resources": true,
-      "fallback_used": false,
-      "result": "Reviewed from GET discovery and preview resources; dry-run was not callable because JSON-RPC POST was unavailable."
-    },
-    {
-      "reviewer": "glm_5_turbo",
-      "environment": "pc_web",
-      "access_mode": "mcp_get_discovery_and_preview_resources",
-      "live_mcp_post": false,
-      "get_discovery": true,
-      "get_preview_resources": true,
-      "fallback_used": false,
-      "result": "Reviewed discovery and preview resources; reported one GET preview issue that local verification classified as false positive because resource previews returned data.payload, not discovery tools."
-    }
-  ],
-  "access_contract": {
-    "mcp_capable_clients": {
-      "transport": "json_rpc_post",
-      "endpoint": "/mcp",
-      "can_call_tools": true
-    },
-    "get_only_clients": {
-      "transport": "http_get_preview",
-      "allowed_endpoints": [
-        "/mcp",
-        "/mcp?resource=agent:onboarding",
-        "/mcp?resource=agent:state-summary"
-      ],
-      "can_call_tools": false,
-      "scope": "safe_read_only_preview"
-    },
-    "requires_post": [
-      "search",
-      "fetch",
-      "knownet_review_dry_run",
-      "knownet_submit_review"
-    ]
-  },
-  "phase15_cleanup": {
-    "temporary_test_tokens_revoked": true,
-    "recorded_at": "2026-05-02T17:41:10.998154Z"
-  }
-}
+이 문서는 외부 AI 접근 실험 중 **확인된 ChatGPT/Codex와 Claude 결과만** 짧게 기록한다.
+다른 AI 웹 실험 기록은 혼란을 줄이기 위해 여기서 제거했다.
+
+## 결론
+
+ChatGPT/Codex와 Claude는 KnowNet MCP에 붙었다.
+
+확인된 것은 세 가지다.
+
+1. Codex shell에서 Cloudflare Quick Tunnel을 통해 MCP JSON-RPC POST 호출 성공
+2. ChatGPT PC Web에서 custom MCP connector를 통해 `knownet_start_here` 호출 성공
+3. Claude 앱/Claude.ai 커넥터 등록 화면에서 MCP 주소를 넣어 `knownet_start_here`, `knownet_me`, `knownet_state_summary` 호출 성공
+
+즉, KnowNet MCP HTTP bridge는 외부에서 접근 가능한 형태로 동작했다.
+
+## 사용한 주소
+
+테스트 당시 Quick Tunnel 주소:
+
+```txt
+https://dealers-spirituality-marker-compute.trycloudflare.com/mcp
+```
+
+로컬 대상:
+
+```txt
+http://127.0.0.1:8010/mcp
+```
+
+주의:
+
+```txt
+Quick Tunnel 주소는 임시 테스트용이다.
+운영용 주소가 아니다.
+```
+
+## ChatGPT/Codex 확인 결과
+
+환경:
+
+```txt
+Codex shell
+Cloudflare Quick Tunnel
+KnowNet MCP HTTP bridge
+```
+
+성공한 호출:
+
+```txt
+initialize
+tools/list
+knownet_start_here
+knownet_me
+knownet_state_summary
+knownet_ai_state
+knownet_review_dry_run
+```
+
+결과:
+
+```txt
+MCP JSON-RPC POST 호출 성공
+review dry-run 성공
+실제 review submit은 하지 않음
+```
+
+진단:
+
+```txt
+server: knownet
+version: 14.0
+agent_token: ok
+agent_scope_count: 6
+token_warning: expires_soon
+```
+
+## ChatGPT PC Web 확인 결과
+
+환경:
+
+```txt
+ChatGPT PC Web
+Custom MCP connector
+Cloudflare Quick Tunnel
+```
+
+설정:
+
+```txt
+URL: https://dealers-spirituality-marker-compute.trycloudflare.com/mcp
+Authentication: none
+```
+
+성공한 호출:
+
+```txt
+knownet_start_here
+```
+
+결과:
+
+```txt
+custom MCP connector가 붙은 ChatGPT PC Web 세션에서는 KnowNet 도구 호출 가능
+connector가 없는 일반 웹 세션에서는 knownet_* 도구 직접 호출 불가
+```
+
+## Claude 확인 결과
+
+성공한 방식:
+
+```txt
+Claude Desktop 앱 또는 Claude.ai의 Connectors / Integrations 화면에서
+custom MCP server로 KnowNet MCP 주소를 등록
+```
+
+등록한 주소:
+
+```txt
+https://dealers-spirituality-marker-compute.trycloudflare.com/mcp
+```
+
+인증:
+
+```txt
+No authentication
+```
+
+성공한 호출:
+
+```txt
+knownet_start_here
+knownet_me
+knownet_state_summary
+```
+
+결과:
+
+```txt
+Claude에서 KnowNet MCP 도구 호출 성공
+세 API 모두 정상 응답
+```
+
+확인된 상태:
+
+```txt
+token_id: agent_55b5a5bf6896
+role: agent_reviewer
+scopes: citations/read, findings/read, graph/read, pages/read, reviews/read, reviews/create
+phase: 14
+pages: 64
+reviews: 13
+findings: 59
+graph_nodes: 630
+release_ready: false
+```
+
+주의:
+
+```txt
+Claude Desktop용 claude_desktop_config.json 파일 업로드 방식이 아니다.
+Claude 앱/Claude.ai의 커넥터 등록 화면에서 MCP URL을 직접 추가해야 한다.
+현재 성공 경로는 Cloudflare Quick Tunnel을 통한 원격 MCP 연결이다.
+```
+
+## 접근 방식 정리
+
+MCP 가능한 클라이언트:
+
+```txt
+POST /mcp
+JSON-RPC
+tools/list
+tools/call
+knownet_* 도구 호출 가능
+```
+
+GET-only 클라이언트:
+
+```txt
+GET /mcp
+GET /mcp?resource=agent:onboarding
+GET /mcp?resource=agent:state-summary
+도구 호출은 불가
+읽기 미리보기만 가능
+```
+
+POST가 필요한 기능:
+
+```txt
+search
+fetch
+knownet_review_dry_run
+knownet_submit_review
+```
+
+## 현재 판단
+
+외부 AI 접근성 실험 1단계는 성공으로 본다.
+
+다만 웹 AI를 계속 추가로 붙이는 실험은 여기서 멈춘다.
+이제 중요한 작업은 운영 가능한 접근 표면을 다듬는 것이다.
+
+다음 단계:
+
+```txt
+1. GET-only fallback을 필요한 만큼만 확장
+2. Quick Tunnel 대신 named tunnel 준비
+3. Cloudflare Access 같은 접근 제어 붙이기
+4. 테스트용 agent token은 짧게 만들고 테스트 후 revoke
+5. provider별 차이는 profile/config 문서에만 기록
+6. MCP 도구 이름은 계속 knownet_* 하나로 유지
+```
+
+## Claude Desktop 참고
+
+Claude Desktop에서 파일 업로드 방식은 성공 경로가 아니다.
+
+성공한 방식:
+
+```txt
+Claude Desktop 앱 또는 Claude.ai 설정 화면
+Connectors / Integrations
+Custom MCP server 추가
+MCP URL 직접 입력
+```
+
+실패한 방식:
+
+```txt
+claude_desktop_config.json 파일을 Claude 채팅에 업로드
+일반 웹 대화에서 KnowNet 도구 호출 요청
+```
+
+정리:
+
+```txt
+Claude는 설정 파일을 읽는 방식보다, 현재 앱/웹의 커넥터 등록 화면에서 MCP URL을 넣는 방식이 확인된 성공 경로다.
 ```
