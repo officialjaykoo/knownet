@@ -12,6 +12,7 @@ def _isolate_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("SQLITE_PATH", str(data_dir / "knownet.db"))
     monkeypatch.setenv("GEMINI_RUNNER_ENABLED", "false")
+    monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-pro")
     monkeypatch.setenv("GEMINI_MAX_CONTEXT_TOKENS", "32000")
     monkeypatch.setenv("GEMINI_MAX_CONTEXT_CHARS", "120000")
 
@@ -75,6 +76,51 @@ def test_gemini_non_mock_is_not_enabled_yet(tmp_path, monkeypatch):
         response = client.post("/api/model-runs/gemini/reviews", json={"mock": False})
         assert response.status_code == 503
         assert response.json()["detail"]["code"] == "gemini_disabled"
+
+
+def test_gemini_non_mock_uses_provider_adapter(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    monkeypatch.setenv("GEMINI_RUNNER_ENABLED", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+
+    class FakeGeminiAdapter:
+        provider_id = "gemini"
+
+        def __init__(self, *, api_key, model, timeout_seconds):
+            assert api_key == "test-gemini-key"
+            assert model == "gemini-2.5-pro"
+            assert timeout_seconds > 0
+
+        async def generate_review(self, request):
+            assert request["request"]["mock"] is False
+            assert request["context"]["pages"]
+            return {
+                "review_title": "Fake Gemini live adapter review",
+                "overall_assessment": "Provider adapter route wiring works.",
+                "findings": [
+                    {
+                        "title": "Real adapter path should stay behind dry-run",
+                        "severity": "medium",
+                        "area": "API",
+                        "evidence": "The non-mock route used the configured Gemini adapter and returned dry_run_ready instead of importing directly.",
+                        "proposed_change": "Keep operator import mandatory after every Gemini API run.",
+                        "confidence": 0.9,
+                    }
+                ],
+                "summary": "Fake provider result.",
+            }
+
+    monkeypatch.setattr("knownet_api.routes.model_runs.GeminiApiAdapter", FakeGeminiAdapter)
+    with TestClient(app) as client:
+        settings = get_settings()
+        _seed_ai_state(settings.sqlite_path)
+        response = client.post("/api/model-runs/gemini/reviews", json={"mock": False, "review_focus": "adapter smoke"})
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["run"]["status"] == "dry_run_ready"
+        assert data["run"]["response"]["mock"] is False
+        assert data["dry_run"]["finding_count"] == 1
+        assert data["dry_run"]["parser_errors"] == []
 
 
 def test_model_context_rejects_secret_like_ai_state(tmp_path, monkeypatch):

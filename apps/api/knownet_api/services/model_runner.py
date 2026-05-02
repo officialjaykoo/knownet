@@ -8,6 +8,7 @@ from pathlib import PurePosixPath
 from typing import Any, Protocol
 
 import aiosqlite
+import httpx
 from fastapi import HTTPException
 
 from ..config import Settings
@@ -362,6 +363,153 @@ class GeminiMockAdapter:
             ],
             "summary": "Mock result only. No Gemini network call was made.",
         }
+
+
+GEMINI_REVIEW_RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "OBJECT",
+    "properties": {
+        "review_title": {"type": "STRING"},
+        "overall_assessment": {"type": "STRING"},
+        "summary": {"type": "STRING"},
+        "findings": {
+            "type": "ARRAY",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "title": {"type": "STRING"},
+                    "severity": {"type": "STRING", "enum": ["critical", "high", "medium", "low", "info"]},
+                    "area": {"type": "STRING", "enum": ["API", "UI", "Rust", "Security", "Data", "Ops", "Docs"]},
+                    "evidence": {"type": "STRING"},
+                    "proposed_change": {"type": "STRING"},
+                    "confidence": {"type": "NUMBER"},
+                },
+                "required": ["title", "severity", "area", "evidence", "proposed_change"],
+                "propertyOrdering": ["title", "severity", "area", "evidence", "proposed_change", "confidence"],
+            },
+        },
+    },
+    "required": ["review_title", "overall_assessment", "summary", "findings"],
+    "propertyOrdering": ["review_title", "overall_assessment", "findings", "summary"],
+}
+
+
+def build_gemini_review_prompt(request: dict[str, Any]) -> str:
+    run_request = request.get("request") or {}
+    context = request.get("context") or {}
+    focus = run_request.get("review_focus") or "Review the current KnowNet state for concrete risks that should be fixed before broader external AI use."
+    return "\n".join(
+        [
+            "You are an external AI reviewer for KnowNet.",
+            "KnowNet is an AI collaboration knowledge base. You receive a sanitized, structured context snapshot only.",
+            "",
+            "Rules:",
+            "- Return JSON only, matching the requested schema.",
+            "- Do not ask for raw database files, local filesystem paths, secrets, backups, sessions, users, or raw tokens.",
+            "- Focus on actionable implementation, API, data, security, ops, or docs findings.",
+            "- Prefer 1 to 5 high-signal findings. Do not invent facts beyond the provided context.",
+            "- Evidence must cite fields or observations from the provided context, not private assumptions.",
+            "- Proposed change must be concrete enough for Codex to implement or verify.",
+            "",
+            f"Review focus: {focus}",
+            "",
+            "Sanitized KnowNet context JSON:",
+            _json_dumps(context),
+        ]
+    )
+
+
+class GeminiApiAdapter:
+    provider_id = "gemini"
+
+    def __init__(self, *, api_key: str, model: str, timeout_seconds: float = 90.0) -> None:
+        self.api_key = api_key
+        self.model = model
+        self.timeout_seconds = timeout_seconds
+
+    async def generate_review(self, request: dict[str, Any]) -> dict[str, Any]:
+        prompt = build_gemini_review_prompt(request)
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        body = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.2,
+                "responseMimeType": "application/json",
+                "responseSchema": GEMINI_REVIEW_RESPONSE_SCHEMA,
+            },
+        }
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                response = await client.post(
+                    url,
+                    headers={"x-goog-api-key": self.api_key, "Content-Type": "application/json"},
+                    json=body,
+                )
+        except httpx.TimeoutException as error:
+            raise HTTPException(
+                status_code=504,
+                detail={"code": "gemini_timeout", "message": "Gemini API request timed out", "details": {}},
+            ) from error
+        except httpx.HTTPError as error:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "gemini_request_failed", "message": sanitize_error_message(str(error)), "details": {}},
+            ) from error
+
+        if response.status_code >= 400:
+            message = _extract_gemini_error_message(response)
+            if response.status_code == 429:
+                code = "gemini_rate_limited"
+            elif response.status_code in {401, 403}:
+                code = "gemini_auth_failed"
+            else:
+                code = "gemini_request_failed"
+            raise HTTPException(
+                status_code=502,
+                detail={"code": code, "message": sanitize_error_message(message) or "Gemini API request failed", "details": {"status_code": response.status_code}},
+            )
+
+        try:
+            payload = response.json()
+        except json.JSONDecodeError as error:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "gemini_invalid_response", "message": "Gemini API response was not JSON", "details": {}},
+            ) from error
+
+        text = _extract_gemini_text(payload)
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError as error:
+            raise HTTPException(
+                status_code=502,
+                detail={"code": "gemini_invalid_response", "message": "Gemini API response text was not valid JSON", "details": {}},
+            ) from error
+
+
+def _extract_gemini_error_message(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except json.JSONDecodeError:
+        return response.text[:1000]
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, dict):
+        return str(error.get("message") or error)
+    return str(payload)[:1000]
+
+
+def _extract_gemini_text(payload: dict[str, Any]) -> str:
+    candidates = payload.get("candidates")
+    if not isinstance(candidates, list) or not candidates:
+        raise HTTPException(status_code=502, detail={"code": "gemini_invalid_response", "message": "Gemini API returned no candidates", "details": {}})
+    content = candidates[0].get("content") if isinstance(candidates[0], dict) else None
+    parts = content.get("parts") if isinstance(content, dict) else None
+    if not isinstance(parts, list):
+        raise HTTPException(status_code=502, detail={"code": "gemini_invalid_response", "message": "Gemini API candidate has no parts", "details": {}})
+    text_parts = [part.get("text") for part in parts if isinstance(part, dict) and isinstance(part.get("text"), str)]
+    text = "".join(text_parts).strip()
+    if not text:
+        raise HTTPException(status_code=502, detail={"code": "gemini_invalid_response", "message": "Gemini API returned empty text", "details": {}})
+    return text
 
 
 def sanitize_error_message(message: str | None) -> str | None:

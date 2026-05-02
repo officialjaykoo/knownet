@@ -11,6 +11,7 @@ from ..db.sqlite import execute, fetch_all, fetch_one
 from ..routes.collaboration import _rebuild_collaboration_graph, parse_review_markdown
 from ..security import Actor, require_admin_access, utc_now
 from ..services.model_runner import (
+    GeminiApiAdapter,
     GeminiMockAdapter,
     assert_no_active_run,
     build_safe_context,
@@ -185,7 +186,6 @@ async def create_gemini_review_run(payload: GeminiReviewRunRequest, request: Req
             raise HTTPException(status_code=503, detail={"code": "gemini_disabled", "message": "Gemini runner is disabled. Use mock=true until a real provider is enabled.", "details": {}})
         if not settings.gemini_api_key:
             raise HTTPException(status_code=503, detail={"code": "gemini_api_key_missing", "message": "GEMINI_API_KEY is required for non-mock Gemini runs", "details": {}})
-        raise HTTPException(status_code=501, detail={"code": "gemini_real_adapter_not_implemented", "message": "Only the Gemini mock adapter is implemented in this Phase 16 step", "details": {}})
     await assert_no_active_run(settings.sqlite_path, "gemini")
     run_id = f"modelrun_{uuid4().hex[:12]}"
     context = await build_safe_context(settings, vault_id=payload.vault_id, max_pages=payload.max_pages)
@@ -207,19 +207,23 @@ async def create_gemini_review_run(payload: GeminiReviewRunRequest, request: Req
         status="running",
         context_summary=context.summary,
         request_json=request_json,
-        response_json={"stage": "running", "mock": True},
+        response_json={"stage": "running", "mock": payload.mock},
         input_tokens=context.estimated_tokens,
         output_tokens=None,
         created_by=actor.actor_id,
     )
     try:
-        adapter = GeminiMockAdapter()
+        adapter = (
+            GeminiMockAdapter()
+            if payload.mock
+            else GeminiApiAdapter(api_key=settings.gemini_api_key, model=settings.gemini_model, timeout_seconds=settings.gemini_timeout_seconds)
+        )
         raw_output = await adapter.generate_review({"request": request_json, "context": context.context})
         normalized = normalize_model_output(raw_output)
-        markdown = model_output_to_markdown(normalized, source_agent="gemini-mock", source_model=settings.gemini_model)
+        markdown = model_output_to_markdown(normalized, source_agent="gemini-mock" if payload.mock else "gemini", source_model=settings.gemini_model)
         metadata, findings, parser_errors = parse_review_markdown(markdown)
         response_json = {
-            "mock": True,
+            "mock": payload.mock,
             "normalized_output": normalized,
             "review_markdown": markdown,
             "dry_run": {
@@ -232,7 +236,14 @@ async def create_gemini_review_run(payload: GeminiReviewRunRequest, request: Req
         }
         await _update_run(settings, run_id, status="dry_run_ready", response_json=response_json)
     except HTTPException as error:
-        await _update_run(settings, run_id, status="failed", error_code=error.detail.get("code") if isinstance(error.detail, dict) else "model_run_failed", error_message=str(error.detail))
+        error_detail = error.detail if isinstance(error.detail, dict) else {}
+        await _update_run(
+            settings,
+            run_id,
+            status="failed",
+            error_code=error_detail.get("code") or "model_run_failed",
+            error_message=error_detail.get("message") or str(error.detail),
+        )
         raise
     output_tokens = estimate_tokens(json.dumps(response_json.get("normalized_output", {}), ensure_ascii=False))
     await execute(settings.sqlite_path, "UPDATE model_review_runs SET output_tokens = ?, updated_at = ? WHERE id = ?", (output_tokens, utc_now(), run_id))
@@ -243,7 +254,7 @@ async def create_gemini_review_run(payload: GeminiReviewRunRequest, request: Req
         actor=actor,
         target_type="model_review_run",
         target_id=run_id,
-        metadata={"provider": "gemini", "mock": True, "status": "dry_run_ready", "finding_count": response_json["dry_run"]["finding_count"]},
+        metadata={"provider": "gemini", "mock": payload.mock, "status": "dry_run_ready", "finding_count": response_json["dry_run"]["finding_count"]},
     )
     return {"ok": True, "data": {"run": _run_row(run), "dry_run": response_json["dry_run"]}}
 
