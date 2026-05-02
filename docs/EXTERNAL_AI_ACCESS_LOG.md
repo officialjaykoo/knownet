@@ -230,6 +230,13 @@ Separate DeepSeek API runner status is recorded in
 Keep these paths separate. Do not mix them during testing.
 
 ```txt
+Decision rule:
+  If the free/current route can perform real MCP/tool calls strongly, keep one
+  primary path and do not build a separate provider runner just for symmetry.
+  If the free route is only preview/paste, keep two documented paths:
+    1. realistic free fallback
+    2. best paid/API/agent path
+
 Free web plan:
   Treat the AI as a manual document reviewer.
   Use GET preview when the web tool can browse.
@@ -248,6 +255,19 @@ Paid/API or dedicated agent tool:
 Provider rule of thumb:
 
 ```txt
+Single primary path because real tool calls work:
+  ChatGPT PC Web -> custom MCP connector
+  Claude -> MCP connector/local stdio path
+  Manus -> connector URL / Custom MCP
+
+Split free fallback + paid/API path:
+  Gemini
+  DeepSeek
+  Qwen
+  Kimi
+  MiniMax
+  GLM
+
 Qwen free web:
   GET preview or `scripts\qwen_review_pack.py --copy`
 

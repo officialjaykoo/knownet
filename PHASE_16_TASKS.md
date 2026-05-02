@@ -181,6 +181,11 @@ Every provider integration doc must say:
   what KnowNet can test locally without paid access
   what remains unverified until the operator obtains paid/API access
 
+If the free/current route can perform full MCP/tool calls, keep that route as
+the single first-class path and do not add a second provider runner merely for
+symmetry. If the free route is only GET preview, pasted packs, or GitHub
+preview, keep two paths: realistic free fallback plus best paid/API/agent path.
+
 Implementation target:
   Build the strongest plausible integration path for each provider up to
   implemented_mocked without requiring paid accounts.

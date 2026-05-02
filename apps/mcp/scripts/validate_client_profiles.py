@@ -13,6 +13,10 @@ REQUIRED_PROFILE_FIELDS = {
     "implemented_surface",
     "test_status",
     "requires_paid_or_external_setup",
+    "access_strategy",
+    "path_policy",
+    "keep_separate_free_paid_paths",
+    "primary_path",
     "connection_modes",
     "do_not_add",
 }

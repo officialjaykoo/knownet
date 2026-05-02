@@ -11,6 +11,10 @@
   "implemented_surface": "apps/mcp/configs/manus_custom_mcp.example.json",
   "test_status": "custom_mcp_config_ready_unverified",
   "requires_paid_or_external_setup": true,
+  "access_strategy": "single_strong_path_when_connector_available",
+  "path_policy": "URL connector/Custom MCP is the primary path because it successfully calls KnowNet tools even in the current test path.",
+  "keep_separate_free_paid_paths": false,
+  "primary_path": "custom_mcp_url_connector",
   "connection_modes": [
     {
       "mode": "protected_https_custom_mcp",

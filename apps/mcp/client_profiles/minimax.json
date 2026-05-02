@@ -10,6 +10,10 @@
   "implemented_surface": "apps/mcp/configs/minimax_agent.example.json",
   "test_status": "config_template_ready_unverified",
   "requires_paid_or_external_setup": true,
+  "access_strategy": "split_free_pack_paid_runner",
+  "path_policy": "Free web uses generated review pack or GET preview; API runner remains the stronger path when balance is available.",
+  "keep_separate_free_paid_paths": true,
+  "primary_path": "api_runner_when_funded",
   "connection_modes": [
     {
       "mode": "mini_agent_mcp",

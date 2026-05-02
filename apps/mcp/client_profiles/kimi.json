@@ -9,6 +9,10 @@
   "implemented_surface": "POST /api/model-runs/kimi/reviews and apps/mcp/configs/kimi_mcp.example.json",
   "test_status": "api_runner_mock_ready_mcp_config_template_ready_unverified",
   "requires_paid_or_external_setup": true,
+  "access_strategy": "split_free_pack_paid_runner",
+  "path_policy": "Free web uses generated review pack; paid/API access is required for Kimi API key and live runner.",
+  "keep_separate_free_paid_paths": true,
+  "primary_path": "api_runner_when_paid_key_available",
   "connection_modes": [
     {
       "mode": "provider_runner",

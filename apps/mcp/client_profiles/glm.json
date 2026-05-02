@@ -11,6 +11,10 @@
   "implemented_surface": "apps/mcp/configs/glm_coding_mcp.example.json",
   "test_status": "config_template_ready_unverified",
   "requires_paid_or_external_setup": true,
+  "access_strategy": "split_free_preview_paid_coding_or_runner",
+  "path_policy": "Free web uses GET preview; GLM Coding Plan/MCP-capable coding tools or API runner are the stronger paid paths.",
+  "keep_separate_free_paid_paths": true,
+  "primary_path": "glm_coding_mcp_or_api_runner_when_funded",
   "connection_modes": [
     {
       "mode": "mcp_capable_coding_tool",

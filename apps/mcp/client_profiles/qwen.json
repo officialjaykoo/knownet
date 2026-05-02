@@ -10,6 +10,10 @@
   "implemented_surface": "apps/mcp/configs/qwen_agent_mcp.example.json",
   "test_status": "qwen_agent_mcp_config_ready_unverified",
   "requires_paid_or_external_setup": true,
+  "access_strategy": "split_free_preview_agent_path",
+  "path_policy": "Free web uses GET preview or pack; Alibaba Cloud/DashScope or Qwen-Agent/MCP remains the stronger keyed path.",
+  "keep_separate_free_paid_paths": true,
+  "primary_path": "qwen_agent_mcp_or_future_api_runner",
   "connection_modes": [
     {
       "mode": "qwen_agent_mcp",

@@ -11,6 +11,10 @@
   "implemented_surface": "apps/mcp/configs/gemini_cli_settings.example.json",
   "test_status": "config_template_ready",
   "requires_paid_or_external_setup": true,
+  "access_strategy": "server_side_runner_required",
+  "path_policy": "Gemini web cannot directly call KnowNet; KnowNet calls Gemini API through the controlled runner.",
+  "keep_separate_free_paid_paths": true,
+  "primary_path": "server_side_api_runner",
   "connection_modes": [
     {
       "mode": "local_stdio",

@@ -11,6 +11,10 @@
   "implemented_surface": "apps/mcp/knownet_mcp/server.py",
   "test_status": "stdio_smoke_tested",
   "requires_paid_or_external_setup": false,
+  "access_strategy": "single_strong_path_when_connector_available",
+  "path_policy": "MCP connector/local stdio is the primary path when available; do not maintain a separate provider runner.",
+  "keep_separate_free_paid_paths": false,
+  "primary_path": "mcp_connector_or_local_stdio",
   "connection_modes": [
     {
       "mode": "local_stdio",
