@@ -74,9 +74,10 @@ Test external connectivity through Cloudflare Tunnel:
 .\scripts\cloudflare_quick_tunnel.ps1
 ```
 
-For actual external use, enable `PUBLIC_MODE=true`, configure a long
-`ADMIN_TOKEN`, and protect the tunnel with Cloudflare Access. See
-[Cloudflare Tunnel](./docs/CLOUDFLARE_TUNNEL.md).
+The tunnel exposes the API on `127.0.0.1:8000` for external AI agents. Keep the
+web UI local on `127.0.0.1:3000`. For actual external use, enable
+`PUBLIC_MODE=true`, configure a long `ADMIN_TOKEN`, and protect the API hostname
+with Cloudflare Access. See [Cloudflare Tunnel](./docs/CLOUDFLARE_TUNNEL.md).
 
 ## Docker
 

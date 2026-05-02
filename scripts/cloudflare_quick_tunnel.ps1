@@ -31,14 +31,14 @@ if (-not $Cloudflared) {
 
 if (-not $SkipHealthCheck) {
   & (Join-Path $Root "scripts/ops_check.ps1")
-  Invoke-WebRequest "http://127.0.0.1:3000" -UseBasicParsing -TimeoutSec 5 | Out-Null
+  Invoke-WebRequest "http://127.0.0.1:8000/api/agent/ping" -UseBasicParsing -TimeoutSec 5 | Out-Null
 }
 
 Write-Host ""
-Write-Host "Starting a Cloudflare quick tunnel to the KnowNet web app." -ForegroundColor Cyan
-Write-Host "This exposes http://127.0.0.1:3000 only. The API should stay bound to 127.0.0.1:8000." -ForegroundColor Cyan
-Write-Host "For real external use, enable PUBLIC_MODE, a long ADMIN_TOKEN, and a Cloudflare Access policy." -ForegroundColor Yellow
+Write-Host "Starting a Cloudflare quick tunnel to the KnowNet API only." -ForegroundColor Cyan
+Write-Host "This exposes http://127.0.0.1:8000. Keep the web UI on http://127.0.0.1:3000 for local operator use." -ForegroundColor Cyan
+Write-Host "For real external use, keep PUBLIC_MODE enabled, use a long ADMIN_TOKEN, and add a Cloudflare Access policy." -ForegroundColor Yellow
 Write-Host "Stop the tunnel with Ctrl+C." -ForegroundColor Yellow
 Write-Host ""
 
-& $Cloudflared tunnel --url http://127.0.0.1:3000
+& $Cloudflared tunnel --url http://127.0.0.1:8000
