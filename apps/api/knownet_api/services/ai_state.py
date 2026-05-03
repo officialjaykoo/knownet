@@ -52,7 +52,7 @@ def normalize_slug(value: str) -> str:
 def _plain_text(markdown: str) -> str:
     text = re.sub(r"`([^`]+)`", r"\1", markdown)
     text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
-    text = re.sub(r"[*_>#-]+", " ", text)
+    text = re.sub(r"[*_>#]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
 
 

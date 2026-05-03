@@ -514,6 +514,9 @@ async def agent_ai_state(request: Request, limit: int = 50, offset: int = 0, inc
         meta["next_offset"] = offset + len(rows)
     meta["skipped_drafts"] = skipped_drafts
     meta["include_drafts"] = include_drafts
+    if rows and not states and skipped_drafts:
+        meta["no_published_in_range"] = True
+        meta["warning"] = "page_range_contains_only_drafts_use_next_offset"
     return {"ok": True, "data": {"ai_state_pages": states}, "meta": meta}
 
 

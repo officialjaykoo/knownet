@@ -4,6 +4,7 @@ import sqlite3
 
 from knownet_api.config import get_settings
 from knownet_api.main import app
+from knownet_api.services.ai_state import build_ai_state_for_page
 
 
 def _isolate_settings(monkeypatch, tmp_path):
@@ -300,6 +301,81 @@ def test_agent_ai_state_returns_structured_json_rows(tmp_path, monkeypatch):
         assert payload["meta"]["truncated"] is True
         assert payload["meta"]["has_more"] is True
         assert payload["meta"]["next_offset"] == 1
+    get_settings.cache_clear()
+
+
+def test_ai_state_builder_preserves_api_path_hyphens(tmp_path):
+    page = tmp_path / "external-ai-first-30-minutes.md"
+    page.write_text(
+        "---\ntitle: External AI First 30 Minutes\nslug: external-ai-first-30-minutes\n---\n\n"
+        "# External AI First 30 Minutes\n\n"
+        "Call `GET /api/agent/state-summary` and `GET /api/agent/ai-state`.\n",
+        encoding="utf-8",
+    )
+    state = build_ai_state_for_page(page)["state_json"]
+    assert "state-summary" in state["summary"]
+    assert "ai-state" in state["summary"]
+    assert "state summary" not in state["summary"]
+    assert "ai state" not in state["summary"]
+
+
+def test_agent_ai_state_advances_offset_when_range_contains_only_drafts(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        settings = app.state.settings
+        with sqlite3.connect(settings.sqlite_path) as connection:
+            connection.execute(
+                "INSERT INTO ai_state_pages (id, vault_id, page_id, slug, title, source_path, content_hash, state_json, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "ai_state_draft_only",
+                    "local-default",
+                    "page_draft_only",
+                    "draft-only",
+                    "Draft Only",
+                    "data/pages/draft-only.md",
+                    "hash-draft",
+                    json.dumps(
+                        {
+                            "schema_version": 1,
+                            "summary": "draft",
+                            "sections": [
+                                {"heading": "Question"},
+                                {"heading": "Claims"},
+                                {"heading": "Evidence"},
+                                {"heading": "Next Actions"},
+                            ],
+                        }
+                    ),
+                    "2026-05-02T00:00:02Z",
+                ),
+            )
+            connection.execute(
+                "INSERT INTO ai_state_pages (id, vault_id, page_id, slug, title, source_path, content_hash, state_json, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "ai_state_published_after_draft",
+                    "local-default",
+                    "page_published_after_draft",
+                    "published-after-draft",
+                    "Published After Draft",
+                    "data/pages/published-after-draft.md",
+                    "hash-published",
+                    json.dumps({"schema_version": 1, "summary": "published", "sections": [{"heading": "Current State"}]}),
+                    "2026-05-02T00:00:01Z",
+                ),
+            )
+        token = _create_token(client, ["pages:read"])
+        response = client.get("/api/agent/ai-state?limit=1", headers={"authorization": f"Bearer {token['raw_token']}"})
+        assert response.status_code == 200, response.text
+        payload = response.json()
+        assert payload["data"]["ai_state_pages"] == []
+        assert payload["meta"]["returned_count"] == 0
+        assert payload["meta"]["skipped_drafts"] == 1
+        assert payload["meta"]["has_more"] is True
+        assert payload["meta"]["next_offset"] == 1
+        assert payload["meta"]["no_published_in_range"] is True
+        assert payload["meta"]["warning"] == "page_range_contains_only_drafts_use_next_offset"
     get_settings.cache_clear()
 
 
