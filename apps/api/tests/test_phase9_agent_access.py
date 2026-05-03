@@ -143,6 +143,7 @@ def test_agent_me_warns_when_token_has_no_expiry(tmp_path, monkeypatch):
         assert data["token_management"]["warning"] == "no_expiry"
         assert data["token_management"]["operator_alert_available"] is False
         assert data["token_management"]["escalation_endpoint"] is None
+        assert data["token_management"]["recommended_agent_action"] == "report_no_expiry_token_to_operator"
         assert "Agent Dashboard" in data["token_management"]["operator_action"]
         assert "raw token" in data["token_management"]["agent_rule"]
 
@@ -295,9 +296,15 @@ def test_agent_ai_state_returns_structured_json_rows(tmp_path, monkeypatch):
         assert payload["data"]["ai_state_pages"][0]["slug"] == "structured-state-2"
         assert "source_path" not in payload["data"]["ai_state_pages"][0]
         assert payload["data"]["ai_state_pages"][0]["source_ref"] == "pages/structured-state-2.md"
+        assert payload["data"]["ai_state_pages"][0]["page_kind"] == "technical_doc"
+        assert "source Markdown" in payload["data"]["ai_state_pages"][0]["content_hash_note"]
+        assert len(payload["data"]["ai_state_pages"][0]["state_hash"]) == 64
         assert payload["data"]["ai_state_pages"][0]["state"]["summary"] == "structured json 2"
         assert "path" not in payload["data"]["ai_state_pages"][0]["state"].get("source", {})
         assert payload["meta"]["total_count"] == 2
+        assert payload["meta"]["total_unfiltered_count"] == 2
+        assert payload["meta"]["total_published_count"] == 2
+        assert payload["meta"]["scanned_count"] == 1
         assert payload["meta"]["truncated"] is True
         assert payload["meta"]["has_more"] is True
         assert payload["meta"]["next_offset"] == 1
@@ -365,17 +372,32 @@ def test_agent_ai_state_advances_offset_when_range_contains_only_drafts(tmp_path
                     "2026-05-02T00:00:01Z",
                 ),
             )
+            connection.execute(
+                "INSERT INTO system_pages (page_id, kind, tier, locked, owner, description, registered_at_phase, created_at, updated_at) "
+                "VALUES (?, 'managed', 2, 0, 'admin', 'managed context', 'phase_14', '2026-05-02T00:00:00Z', '2026-05-02T00:00:00Z')",
+                ("page_published_after_draft",),
+            )
         token = _create_token(client, ["pages:read"])
         response = client.get("/api/agent/ai-state?limit=1", headers={"authorization": f"Bearer {token['raw_token']}"})
         assert response.status_code == 200, response.text
         payload = response.json()
         assert payload["data"]["ai_state_pages"] == []
         assert payload["meta"]["returned_count"] == 0
+        assert payload["meta"]["scanned_count"] == 1
+        assert payload["meta"]["total_published_count"] == 1
+        assert payload["meta"]["draft_filtered_count"] == 1
         assert payload["meta"]["skipped_drafts"] == 1
         assert payload["meta"]["has_more"] is True
         assert payload["meta"]["next_offset"] == 1
         assert payload["meta"]["no_published_in_range"] is True
         assert payload["meta"]["warning"] == "page_range_contains_only_drafts_use_next_offset"
+
+        second = client.get("/api/agent/ai-state?limit=1&offset=1", headers={"authorization": f"Bearer {token['raw_token']}"})
+        assert second.status_code == 200, second.text
+        second_payload = second.json()
+        assert second_payload["data"]["ai_state_pages"][0]["page_kind"] == "managed_context"
+        assert second_payload["data"]["ai_state_pages"][0]["system_kind"] == "managed"
+        assert second_payload["meta"]["has_more"] is False
     get_settings.cache_clear()
 
 

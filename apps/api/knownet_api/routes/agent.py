@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import datetime, timezone
 
@@ -5,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from ..db.sqlite import fetch_all, fetch_one
 from ..security import AgentAuth, record_agent_access, require_agent
-from ..services.system_pages import ONBOARDING_START_PAGES, system_fields
+from ..services.system_pages import ONBOARDING_START_PAGES, system_fields, system_rows_for_page_ids
 
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -147,14 +148,17 @@ def _token_management(agent: AgentAuth) -> dict | None:
     if not warning:
         return None
     operator_action = "Ask the operator to rotate or create a new agent token from the Agent Dashboard."
+    recommended_agent_action = "continue_current_review_and_report_expiry_to_operator"
     if warning == "no_expiry":
         operator_action = "Ask the operator to rotate this token with an explicit expiry from the Agent Dashboard."
+        recommended_agent_action = "report_no_expiry_token_to_operator"
     return {
         "warning": warning,
         "expires_at": agent.expires_at,
         "expires_in_seconds": agent.expires_in_seconds,
         "operator_alert_available": False,
         "escalation_endpoint": None,
+        "recommended_agent_action": recommended_agent_action,
         "operator_action": operator_action,
         "dashboard_hint": "Open User Panel -> Agent Dashboard.",
         "agent_rule": "Do not ask for raw token values. Ask the operator to rotate or create a new token.",
@@ -176,6 +180,16 @@ def _sanitize_ai_state(state: dict) -> tuple[dict, str]:
     sanitized["state_status"] = state_status
     sanitized["source_ref"] = f"pages/{sanitized.get('slug', 'unknown')}.md"
     return sanitized, state_status
+
+
+def _page_kind(fields: dict) -> str:
+    system_kind = fields.get("system_kind")
+    system_tier = fields.get("system_tier")
+    if system_kind == "onboarding" and system_tier == 1:
+        return "system_onboarding"
+    if system_kind == "managed" and system_tier == 2:
+        return "managed_context"
+    return "technical_doc"
 
 
 async def _recommended_start_pages(request: Request, vault_id: str) -> list[dict]:
@@ -476,13 +490,24 @@ async def agent_ai_state(request: Request, limit: int = 50, offset: int = 0, inc
     _require_scope(agent, "pages:read")
     limit = min(max(limit, 1), agent.max_pages_per_request)
     offset = max(offset, 0)
-    total = await fetch_one(request.app.state.settings.sqlite_path, "SELECT COUNT(*) AS count FROM ai_state_pages WHERE vault_id = ?", (agent.vault_id,))
+    all_rows = await fetch_all(request.app.state.settings.sqlite_path, "SELECT state_json FROM ai_state_pages WHERE vault_id = ?", (agent.vault_id,))
+    published_total = 0
+    for item in all_rows:
+        try:
+            state = json.loads(item["state_json"] or "{}")
+        except json.JSONDecodeError:
+            state = {}
+        _, state_status = _sanitize_ai_state(state)
+        if state_status != "draft":
+            published_total += 1
+    count = len(all_rows)
     rows = await fetch_all(
         request.app.state.settings.sqlite_path,
         "SELECT page_id, slug, title, source_path, content_hash, state_json, updated_at "
         "FROM ai_state_pages WHERE vault_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
         (agent.vault_id, limit, offset),
     )
+    system_by_page_id = await system_rows_for_page_ids(request.app.state.settings.sqlite_path, [row["page_id"] for row in rows])
     states = []
     skipped_drafts = 0
     for row in rows:
@@ -494,6 +519,7 @@ async def agent_ai_state(request: Request, limit: int = 50, offset: int = 0, inc
         if state_status == "draft" and not include_drafts:
             skipped_drafts += 1
             continue
+        fields = system_by_page_id.get(row["page_id"], {"system_kind": None, "system_tier": None, "system_locked": False})
         states.append(
             {
                 "page_id": row["page_id"],
@@ -501,17 +527,28 @@ async def agent_ai_state(request: Request, limit: int = 50, offset: int = 0, inc
                 "title": row["title"],
                 "source_ref": f"pages/{row['slug']}.md",
                 "content_hash": row["content_hash"],
+                "content_hash_note": "content_hash hashes the source Markdown. state_hash hashes the generated ai_state payload.",
+                "state_hash": hashlib.sha256(json.dumps(state, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest(),
                 "state_status": state_status,
+                "page_kind": _page_kind(fields),
+                **fields,
                 "state": state,
                 "updated_at": row["updated_at"],
             }
         )
-    count = total["count"] if total else 0
     truncated = count > offset + len(rows)
     await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.ai_state", status="ok", meta={"returned_count": len(states), "skipped_drafts": skipped_drafts, "truncated": truncated})
     meta = _meta(agent, total=count, returned=len(states), truncated=truncated, offset=offset)
+    meta["has_more"] = truncated
+    meta["scanned_count"] = len(rows)
+    meta["published_returned_count"] = len(states)
+    meta["total_unfiltered_count"] = count
+    meta["total_published_count"] = published_total
+    meta["draft_filtered_count"] = max(0, count - published_total)
     if truncated:
         meta["next_offset"] = offset + len(rows)
+    else:
+        meta.pop("next_offset", None)
     meta["skipped_drafts"] = skipped_drafts
     meta["include_drafts"] = include_drafts
     if rows and not states and skipped_drafts:
