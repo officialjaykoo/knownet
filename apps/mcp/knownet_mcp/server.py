@@ -499,11 +499,14 @@ class KnowNetMcpServer:
         meta = result.get("meta")
         if not isinstance(meta, dict):
             return result
+        if meta.get("next_offset") is not None:
+            return result
         offset = args.get("offset", 0)
         returned = int(meta.get("returned_count") or 0)
         total = int(meta.get("total_count") or returned)
         if meta.get("truncated") or total > offset + returned:
-            meta["next_offset"] = offset + returned
+            step = returned or int(args.get("limit") or 0)
+            meta["next_offset"] = offset + step
         return result
 
     def _map_error(self, status: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -649,7 +652,9 @@ class KnowNetMcpServer:
         text = json.dumps(result.get("data", {}), ensure_ascii=False)
         meta["chars_returned"] = len(text)
         meta.setdefault("truncated", False)
-        if meta.get("content_truncated"):
+        if meta.get("warning"):
+            pass
+        elif meta.get("content_truncated"):
             meta["warning"] = "page_truncated_use_narrower_reads"
         elif meta.get("truncated"):
             meta["warning"] = "result_paginated_use_next_offset"

@@ -189,6 +189,16 @@ def test_pagination_metadata_adds_next_offset():
     server = KnowNetMcpServer(token="kn_agent_test")
     result = server._with_next_offset({"ok": True, "meta": {"truncated": True, "total_count": 12, "returned_count": 5}}, {"offset": 5})
     assert result["meta"]["next_offset"] == 10
+    preserved = server._with_next_offset(
+        {"ok": True, "meta": {"truncated": True, "total_count": 64, "returned_count": 0, "next_offset": 43}},
+        {"offset": 23, "limit": 20},
+    )
+    assert preserved["meta"]["next_offset"] == 43
+    advanced = server._with_next_offset(
+        {"ok": True, "meta": {"truncated": True, "total_count": 64, "returned_count": 0}},
+        {"offset": 23, "limit": 20},
+    )
+    assert advanced["meta"]["next_offset"] == 43
 
 
 def test_structured_logs_go_to_stderr_stream_and_redact_tokens():
@@ -216,6 +226,10 @@ def test_mcp_pagination_warning_is_not_page_truncation():
     server._annotate_result(response, request_id="req_page")
     assert response["meta"]["warning"] == "result_paginated_use_next_offset"
     assert response["warning"] == "result_paginated_use_next_offset"
+    specific = {"ok": True, "data": {"items": []}, "meta": {"truncated": True, "warning": "page_range_contains_only_drafts_use_next_offset"}}
+    server._annotate_result(specific, request_id="req_specific")
+    assert specific["meta"]["warning"] == "page_range_contains_only_drafts_use_next_offset"
+    assert specific["warning"] == "page_range_contains_only_drafts_use_next_offset"
 
 
 def test_scope_denied_includes_current_scope_hint():
