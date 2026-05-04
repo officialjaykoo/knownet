@@ -1,7 +1,7 @@
 import json
 import re
 
-from knownet_api.services.model_runner import (
+from knownet_api.services.model_providers import (
     DeepSeekApiAdapter,
     GlmApiAdapter,
     KimiApiAdapter,
@@ -63,8 +63,8 @@ def test_gemini_adapter_uses_documented_generate_content_payload(monkeypatch):
             captured["json"] = json
             return FakeResponse()
 
-    monkeypatch.setattr("knownet_api.services.model_runner.httpx.AsyncClient", FakeAsyncClient)
-    from knownet_api.services.model_runner import GeminiApiAdapter
+    monkeypatch.setattr("knownet_api.services.model_providers.httpx.AsyncClient", FakeAsyncClient)
+    from knownet_api.services.model_providers import GeminiApiAdapter
 
     adapter = GeminiApiAdapter(
         api_key="test-gemini-key",
@@ -122,7 +122,7 @@ def test_deepseek_adapter_uses_documented_openai_compatible_payload(monkeypatch)
             captured["json"] = json
             return FakeResponse()
 
-    monkeypatch.setattr("knownet_api.services.model_runner.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("knownet_api.services.model_providers.httpx.AsyncClient", FakeAsyncClient)
     adapter = DeepSeekApiAdapter(
         api_key="test-deepseek-key",
         base_url="https://api.deepseek.com",
@@ -176,7 +176,7 @@ def test_minimax_adapter_uses_documented_openai_compatible_payload(monkeypatch):
             captured.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
             return FakeResponse()
 
-    monkeypatch.setattr("knownet_api.services.model_runner.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("knownet_api.services.model_providers.httpx.AsyncClient", FakeAsyncClient)
     adapter = MiniMaxApiAdapter(
         api_key="test-minimax-key",
         base_url="https://api.minimaxi.com/v1",
@@ -232,7 +232,7 @@ def test_qwen_adapter_uses_dashscope_openai_compatible_payload(monkeypatch):
             captured.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
             return FakeResponse()
 
-    monkeypatch.setattr("knownet_api.services.model_runner.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("knownet_api.services.model_providers.httpx.AsyncClient", FakeAsyncClient)
     adapter = QwenApiAdapter(
         api_key="test-qwen-key",
         base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -289,7 +289,7 @@ def test_kimi_adapter_uses_documented_openai_compatible_payload(monkeypatch):
             captured.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
             return FakeResponse()
 
-    monkeypatch.setattr("knownet_api.services.model_runner.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("knownet_api.services.model_providers.httpx.AsyncClient", FakeAsyncClient)
     adapter = KimiApiAdapter(
         api_key="test-kimi-key",
         base_url="https://api.moonshot.ai/v1",
@@ -347,7 +347,7 @@ def test_glm_adapter_uses_zai_openai_compatible_payload(monkeypatch):
             captured.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
             return FakeResponse()
 
-    monkeypatch.setattr("knownet_api.services.model_runner.httpx.AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr("knownet_api.services.model_providers.httpx.AsyncClient", FakeAsyncClient)
     adapter = GlmApiAdapter(
         api_key="test-glm-key",
         base_url="https://api.z.ai/api/paas/v4",

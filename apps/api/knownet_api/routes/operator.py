@@ -8,7 +8,8 @@ from fastapi import APIRouter, Depends, Request
 
 from ..db.sqlite import fetch_all, fetch_one
 from ..security import Actor, require_admin_access, utc_now
-from ..services.model_runner import sanitize_error_message, sanitize_for_model
+from ..services.model_output import sanitize_error_message
+from ..services.model_runner import sanitize_for_model
 from ..services.provider_registry import provider_capabilities, provider_capability_map
 
 

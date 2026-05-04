@@ -31,7 +31,7 @@ from .services.embedding_service import EmbeddingService
 from .services.ai_state import ensure_ai_state_schema
 from .services.citation_titles import backfill_citation_display_titles
 from .services.job_processor import JobProcessor
-from .services.model_runner import ensure_model_runner_schema
+from .services.model_runner_store import ensure_model_runner_schema
 from .services.rust_core import RustCoreClient
 from .services.source_selector import SourceSelector
 from .services.system_pages import ensure_system_pages_schema, register_managed_seed_pages, register_onboarding_pages

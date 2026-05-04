@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from knownet_api.config import get_settings
 from knownet_api.main import app
-from knownet_api.services.model_runner import DeepSeekApiAdapter, GlmApiAdapter, KimiApiAdapter, MiniMaxApiAdapter, QwenApiAdapter, build_openai_compatible_review_messages, normalize_model_output
+from knownet_api.services.model_output import normalize_model_output
 
 
 def _isolate_settings(monkeypatch, tmp_path):

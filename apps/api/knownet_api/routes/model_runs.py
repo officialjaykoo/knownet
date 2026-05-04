@@ -11,7 +11,8 @@ from ..audit import write_audit_event
 from ..db.sqlite import execute, fetch_all, fetch_one
 from ..routes.collaboration import _rebuild_collaboration_graph, parse_review_markdown
 from ..security import Actor, require_admin_access, utc_now
-from ..services.model_runner import (
+from ..services.model_output import model_output_to_markdown, normalize_model_output, sanitize_error_message
+from ..services.model_providers import (
     DeepSeekApiAdapter,
     GeminiApiAdapter,
     GeminiMockAdapter,
@@ -20,13 +21,9 @@ from ..services.model_runner import (
     MiniMaxApiAdapter,
     MockModelReviewAdapter,
     QwenApiAdapter,
-    assert_no_active_run,
-    build_safe_context,
-    estimate_tokens,
-    model_output_to_markdown,
-    normalize_model_output,
-    sanitize_error_message,
 )
+from ..services.model_runner import build_safe_context, estimate_tokens
+from ..services.model_runner_store import assert_no_active_run
 from ..services.packet_contract import packet_trace
 from ..services.model_observations import model_run_observation, provider_observation_summary
 from ..services.rust_core import RustCoreError
