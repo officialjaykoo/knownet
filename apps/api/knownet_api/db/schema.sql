@@ -542,6 +542,8 @@ CREATE TABLE IF NOT EXISTS model_review_runs (
   output_tokens INTEGER,
   estimated_cost_usd REAL,
   review_id TEXT,
+  trace_id TEXT,
+  packet_trace_id TEXT,
   error_code TEXT,
   error_message TEXT,
   created_by TEXT,
@@ -554,6 +556,9 @@ CREATE INDEX IF NOT EXISTS idx_model_review_runs_provider_status
 
 CREATE INDEX IF NOT EXISTS idx_model_review_runs_vault_updated
   ON model_review_runs(vault_id, updated_at);
+
+CREATE INDEX IF NOT EXISTS idx_model_review_runs_trace
+  ON model_review_runs(trace_id, packet_trace_id);
 
 CREATE TABLE IF NOT EXISTS maintenance_locks (
   id TEXT PRIMARY KEY,

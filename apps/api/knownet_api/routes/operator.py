@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Request
 from ..db.sqlite import fetch_all, fetch_one
 from ..security import Actor, require_admin_access, utc_now
 from ..services.model_runner import sanitize_error_message, sanitize_for_model
+from ..services.provider_registry import provider_capabilities, provider_capability_map
 
 
 router = APIRouter(prefix="/api/operator", tags=["operator"])
@@ -245,7 +246,7 @@ async def build_ai_state_quality(settings, *, vault_id: str = "local-default") -
 async def build_provider_matrix(settings) -> dict[str, Any]:
     run_rows = await fetch_all(
         settings.sqlite_path,
-        "SELECT id, provider, model, status, request_json, response_json, error_code, error_message, updated_at FROM model_review_runs ORDER BY updated_at DESC LIMIT 500",
+        "SELECT id, provider, model, status, request_json, response_json, trace_id, packet_trace_id, error_code, error_message, updated_at FROM model_review_runs ORDER BY updated_at DESC LIMIT 500",
         (),
     ) if Path(settings.sqlite_path).exists() else []
     run_by_provider: dict[str, dict[str, Any]] = {}
@@ -295,7 +296,10 @@ async def build_provider_matrix(settings) -> dict[str, Any]:
                     "updated_at": row["updated_at"],
                 }
 
+    capabilities = provider_capability_map(settings)
+
     def entry(provider_id: str, label: str, route_type: str, implemented_surface: str, enabled: bool, has_credentials: bool, model: str | None, local_test_command: str, live_test_command: str | None, safe_scopes: list[str], known_limitations: list[str]) -> dict[str, Any]:
+        capability = capabilities.get(provider_id, {})
         run = run_by_provider.get(provider_id)
         mock_successful = int(run["mock_successful"]) if run else 0
         live_successful = int(run["live_successful"]) if run else 0
@@ -328,6 +332,10 @@ async def build_provider_matrix(settings) -> dict[str, Any]:
             "live_test_command": live_test_command,
             "safe_scopes": safe_scopes,
             "known_limitations": known_limitations,
+            "capability": capability or None,
+            "compatibility_class": capability.get("compatibility_class"),
+            "openai_compatible": capability.get("openai_compatible"),
+            "anthropic_compatible": capability.get("anthropic_compatible"),
             "run_counts": {"mock_successful": mock_successful, "live_successful": live_successful, "failed": failed, "consecutive_failed": consecutive_failed},
             "latest_failure": run["latest_failure"] if run else None,
             "stability_alert": consecutive_failed >= 3,
@@ -367,6 +375,11 @@ async def ai_state_quality(request: Request, vault_id: str = "local-default", ac
 @router.get("/provider-matrix")
 async def provider_matrix(request: Request, actor: Actor = Depends(require_admin_access)):
     return {"ok": True, "data": await build_provider_matrix(request.app.state.settings)}
+
+
+@router.get("/provider-capabilities")
+async def get_provider_capabilities(request: Request, actor: Actor = Depends(require_admin_access)):
+    return {"ok": True, "data": {"providers": provider_capabilities(request.app.state.settings), "checked_at": utc_now()}}
 
 
 @router.get("/release-readiness")

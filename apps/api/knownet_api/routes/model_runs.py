@@ -27,6 +27,8 @@ from ..services.model_runner import (
     normalize_model_output,
     sanitize_error_message,
 )
+from ..services.packet_contract import packet_trace
+from ..services.model_observations import model_run_observation, provider_observation_summary
 from ..services.rust_core import RustCoreError
 
 
@@ -137,13 +139,15 @@ async def _store_run(
     response_json: dict,
     input_tokens: int | None,
     output_tokens: int | None,
+    trace_id: str | None,
+    packet_trace_id: str | None,
     created_by: str,
 ) -> None:
     now = utc_now()
     await execute(
         settings.sqlite_path,
-        "INSERT INTO model_review_runs (id, provider, model, prompt_profile, vault_id, status, context_summary_json, request_json, response_json, input_tokens, output_tokens, created_by, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO model_review_runs (id, provider, model, prompt_profile, vault_id, status, context_summary_json, request_json, response_json, input_tokens, output_tokens, trace_id, packet_trace_id, created_by, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             run_id,
             provider,
@@ -156,6 +160,8 @@ async def _store_run(
             json.dumps(response_json, ensure_ascii=True, sort_keys=True),
             input_tokens,
             output_tokens,
+            trace_id,
+            packet_trace_id,
             created_by,
             now,
             now,
@@ -266,9 +272,27 @@ async def _create_provider_review_run(
     max_findings = getattr(payload, "max_findings", 20)
     slim_context = getattr(payload, "slim_context", True)
     context = await build_safe_context(settings, vault_id=payload.vault_id, max_pages=payload.max_pages, max_findings=max_findings, slim=slim_context)
+    packet_trace_payload = context.context.get("trace") if isinstance(context.context, dict) else {}
+    packet_trace_id = packet_trace_payload.get("trace_id") if isinstance(packet_trace_payload, dict) else None
+    packet_span_id = packet_trace_payload.get("span_id") if isinstance(packet_trace_payload, dict) else None
+    run_trace_payload = packet_trace(
+        trace_id=run_id,
+        name="knownet.model_review_run",
+        span_kind="CLIENT",
+        parent_id=packet_span_id,
+        attributes={
+            "knownet.model_run.id": run_id,
+            "knownet.model_run.provider": provider,
+            "knownet.model_run.model": model,
+            "knownet.packet.trace_id": packet_trace_id,
+        },
+    )
+    run_trace_id = run_trace_payload["trace_id"]
     request_json = {
         "provider": provider,
         "model": model,
+        "trace": run_trace_payload,
+        "packet_trace_id": packet_trace_id,
         "prompt_profile": payload.prompt_profile,
         "review_focus": payload.review_focus,
         "max_pages": payload.max_pages,
@@ -290,6 +314,8 @@ async def _create_provider_review_run(
         response_json={"stage": "running", "mock": payload.mock},
         input_tokens=context.estimated_tokens,
         output_tokens=None,
+        trace_id=run_trace_id,
+        packet_trace_id=packet_trace_id,
         created_by=actor.actor_id,
     )
     started = time.perf_counter()
@@ -301,6 +327,8 @@ async def _create_provider_review_run(
         metadata, findings, parser_errors = parse_review_markdown(markdown)
         response_json = {
             "mock": payload.mock,
+            "trace": run_trace_payload,
+            "packet_trace_id": packet_trace_id,
             "duration_ms": duration_ms,
             "normalized_output": normalized,
             "review_markdown": markdown,
@@ -320,7 +348,7 @@ async def _create_provider_review_run(
             settings,
             run_id,
             status="failed",
-            response_json={"stage": "failed", "mock": payload.mock, "duration_ms": duration_ms},
+            response_json={"stage": "failed", "mock": payload.mock, "trace": run_trace_payload, "packet_trace_id": packet_trace_id, "duration_ms": duration_ms},
             error_code=error_detail.get("code") or "model_run_failed",
             error_message=error_detail.get("message") or str(error.detail),
         )
@@ -574,6 +602,23 @@ async def list_model_runs(request: Request, provider: str | None = None, status:
     sql += " ORDER BY updated_at DESC LIMIT ?"
     rows = await fetch_all(settings.sqlite_path, sql, (*params, limit))
     return {"ok": True, "data": {"runs": [_run_row(row) for row in rows], "actor_role": actor.role}}
+
+
+@router.get("/observations")
+async def list_model_run_observations(request: Request, provider: str | None = None, limit: int = 50, actor: Actor = Depends(require_admin_access)):
+    settings = request.app.state.settings
+    limit = min(max(limit, 1), 200)
+    where = []
+    params: list = []
+    if provider:
+        where.append("provider = ?")
+        params.append(provider)
+    sql = "SELECT * FROM model_review_runs"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += " ORDER BY updated_at DESC LIMIT ?"
+    rows = await fetch_all(settings.sqlite_path, sql, (*params, limit))
+    return {"ok": True, "data": {"observations": [model_run_observation(row) for row in rows], "summary": provider_observation_summary(rows), "actor_role": actor.role}}
 
 
 @router.get("/{run_id}")

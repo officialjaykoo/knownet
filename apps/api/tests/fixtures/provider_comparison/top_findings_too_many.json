@@ -1,0 +1,58 @@
+{
+  "name": "top_findings_too_many",
+  "payload": {
+    "output_mode": "top_findings",
+    "findings": [
+      {
+        "title": "Finding 1",
+        "severity": "low",
+        "area": "Docs",
+        "evidence_quality": "context_limited",
+        "evidence": "fixture evidence",
+        "proposed_change": "fixture change"
+      },
+      {
+        "title": "Finding 2",
+        "severity": "low",
+        "area": "Docs",
+        "evidence_quality": "context_limited",
+        "evidence": "fixture evidence",
+        "proposed_change": "fixture change"
+      },
+      {
+        "title": "Finding 3",
+        "severity": "low",
+        "area": "Docs",
+        "evidence_quality": "context_limited",
+        "evidence": "fixture evidence",
+        "proposed_change": "fixture change"
+      },
+      {
+        "title": "Finding 4",
+        "severity": "low",
+        "area": "Docs",
+        "evidence_quality": "context_limited",
+        "evidence": "fixture evidence",
+        "proposed_change": "fixture change"
+      },
+      {
+        "title": "Finding 5",
+        "severity": "low",
+        "area": "Docs",
+        "evidence_quality": "context_limited",
+        "evidence": "fixture evidence",
+        "proposed_change": "fixture change"
+      },
+      {
+        "title": "Finding 6",
+        "severity": "low",
+        "area": "Docs",
+        "evidence_quality": "context_limited",
+        "evidence": "fixture evidence",
+        "proposed_change": "fixture change"
+      }
+    ]
+  },
+  "expected_finding_count": 5,
+  "expected_errors": ["too_many_findings:6>5"]
+}

@@ -1,4 +1,6 @@
 import sqlite3
+import re
+import json
 
 from fastapi.testclient import TestClient
 
@@ -256,6 +258,13 @@ def test_review_now_uses_live_gemini_when_configured(tmp_path, monkeypatch):
             assert request["request"]["slim_context"] is True
             assert request["context"]["contract_version"] == "p20.v1"
             assert request["context"]["packet_schema_version"] == "p20.v1"
+            assert request["context"]["protocol_version"] == "2026-05-05"
+            assert request["context"]["schema_ref"] == "knownet://schemas/packet/p20.v1"
+            assert request["context"]["trace"]["name"] == "knownet.provider_fast_lane_context"
+            assert request["context"]["trace"]["span_kind"] == "CLIENT"
+            assert re.fullmatch(r"[0-9a-f]{32}", request["context"]["trace"]["trace_id"])
+            assert request["context"]["trace"]["traceparent"] == f"00-{request['context']['trace']['trace_id']}-{request['context']['trace']['span_id']}-01"
+            assert request["context"]["trace"]["attributes"]["knownet.packet.kind"] == "provider_fast_lane"
             assert request["context"]["ai_context"]["role"] == "provider_review_reviewer"
             assert "packet_summary" in request["context"]
             assert "node_cards" in request["context"]
@@ -292,6 +301,10 @@ def test_review_now_uses_live_gemini_when_configured(tmp_path, monkeypatch):
         assert data["mock_fallback"] is False
         assert data["run"]["status"] == "dry_run_ready"
         assert data["run"]["request"]["mock"] is False
+        assert re.fullmatch(r"[0-9a-f]{32}", data["run"]["trace_id"])
+        assert data["run"]["packet_trace_id"] == data["run"]["request"]["packet_trace_id"]
+        assert data["run"]["response"]["trace"]["trace_id"] == data["run"]["trace_id"]
+        assert data["run"]["response"]["packet_trace_id"] == data["run"]["packet_trace_id"]
         assert data["dry_run"]["finding_count"] == 1
     get_settings.cache_clear()
 
@@ -1065,9 +1078,12 @@ def test_provider_run_records_duration_on_success_and_failure(tmp_path, monkeypa
         _seed_ai_state(settings.sqlite_path)
         failed = client.post("/api/model-runs/gemini/reviews", json={"mock": False})
         assert failed.status_code == 504
-        row = sqlite3.connect(settings.sqlite_path).execute("SELECT response_json FROM model_review_runs WHERE status = 'failed'").fetchone()
+        row = sqlite3.connect(settings.sqlite_path).execute("SELECT response_json, trace_id, packet_trace_id FROM model_review_runs WHERE status = 'failed'").fetchone()
         assert row is not None
         assert "duration_ms" in row[0]
+        failed_response = json.loads(row[0])
+        assert failed_response["trace"]["trace_id"] == row[1]
+        assert failed_response["packet_trace_id"] == row[2]
 
 
 def test_model_context_rejects_secret_like_ai_state(tmp_path, monkeypatch):

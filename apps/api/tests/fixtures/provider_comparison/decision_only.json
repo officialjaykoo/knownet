@@ -1,0 +1,10 @@
+{
+  "name": "decision_only",
+  "payload": {
+    "output_mode": "decision_only",
+    "decision": "allow",
+    "reason": "No findings requested."
+  },
+  "expected_finding_count": 0,
+  "expected_errors": []
+}

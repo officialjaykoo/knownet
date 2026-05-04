@@ -5,6 +5,7 @@ from typing import Any
 
 from ..db.sqlite import fetch_all
 from .packet_contract import PROFILE_CHAR_BUDGETS, PROFILE_HARD_LIMITS
+from .provenance import compact_provenance, validate_provenance_safe
 
 
 DEFAULT_PROJECT_SNAPSHOT_FOCUS = (
@@ -85,6 +86,13 @@ def detail_url(kind: str, item_id: str | None) -> str | None:
 
 def finding_summary(row: dict[str, Any]) -> dict[str, Any]:
     finding_id = row.get("id") or row.get("finding_id")
+    provenance = compact_provenance(
+        source_type="finding",
+        source_id=finding_id,
+        source_finding_id=finding_id,
+        evidence_quality=row.get("evidence_quality"),
+        updated_at=row.get("updated_at"),
+    )
     return {
         "id": finding_id,
         "title": row.get("title"),
@@ -95,12 +103,21 @@ def finding_summary(row: dict[str, Any]) -> dict[str, Any]:
         "source_agent": row.get("source_agent"),
         "action_route": row.get("action_route") or action_route(row),
         "detail_url": detail_url("finding", finding_id),
+        "provenance": provenance,
     }
 
 
 def task_summary(row: dict[str, Any]) -> dict[str, Any]:
+    task_id = row.get("id") or row.get("task_id")
+    provenance = compact_provenance(
+        source_type="finding_task",
+        source_id=task_id,
+        source_finding_id=row.get("finding_id"),
+        evidence_quality=row.get("evidence_quality"),
+        updated_at=row.get("updated_at"),
+    )
     return {
-        "id": row.get("id") or row.get("task_id"),
+        "id": task_id,
         "finding_id": row.get("finding_id"),
         "title": row.get("title"),
         "status": row.get("status") or row.get("task_status"),
@@ -108,22 +125,59 @@ def task_summary(row: dict[str, Any]) -> dict[str, Any]:
         "owner": row.get("owner") or row.get("task_owner"),
         "evidence_quality": row.get("evidence_quality"),
         "action_route": row.get("action_route") or action_route(row),
-        "detail_url": detail_url("finding_task", row.get("id") or row.get("task_id")),
+        "detail_url": detail_url("finding_task", task_id),
+        "provenance": provenance,
     }
 
 
 def model_run_summary(row: dict[str, Any]) -> dict[str, Any]:
+    run_id = row.get("id")
+    request_json = row.get("request") if isinstance(row.get("request"), dict) else {}
+    response_json = row.get("response") if isinstance(row.get("response"), dict) else {}
+    if not request_json and isinstance(row.get("request_json"), str):
+        request_json = _json_loads(row.get("request_json"), {})
+    if not response_json and isinstance(row.get("response_json"), str):
+        response_json = _json_loads(row.get("response_json"), {})
+    duration_ms = response_json.get("duration_ms") if isinstance(response_json, dict) else None
+    evidence_quality = "context_limited" if request_json.get("mock") else "direct_access"
+    provenance = compact_provenance(
+        source_type="model_run",
+        source_id=run_id,
+        source_packet_trace_id=row.get("packet_trace_id"),
+        source_model_run_id=run_id,
+        source_model_run_trace_id=row.get("trace_id"),
+        evidence_quality=evidence_quality,
+        updated_at=row.get("updated_at"),
+    )
     return {
-        "id": row.get("id"),
+        "id": run_id,
         "provider": row.get("provider"),
         "model": row.get("model"),
         "status": row.get("status"),
         "prompt_profile": row.get("prompt_profile"),
         "input_tokens": row.get("input_tokens"),
         "output_tokens": row.get("output_tokens"),
+        "trace_id": row.get("trace_id"),
+        "packet_trace_id": row.get("packet_trace_id"),
+        "duration_ms": duration_ms,
+        "error_code": row.get("error_code"),
+        "error_message": row.get("error_message"),
+        "evidence_quality": evidence_quality,
         "updated_at": row.get("updated_at"),
-        "detail_url": detail_url("model_run", row.get("id")),
+        "detail_url": detail_url("model_run", run_id),
+        "provenance": provenance,
     }
+
+
+def _json_loads(value: str | None, fallback: Any) -> Any:
+    if not value:
+        return fallback
+    try:
+        import json
+
+        return json.loads(value)
+    except Exception:
+        return fallback
 
 
 def packet_summary(
@@ -201,6 +255,14 @@ def next_action_hints(important: dict[str, Any], issues: list[dict[str, Any]], *
 
 
 def node_card(row: dict[str, Any], *, short_summary: str | None = None) -> dict[str, Any]:
+    source_id = row.get("id") or row.get("page_id")
+    provenance = compact_provenance(
+        source_type="node_card",
+        source_id=source_id,
+        evidence_quality=row.get("evidence_quality"),
+        updated_at=row.get("updated_at"),
+    )
+    errors = validate_provenance_safe(provenance)
     return {
         "id": row.get("id") or row.get("page_id"),
         "title": row.get("title"),
@@ -209,6 +271,8 @@ def node_card(row: dict[str, Any], *, short_summary: str | None = None) -> dict[
         "short_summary": (short_summary or row.get("short_summary") or "").strip()[:280],
         "link": f"/pages/{row.get('slug')}" if row.get("slug") else None,
         "detail_url": detail_url("page", row.get("slug")),
+        "provenance": provenance,
+        "provenance_warnings": errors,
     }
 
 
@@ -326,7 +390,7 @@ async def important_changes(sqlite_path: Path, *, vault_id: str, since: str | No
     run_params: tuple[Any, ...] = (vault_id, since, limit) if since else (vault_id, limit)
     failed_runs = await fetch_all(
         sqlite_path,
-        f"SELECT id, provider, model, status, error_code, error_message, updated_at FROM model_review_runs WHERE vault_id = ? AND status = 'failed' {run_filter} ORDER BY updated_at DESC LIMIT ?",
+        f"SELECT id, provider, model, status, error_code, error_message, trace_id, packet_trace_id, updated_at FROM model_review_runs WHERE vault_id = ? AND status = 'failed' {run_filter} ORDER BY updated_at DESC LIMIT ?",
         run_params,
     )
 

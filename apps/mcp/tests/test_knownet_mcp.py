@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import patch
 
 from knownet_mcp.http_bridge import capability_payload
-from knownet_mcp.server import ALLOWED_TOOLS, KnowNetMcpServer
+from knownet_mcp.server import ALLOWED_PROMPTS, ALLOWED_RESOURCES, ALLOWED_TOOLS, KnowNetMcpServer
 
 
 def test_tool_registry_is_fixed_and_excludes_maintenance():
@@ -166,8 +166,13 @@ def test_jsonrpc_invalid_tool_input_returns_tool_error():
 def test_resources_and_prompts_jsonrpc():
     server = KnowNetMcpServer(token="kn_agent_test")
     resources = server.handle_jsonrpc({"jsonrpc": "2.0", "id": 1, "method": "resources/list"})
-    assert "knownet://agent/onboarding" in {item["uri"] for item in resources["result"]["resources"]}
-    assert "knownet://agent/me" in {item["uri"] for item in resources["result"]["resources"]}
+    resource_uris = {item["uri"] for item in resources["result"]["resources"]}
+    assert ALLOWED_RESOURCES.issubset(resource_uris)
+    assert "knownet://agent/onboarding" in resource_uris
+    assert "knownet://agent/me" in resource_uris
+    assert "knownet://snapshot/overview" in resource_uris
+    assert "knownet://node/{slug_or_page_id}" in resource_uris
+    assert "knownet://finding/recent" in resource_uris
 
     with patch.object(server, "_request", return_value={"ok": True, "data": {"token_id": "agent_test"}, "meta": {}}):
         read = server.handle_jsonrpc({"jsonrpc": "2.0", "id": 2, "method": "resources/read", "params": {"uri": "knownet://agent/me"}})
@@ -175,7 +180,10 @@ def test_resources_and_prompts_jsonrpc():
     assert payload["ok"] is True
 
     prompts = server.handle_jsonrpc({"jsonrpc": "2.0", "id": 3, "method": "prompts/list"})
-    assert "knownet_prepare_external_review" in {item["name"] for item in prompts["result"]["prompts"]}
+    prompt_names = {item["name"] for item in prompts["result"]["prompts"]}
+    assert ALLOWED_PROMPTS == prompt_names
+    assert "knownet_prepare_external_review" in prompt_names
+    assert "knownet.compact_review" in prompt_names
     prompt = server.handle_jsonrpc({"jsonrpc": "2.0", "id": 4, "method": "prompts/get", "params": {"name": "knownet_review_page", "arguments": {"page_id": "page_1"}}})
     text = prompt["result"]["messages"][0]["content"]["text"]
     assert "### Finding" in text
@@ -183,6 +191,101 @@ def test_resources_and_prompts_jsonrpc():
     assert "knownet_review_dry_run" in text
     assert "/api/" + "maintenance" not in text
     assert "kn_agent_" not in text
+
+
+def test_standard_mcp_resources_read_snapshot_node_and_recent_findings():
+    server = KnowNetMcpServer(base_url="http://knownet", token="kn_agent_test")
+
+    def fake_request(method, path, **kwargs):
+        if path == "/api/agent/state-summary":
+            return {"ok": True, "data": {"health": {"status": "ok"}}, "meta": {"source": "summary"}}
+        if path == "/api/agent/pages":
+            return {
+                "ok": True,
+                "data": {"pages": [{"id": "page_start", "slug": "start-here", "title": "Start Here"}]},
+                "meta": {},
+            }
+        if path == "/api/agent/pages/page_start":
+            return {"ok": True, "data": {"page": {"id": "page_start", "title": "Start Here"}}}
+        if path == "/api/agent/findings":
+            assert kwargs["query"] == {"limit": 50, "offset": 0}
+            return {"ok": True, "data": {"findings": []}, "meta": {"returned_count": 0, "total_count": 0}}
+        raise AssertionError((method, path, kwargs))
+
+    with patch.object(server, "_request", side_effect=fake_request):
+        snapshot = server.read_resource("knownet://snapshot/overview")
+        node = server.read_resource("knownet://node/start-here")
+        findings = server.read_resource("knownet://finding/recent")
+
+    assert snapshot["data"]["type"] == "snapshot_resource"
+    assert snapshot["data"]["profile"] == "overview"
+    assert snapshot["data"]["state_summary"]["health"]["status"] == "ok"
+    assert node["data"]["page"]["id"] == "page_start"
+    assert findings["ok"] is True
+
+
+def test_standard_mcp_proposal_tools_are_operator_gated():
+    server = KnowNetMcpServer(base_url="http://knownet", token="kn_agent_test")
+
+    with patch.object(server, "_request", return_value={"ok": True, "data": {"findings": []}, "meta": {}}) as mocked:
+        finding = server.call_tool(
+            "knownet.propose_finding",
+            {
+                "title": "Provider retry is missing",
+                "severity": "medium",
+                "area": "Ops",
+                "evidence": "One provider run failed without retry metadata.",
+                "proposed_change": "Add bounded retry logging.",
+                "evidence_quality": "context_limited",
+            },
+        )
+
+    assert finding["ok"] is True
+    assert finding["proposal"]["operator_gated"] is True
+    mocked.assert_called_once()
+    method, path = mocked.call_args.args
+    assert method == "POST"
+    assert path == "/api/collaboration/reviews?dry_run=true"
+
+    with patch.object(server, "_request") as mocked:
+        task = server.call_tool("knownet.propose_task", {"finding_id": "finding_1", "title": "Add retry logs"})
+        evidence = server.call_tool(
+            "knownet.submit_implementation_evidence",
+            {"finding_id": "finding_1", "implemented": True, "commit": "abc123", "note": "Added retry logs."},
+        )
+
+    assert mocked.call_count == 0
+    assert task["data"]["operator_gated"] is True
+    assert task["data"]["type"] == "task_proposal"
+    assert evidence["data"]["operator_gated"] is True
+    assert evidence["data"]["type"] == "implementation_evidence_proposal"
+
+
+def test_standard_mcp_prompts_use_standard_resources_and_tools():
+    server = KnowNetMcpServer(token="kn_agent_test")
+    compact = server.get_prompt("knownet.compact_review", {"focus": "stability"})
+    text = compact["messages"][0]["content"]["text"]
+    assert "knownet://snapshot/overview" in text
+    assert "knownet://finding/recent" in text
+    assert "knownet.propose_finding" in text
+    assert "release_check" in text
+
+    implementation = server.get_prompt("knownet.implementation_candidate", {"finding_id": "finding_1"})
+    assert "knownet.propose_task" in implementation["messages"][0]["content"]["text"]
+    provider = server.get_prompt("knownet.provider_risk_check", {"provider": "glm"})
+    assert "knownet://snapshot/provider_review" in provider["messages"][0]["content"]["text"]
+
+
+def test_boolean_tool_input_validation_happens_before_http_call():
+    server = KnowNetMcpServer(base_url="http://knownet", token="kn_agent_test")
+    with patch.object(server, "_request") as mocked:
+        result = server.call_tool(
+            "knownet.submit_implementation_evidence",
+            {"finding_id": "finding_1", "implemented": "yes", "note": "done"},
+        )
+    assert mocked.call_count == 0
+    assert result["error"]["code"] == "invalid_tool_input"
+    assert "implemented must be a boolean" in result["error"]["message"]
 
 
 def test_pagination_metadata_adds_next_offset():

@@ -1,0 +1,547 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "knownet://schemas/packet/p20.v1",
+  "title": "KnowNet Packet Contract p20.v1",
+  "type": "object",
+  "required": [
+    "id",
+    "type",
+    "contract_version",
+    "packet_schema_version",
+    "protocol_version",
+    "schema_ref",
+    "generated_at",
+    "links",
+    "trace",
+    "contract",
+    "contract_shape",
+    "ai_context"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "type": {
+      "enum": ["project_snapshot_packet", "experiment_packet", "provider_fast_lane_context"]
+    },
+    "contract_version": {
+      "const": "p20.v1"
+    },
+    "packet_schema_version": {
+      "const": "p20.v1"
+    },
+    "protocol_version": {
+      "const": "2026-05-05"
+    },
+    "schema_ref": {
+      "const": "knownet://schemas/packet/p20.v1"
+    },
+    "generated_at": {
+      "type": "string"
+    },
+    "links": {
+      "$ref": "#/$defs/links"
+    },
+    "trace": {
+      "$ref": "#/$defs/trace"
+    },
+    "contract": {
+      "$ref": "#/$defs/contract"
+    },
+    "contract_shape": {
+      "type": "object"
+    },
+    "ai_context": {
+      "$ref": "#/$defs/ai_context"
+    },
+    "issues": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/issue"
+      }
+    },
+    "packet_summary": {
+      "type": "object"
+    },
+    "node_cards": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node_card"
+      }
+    },
+    "delta_standard": {
+      "$ref": "#/$defs/delta"
+    }
+  },
+  "$defs": {
+    "links": {
+      "type": "object",
+      "required": ["self"],
+      "properties": {
+        "self": {
+          "$ref": "#/$defs/link"
+        },
+        "content": {
+          "$ref": "#/$defs/link"
+        },
+        "storage": {
+          "$ref": "#/$defs/link"
+        },
+        "related": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/link"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "link": {
+      "type": "object",
+      "required": ["href"],
+      "properties": {
+        "href": {
+          "type": "string"
+        },
+        "rel": {
+          "type": "string"
+        },
+        "type": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "delta": {
+      "type": ["object", "null"],
+      "required": ["since", "summary", "added", "changed", "removed"],
+      "properties": {
+        "since": {
+          "type": ["string", "null"]
+        },
+        "summary": {
+          "type": "object"
+        },
+        "added": {
+          "type": "object"
+        },
+        "changed": {
+          "type": "object"
+        },
+        "removed": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "trace": {
+      "type": "object",
+      "required": ["trace_id", "span_id", "traceparent", "name", "span_kind", "attributes"],
+      "properties": {
+        "trace_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        },
+        "span_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "traceparent": {
+          "type": "string",
+          "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-01$"
+        },
+        "parent_span_id": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{16}$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "span_kind": {
+          "enum": ["INTERNAL", "CLIENT", "SERVER", "PRODUCER", "CONSUMER"]
+        },
+        "attributes": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ai_context": {
+      "type": "object",
+      "required": ["role", "target_agent", "task", "read_order"],
+      "properties": {
+        "role": {
+          "type": "string"
+        },
+        "target_agent": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        },
+        "output_mode": {
+          "type": "string"
+        },
+        "read_order": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "style": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "contract": {
+      "type": "object",
+      "required": [
+        "packet_metadata",
+        "capabilities",
+        "role_and_access_boundaries",
+        "stale_context_suppression",
+        "output_contract",
+        "import_contract"
+      ],
+      "properties": {
+        "packet_metadata": {
+          "type": "object",
+          "required": ["contract_version", "protocol_version", "schema_ref", "packet_kind", "target_agent", "profile"],
+          "properties": {
+            "contract_version": {
+              "const": "p20.v1"
+            },
+            "protocol_version": {
+              "const": "2026-05-05"
+            },
+            "schema_ref": {
+              "const": "knownet://schemas/packet/p20.v1"
+            },
+            "packet_kind": {
+              "type": "string"
+            },
+            "target_agent": {
+              "type": "string"
+            },
+            "profile": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        },
+        "capabilities": {
+          "$ref": "#/$defs/capabilities"
+        },
+        "mcp": {
+          "$ref": "#/$defs/mcp"
+        },
+        "role_and_access_boundaries": {
+          "$ref": "#/$defs/role_boundaries"
+        },
+        "stale_context_suppression": {
+          "$ref": "#/$defs/stale_context_suppression"
+        },
+        "output_contract": {
+          "type": "object"
+        },
+        "import_contract": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "capabilities": {
+      "type": "object",
+      "required": ["resources", "tools", "prompts"],
+      "properties": {
+        "resources": {
+          "type": "object"
+        },
+        "tools": {
+          "type": "object"
+        },
+        "prompts": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    },
+    "role_boundaries": {
+      "type": "object",
+      "required": ["allowed", "refused", "escalate_on", "narrative"],
+      "properties": {
+        "allowed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "refused": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "escalate_on": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "narrative": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "maxItems": 3
+        }
+      },
+      "additionalProperties": false
+    },
+    "mcp": {
+      "type": "object",
+      "required": ["protocolVersion", "serverInfo", "capabilities", "methods", "resources", "tools", "prompts", "refused"],
+      "properties": {
+        "protocolVersion": {
+          "type": "string"
+        },
+        "serverInfo": {
+          "type": "object",
+          "required": ["name", "version"],
+          "properties": {
+            "name": {
+              "const": "knownet"
+            },
+            "version": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": true
+        },
+        "note": {
+          "type": "string"
+        },
+        "capabilities": {
+          "type": "object",
+          "required": ["resources", "tools", "prompts"],
+          "properties": {
+            "resources": {
+              "type": "object"
+            },
+            "tools": {
+              "type": "object"
+            },
+            "prompts": {
+              "type": "object"
+            }
+          },
+          "additionalProperties": true
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "enum": ["resources/list", "resources/read", "tools/list", "tools/call", "prompts/list", "prompts/get"]
+          },
+          "minItems": 6
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["uri", "name", "mimeType"],
+            "properties": {
+              "uri": {
+                "type": "string",
+                "pattern": "^knownet://"
+              },
+              "name": {
+                "type": "string"
+              },
+              "mimeType": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "read_endpoint": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "description", "inputSchema"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^knownet\\."
+              },
+              "description": {
+                "type": "string"
+              },
+              "inputSchema": {
+                "type": "object"
+              },
+              "raw_access": {
+                "const": false
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "prompts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "description"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^knownet\\."
+              },
+              "description": {
+                "type": "string"
+              },
+              "arguments": {
+                "type": "array"
+              }
+            },
+            "additionalProperties": true
+          }
+        },
+        "refused": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "stale_context_suppression": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["active"],
+          "properties": {
+            "active": {
+              "const": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["active", "suppressed_before", "reason"],
+          "properties": {
+            "active": {
+              "const": true
+            },
+            "suppressed_before": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "issue": {
+      "type": "object",
+      "required": ["code", "action_template", "action_params"],
+      "properties": {
+        "code": {
+          "type": "string"
+        },
+        "severity": {
+          "type": "string"
+        },
+        "action_template": {
+          "type": "string"
+        },
+        "action_params": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
+    },
+    "node_card": {
+      "type": "object",
+      "required": ["id", "title", "type", "short_summary", "link", "detail_url"],
+      "properties": {
+        "id": {
+          "type": ["string", "null"]
+        },
+        "title": {
+          "type": ["string", "null"]
+        },
+        "type": {
+          "type": "string"
+        },
+        "slug": {
+          "type": ["string", "null"]
+        },
+        "short_summary": {
+          "type": "string",
+          "maxLength": 280
+        },
+        "link": {
+          "type": ["string", "null"]
+        },
+        "detail_url": {
+          "type": ["string", "null"]
+        },
+        "provenance": {
+          "$ref": "#/$defs/provenance"
+        }
+      },
+      "additionalProperties": true
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["source_type"],
+      "properties": {
+        "source_type": {
+          "type": "string"
+        },
+        "source_id": {
+          "type": "string"
+        },
+        "source_packet_id": {
+          "type": "string"
+        },
+        "source_packet_trace_id": {
+          "type": "string"
+        },
+        "source_model_run_id": {
+          "type": "string"
+        },
+        "source_model_run_trace_id": {
+          "type": "string"
+        },
+        "source_finding_id": {
+          "type": "string"
+        },
+        "evidence_quality": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

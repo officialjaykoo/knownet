@@ -28,13 +28,17 @@ from ..routes.operator import build_ai_state_quality, build_provider_matrix
 from ..services.packet_contract import (
     OUTPUT_MODES,
     PACKET_CONTRACT_VERSION,
+    PACKET_PROTOCOL_VERSION,
+    PACKET_SCHEMA_REF,
     PROFILE_SECTION_RULES,
     SNAPSHOT_PROFILES,
     build_packet_contract,
     contract_shape,
     explicit_stale_context_suppression,
+    packet_trace,
     packet_contract_markdown,
     validate_packet_contract,
+    validate_packet_schema_core,
 )
 from ..services.project_snapshot import (
     DEFAULT_PROJECT_SNAPSHOT_FOCUS,
@@ -1596,7 +1600,7 @@ async def _project_snapshot_delta(sqlite_path: Path, vault_id: str, since: str |
     )
     runs = await fetch_all(
         sqlite_path,
-        "SELECT id, provider, model, status, response_json, updated_at FROM model_review_runs WHERE vault_id = ? AND updated_at > ? ORDER BY updated_at DESC LIMIT 25",
+        "SELECT id, provider, model, status, response_json, trace_id, packet_trace_id, updated_at FROM model_review_runs WHERE vault_id = ? AND updated_at > ? ORDER BY updated_at DESC LIMIT 25",
         (vault_id, since),
     )
     failed_runs = [row for row in runs if row.get("status") == "failed"]
@@ -1729,6 +1733,43 @@ def _json_line(value: object) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
+def _resource_links(*, self_href: str, content_href: str | None = None, storage_href: str | None = None, related: list[dict] | None = None) -> dict:
+    links: dict = {"self": {"href": self_href}}
+    if content_href:
+        links["content"] = {"href": content_href}
+    if storage_href:
+        links["storage"] = {"href": storage_href}
+    if related:
+        links["related"] = related
+    return links
+
+
+def _standard_delta(delta: dict | None) -> dict | None:
+    if not delta:
+        return None
+    return {
+        "since": delta.get("since"),
+        "summary": delta.get("delta_summary", {}),
+        "added": {
+            "findings": [row for row in delta.get("findings", []) if str(row.get("status") or "") in {"pending", "needs_more_context", "accepted"}],
+            "finding_tasks": [row for row in delta.get("finding_tasks", []) if str(row.get("status") or "") in {"open", "todo", "pending"}],
+            "model_runs": delta.get("model_runs", []),
+        },
+        "changed": {
+            "nodes": delta.get("pages", []),
+            "findings": delta.get("findings", []),
+            "finding_tasks": delta.get("finding_tasks", []),
+            "model_runs": delta.get("model_runs", []),
+        },
+        "removed": {
+            "nodes": [row for row in delta.get("pages", []) if row.get("status") in {"archived", "deleted"}],
+            "findings": [row for row in delta.get("findings", []) if row.get("status") in {"rejected", "deleted"}],
+            "finding_tasks": [row for row in delta.get("finding_tasks", []) if row.get("status") in {"cancelled", "deleted"}],
+            "model_runs": [],
+        },
+    }
+
+
 @router.post("/project-snapshot-packets")
 async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, request: Request, actor: Actor = Depends(require_review_access)):
     settings = request.app.state.settings
@@ -1779,7 +1820,7 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
     )
     run_rows = await fetch_all(
         settings.sqlite_path,
-        "SELECT id, provider, model, prompt_profile, status, review_id, input_tokens, output_tokens, updated_at "
+        "SELECT id, provider, model, prompt_profile, status, review_id, input_tokens, output_tokens, trace_id, packet_trace_id, updated_at "
         "FROM model_review_runs ORDER BY updated_at DESC LIMIT ?",
         (run_limit,),
     )
@@ -1813,6 +1854,15 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
     pre_hints = next_action_hints(important, pre_issues)
     packet_id = f"snapshot_{uuid4().hex[:12]}"
     generated_at = utc_now()
+    trace_payload = packet_trace(
+        trace_id=packet_id,
+        name="knownet.project_snapshot_packet",
+        attributes={
+            "knownet.packet.kind": "project_snapshot",
+            "knownet.packet.profile": profile,
+            "knownet.packet.target_agent": payload.target_agent,
+        },
+    )
     mostly_context_limited = any(row.get("evidence_quality") == "context_limited" for row in [*accepted_rows, *task_rows])
     contract = build_packet_contract(
         packet_kind="project_snapshot",
@@ -1835,8 +1885,10 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
         "",
         "## Packet Metadata",
         "",
-        f"- packet_id: {packet_id}",
+        f"- id: {packet_id}",
         f"- contract_version: {PACKET_CONTRACT_VERSION}",
+        f"- protocol_version: {PACKET_PROTOCOL_VERSION}",
+        f"- schema_ref: {PACKET_SCHEMA_REF}",
         f"- generated_at: {generated_at}",
         f"- target_agent: {payload.target_agent}",
         f"- vault_id: {payload.vault_id}",
@@ -1871,8 +1923,9 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
         sections.append(f"- {issue['code']}: {issue['action_template']} {_json_line(issue.get('action_params') or {})}")
     if delta:
         sections.append(f"- delta_since: {delta['since']}")
-        sections.append(f"- delta_summary: {_json_line(delta['delta_summary'])}")
-        sections.append(f"- delta_counts: {_json_line({key: len(delta[key]) for key in ('pages', 'findings', 'finding_tasks', 'model_runs')})}")
+        standard_delta = _standard_delta(delta)
+        sections.append(f"- delta: {_json_line(standard_delta['summary'] if standard_delta else {})}")
+        sections.append(f"- delta_counts: {_json_line({key: len((standard_delta or {}).get('changed', {}).get(key, [])) for key in ('nodes', 'findings', 'finding_tasks', 'model_runs')})}")
     sections.extend(["", "## Node Cards", ""])
     sections.append("```json")
     sections.append(json.dumps(snapshot_node_cards, ensure_ascii=False, indent=2))
@@ -1956,8 +2009,12 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
             "```json",
             json.dumps(
                 {
-                    "packet_id": packet_id,
+                    "id": packet_id,
+                    "type": "project_snapshot_packet",
                     "contract_version": PACKET_CONTRACT_VERSION,
+                    "protocol_version": PACKET_PROTOCOL_VERSION,
+                    "schema_ref": PACKET_SCHEMA_REF,
+                    "trace": trace_payload,
                     "generated_at": generated_at,
                     "vault_id": payload.vault_id,
                     "focus": payload.focus,
@@ -1978,8 +2035,7 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
                     "release_summary": release_summary,
                     "provider_matrix": matrix.get("summary", {}),
                     "preflight": preflight,
-                    "delta": delta,
-                    "delta_summary": delta.get("delta_summary") if delta else None,
+                    "delta": _standard_delta(delta),
                     "since_packet": dict(since_packet) if since_packet else None,
                     "important_changes": important,
                     "snapshot_diff_summary": diff_summary,
@@ -2093,16 +2149,18 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
         target_id=packet_id,
         metadata={"content_hash": content_hash, "warnings": warnings, "focus": focus, "since": since, "since_packet_id": payload.since_packet_id, "profile": profile, "contract_version": PACKET_CONTRACT_VERSION},
     )
-    return {
-        "ok": True,
-        "data": {
-            "packet_id": packet_id,
+    read_url = f"/api/collaboration/project-snapshot-packets/{packet_id}"
+    storage_path = f"project-snapshot-packets/{packet_id}.md"
+    standard_delta = _standard_delta(delta)
+    response_data = {
+            "id": packet_id,
+            "type": "project_snapshot_packet",
+            "generated_at": generated_at,
+            "links": _resource_links(self_href=read_url, content_href=read_url, storage_href=storage_path),
             "content": content,
             "content_hash": content_hash,
-            "storage_path": f"project-snapshot-packets/{packet_id}.md",
-            "read_url": f"/api/collaboration/project-snapshot-packets/{packet_id}",
             "preflight": preflight,
-            "delta": delta,
+            "delta": standard_delta,
             "since_packet": dict(since_packet) if since_packet else None,
             "warnings": warnings,
             "snapshot_quality": snapshot_quality,
@@ -2110,12 +2168,14 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
             "contract": contract,
             "contract_shape": contract_shape(contract),
             "packet_schema_version": PACKET_CONTRACT_VERSION,
+            "protocol_version": PACKET_PROTOCOL_VERSION,
+            "schema_ref": PACKET_SCHEMA_REF,
+            "trace": trace_payload,
             "ai_context": ai_context_payload,
             "next_action_hints": action_hints,
             "issues": issues,
             "packet_summary": summary_payload,
             "node_cards": snapshot_node_cards,
-            "delta_summary": delta.get("delta_summary") if delta else None,
             "profile": profile,
             "output_mode": output_mode,
             "effective_focus": focus,
@@ -2127,8 +2187,11 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
             "do_not_suggest": do_not_suggest,
             "contract_version": PACKET_CONTRACT_VERSION,
             "copy_ready": True,
-        },
     }
+    schema_errors = validate_packet_schema_core(response_data)
+    if schema_errors:
+        raise HTTPException(status_code=500, detail={"code": "project_snapshot_packet_schema_invalid", "message": "Generated project snapshot packet failed packet schema validation", "details": {"errors": schema_errors}})
+    return {"ok": True, "data": response_data}
 
 
 @router.get("/project-snapshot-packets/{packet_id}")
@@ -2139,7 +2202,18 @@ async def get_project_snapshot_packet(packet_id: str, request: Request, actor: A
     if not path.exists():
         raise HTTPException(status_code=404, detail={"code": "project_snapshot_packet_not_found", "message": "Project snapshot packet not found", "details": {"packet_id": packet_id}})
     content = path.read_text(encoding="utf-8")
-    return {"ok": True, "data": {"packet_id": packet_id, "content": content, "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(), "copy_ready": True}}
+    read_url = f"/api/collaboration/project-snapshot-packets/{packet_id}"
+    return {
+        "ok": True,
+        "data": {
+            "id": packet_id,
+            "type": "project_snapshot_packet",
+            "content": content,
+            "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            "links": _resource_links(self_href=read_url, content_href=read_url, storage_href=f"project-snapshot-packets/{packet_id}.md"),
+            "copy_ready": True,
+        },
+    }
 
 
 @router.post("/experiment-packets")
@@ -2163,6 +2237,16 @@ async def create_experiment_packet(payload: ExperimentPacketRequest, request: Re
         raise HTTPException(status_code=404, detail={"code": "experiment_packet_node_missing", "message": "Selected node was not found", "details": {"missing_slugs": missing}})
 
     preflight = await _packet_preflight(settings.sqlite_path, payload.vault_id)
+    packet_id = f"packet_{uuid4().hex[:12]}"
+    generated_at = utc_now()
+    trace_payload = packet_trace(
+        trace_id=packet_id,
+        name="knownet.experiment_packet",
+        attributes={
+            "knownet.packet.kind": "experiment_packet",
+            "knownet.packet.target_agent": payload.target_agent,
+        },
+    )
     contract = build_packet_contract(
         packet_kind="experiment_packet",
         target_agent=payload.target_agent,
@@ -2178,8 +2262,11 @@ async def create_experiment_packet(payload: ExperimentPacketRequest, request: Re
         "",
         "## Packet Metadata",
         "",
+        f"- id: {packet_id}",
         f"- contract_version: {PACKET_CONTRACT_VERSION}",
-        f"- generated_at: {utc_now()}",
+        f"- protocol_version: {PACKET_PROTOCOL_VERSION}",
+        f"- schema_ref: {PACKET_SCHEMA_REF}",
+        f"- generated_at: {generated_at}",
         f"- generated_for: {payload.target_agent}",
         f"- vault_id: {payload.vault_id}",
         f"- output_mode: {output_mode}",
@@ -2276,7 +2363,6 @@ async def create_experiment_packet(payload: ExperimentPacketRequest, request: Re
     content = "\n".join(sections).strip() + "\n"
     _assert_no_secret_text(content, settings)
     content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    packet_id = f"packet_{uuid4().hex[:12]}"
     packet_dir = settings.data_dir / "experiment-packets"
     packet_dir.mkdir(parents=True, exist_ok=True)
     packet_path = packet_dir / f"{packet_id}.md"
@@ -2309,18 +2395,22 @@ async def create_experiment_packet(payload: ExperimentPacketRequest, request: Re
         target_id=packet_id,
         metadata={"experiment_name": payload.experiment_name, "node_slugs": slugs, "scenario_count": len(payload.scenarios), "content_hash": content_hash},
     )
-    return {
-        "ok": True,
-        "data": {
-            "packet_id": packet_id,
+    read_url = f"/api/collaboration/experiment-packets/{packet_id}"
+    storage_path = str(packet_path).replace("\\", "/")
+    response_data = {
+            "id": packet_id,
+            "type": "experiment_packet",
+            "generated_at": generated_at,
+            "links": _resource_links(self_href=read_url, content_href=read_url, storage_href=storage_path),
             "content": content,
             "content_hash": content_hash,
-            "content_path": str(packet_path).replace("\\", "/"),
-            "read_url": f"/api/collaboration/experiment-packets/{packet_id}",
             "included_nodes": included_nodes,
             "preflight": preflight,
             "contract_version": PACKET_CONTRACT_VERSION,
             "packet_schema_version": PACKET_CONTRACT_VERSION,
+            "protocol_version": PACKET_PROTOCOL_VERSION,
+            "schema_ref": PACKET_SCHEMA_REF,
+            "trace": trace_payload,
             "contract": contract,
             "contract_shape": contract_shape(contract),
             "ai_context": {
@@ -2332,8 +2422,11 @@ async def create_experiment_packet(payload: ExperimentPacketRequest, request: Re
             },
             "node_cards": node_cards,
             "copy_ready": True,
-        },
     }
+    schema_errors = validate_packet_schema_core(response_data)
+    if schema_errors:
+        raise HTTPException(status_code=500, detail={"code": "experiment_packet_schema_invalid", "message": "Generated experiment packet failed packet schema validation", "details": {"errors": schema_errors}})
+    return {"ok": True, "data": response_data}
 
 
 @router.get("/experiment-packets/{packet_id}")
@@ -2345,11 +2438,14 @@ async def get_experiment_packet(packet_id: str, request: Request, actor: Actor =
     return {
         "ok": True,
         "data": {
+            "id": packet["id"],
+            "type": "experiment_packet",
             **packet,
             "node_slugs": json.loads(packet["node_slugs"] or "[]"),
             "scenarios": json.loads(packet["scenarios"] or "[]"),
             "preflight": json.loads(packet["preflight_json"] or "{}"),
             "content": path.read_text(encoding="utf-8"),
+            "links": _resource_links(self_href=f"/api/collaboration/experiment-packets/{packet_id}", content_href=f"/api/collaboration/experiment-packets/{packet_id}", storage_href=packet["content_path"]),
         },
     }
 
@@ -2376,7 +2472,7 @@ async def dry_run_experiment_packet_response(packet_id: str, payload: Experiment
         target_id=packet_id,
         metadata={"response_id": response_id, "finding_count": dry_run["finding_count"], "parser_errors": dry_run["parser_errors"], "import_ready": dry_run["import_ready"]},
     )
-    return {"ok": True, "data": {"response_id": response_id, "packet_id": packet_id, **dry_run}}
+    return {"ok": True, "data": {"response_id": response_id, "packet": {"id": packet_id, "type": "experiment_packet"}, **dry_run}}
 
 
 @router.post("/experiment-packets/{packet_id}/responses/{response_id}/import")
@@ -2417,7 +2513,8 @@ async def import_experiment_packet_response(packet_id: str, response_id: str, re
         "parser_errors": parser_errors,
         "markdown_path": f"data/pages/reviews/{review_id}.md",
         "experiment_packet": {
-            "packet_id": packet_id,
+            "id": packet_id,
+            "type": "experiment_packet",
             "response_id": response_id,
             "content_hash": packet["content_hash"],
             "experiment_name": packet["experiment_name"],

@@ -1,0 +1,11 @@
+{
+  "providers": {
+    "gemini": "custom_api",
+    "deepseek": "openai_compatible_with_overrides",
+    "minimax": "openai_compatible_with_overrides",
+    "qwen": "openai_compatible_with_overrides",
+    "kimi": "openai_compatible_with_overrides",
+    "glm": "openai_compatible_with_overrides",
+    "mock": "custom_api"
+  }
+}

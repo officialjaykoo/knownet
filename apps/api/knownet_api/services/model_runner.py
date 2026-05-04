@@ -13,7 +13,7 @@ from fastapi import HTTPException
 
 from ..config import Settings
 from ..db.sqlite import fetch_all, fetch_one
-from .packet_contract import PACKET_CONTRACT_VERSION, build_packet_contract, contract_shape, explicit_stale_context_suppression, validate_packet_contract
+from .packet_contract import PACKET_CONTRACT_VERSION, PACKET_PROTOCOL_VERSION, PACKET_SCHEMA_REF, build_packet_contract, contract_shape, explicit_stale_context_suppression, packet_trace, validate_packet_contract, validate_packet_schema_core
 from .project_snapshot import finding_summary, node_card
 from ..security import utc_now
 
@@ -219,6 +219,8 @@ async def ensure_model_runner_schema(sqlite_path) -> None:
               output_tokens INTEGER,
               estimated_cost_usd REAL,
               review_id TEXT,
+              trace_id TEXT,
+              packet_trace_id TEXT,
               error_code TEXT,
               error_message TEXT,
               created_by TEXT,
@@ -227,8 +229,15 @@ async def ensure_model_runner_schema(sqlite_path) -> None:
             )
             """
         )
+        columns = await connection.execute_fetchall("PRAGMA table_info(model_review_runs)")
+        existing_columns = {row[1] for row in columns}
+        if "trace_id" not in existing_columns:
+            await connection.execute("ALTER TABLE model_review_runs ADD COLUMN trace_id TEXT")
+        if "packet_trace_id" not in existing_columns:
+            await connection.execute("ALTER TABLE model_review_runs ADD COLUMN packet_trace_id TEXT")
         await connection.execute("CREATE INDEX IF NOT EXISTS idx_model_review_runs_provider_status ON model_review_runs(provider, status, updated_at)")
         await connection.execute("CREATE INDEX IF NOT EXISTS idx_model_review_runs_vault_updated ON model_review_runs(vault_id, updated_at)")
+        await connection.execute("CREATE INDEX IF NOT EXISTS idx_model_review_runs_trace ON model_review_runs(trace_id, packet_trace_id)")
         await connection.commit()
 
 
@@ -363,11 +372,29 @@ async def build_safe_context(settings: Settings, *, vault_id: str, max_pages: in
             status_code=500,
             detail={"code": "provider_fast_lane_contract_invalid", "message": "Generated provider packet contract is invalid", "details": {"errors": contract_errors}},
         )
+    generated_at = utc_now()
+    trace_id = "provider_" + hashlib.sha256(f"{vault_id}:{generated_at}".encode("utf-8")).hexdigest()[:16]
+    provider_context_id = "provider_fast_lane_" + hashlib.sha256(f"{vault_id}:{generated_at}:context".encode("utf-8")).hexdigest()[:12]
     context = sanitize_for_model(
         {
-            "generated_at": utc_now(),
+            "id": provider_context_id,
+            "type": "provider_fast_lane_context",
+            "generated_at": generated_at,
             "contract_version": PACKET_CONTRACT_VERSION,
             "packet_schema_version": PACKET_CONTRACT_VERSION,
+            "protocol_version": PACKET_PROTOCOL_VERSION,
+            "schema_ref": PACKET_SCHEMA_REF,
+            "links": {"self": {"href": "/api/model-runs/review-now"}},
+            "trace": packet_trace(
+                trace_id=trace_id,
+                name="knownet.provider_fast_lane_context",
+                span_kind="CLIENT",
+                attributes={
+                    "knownet.packet.kind": "provider_fast_lane",
+                    "knownet.packet.profile": "provider_review",
+                    "knownet.vault_id": vault_id,
+                },
+            ),
             "contract": contract,
             "contract_shape": contract_shape(contract),
             "ai_context": {
@@ -404,6 +431,12 @@ async def build_safe_context(settings: Settings, *, vault_id: str, max_pages: in
         label="model_context",
     )
     text = _json_dumps(context)
+    schema_errors = validate_packet_schema_core(context)
+    if schema_errors:
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "provider_fast_lane_packet_schema_invalid", "message": "Generated provider packet failed packet schema validation", "details": {"errors": schema_errors}},
+        )
     _reject_forbidden_text(text, label="model_context")
     if len(text) > settings.gemini_max_context_chars:
         raise HTTPException(

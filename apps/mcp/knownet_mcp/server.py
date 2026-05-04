@@ -32,6 +32,9 @@ ALLOWED_TOOLS = {
     "knownet_list_citations",
     "knownet_review_dry_run",
     "knownet_submit_review",
+    "knownet.propose_finding",
+    "knownet.propose_task",
+    "knownet.submit_implementation_evidence",
 }
 
 ALLOWED_RESOURCES = {
@@ -44,12 +47,23 @@ ALLOWED_RESOURCES = {
     "knownet://agent/findings",
     "knownet://agent/graph",
     "knownet://agent/citations",
+    "knownet://snapshot/overview",
+    "knownet://snapshot/stability",
+    "knownet://snapshot/performance",
+    "knownet://snapshot/security",
+    "knownet://snapshot/implementation",
+    "knownet://snapshot/provider_review",
+    "knownet://node/{slug_or_page_id}",
+    "knownet://finding/recent",
 }
 
 ALLOWED_PROMPTS = {
     "knownet_review_page",
     "knownet_review_findings",
     "knownet_prepare_external_review",
+    "knownet.compact_review",
+    "knownet.implementation_candidate",
+    "knownet.provider_risk_check",
 }
 
 FINDING_FORMAT = """### Finding
@@ -110,6 +124,27 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
         "source_agent": {"type": "string", "maxLength": 120},
         "source_model": {"type": "string", "maxLength": 120},
     }, ["markdown"]),
+    "knownet.propose_finding": object_schema({
+        "title": {"type": "string", "minLength": 1, "maxLength": 220},
+        "severity": {"type": "string", "enum": ["critical", "high", "medium", "low", "info"]},
+        "area": {"type": "string", "enum": ["API", "UI", "Rust", "Security", "Data", "Ops", "Docs"]},
+        "evidence": {"type": "string", "minLength": 1, "maxLength": 4000},
+        "proposed_change": {"type": "string", "minLength": 1, "maxLength": 4000},
+        "evidence_quality": {"type": "string", "enum": ["direct_access", "context_limited", "inferred", "operator_verified"]},
+    }, ["title", "severity", "area", "evidence", "proposed_change", "evidence_quality"]),
+    "knownet.propose_task": object_schema({
+        "finding_id": {"type": "string", "minLength": 1, "maxLength": 120},
+        "title": {"type": "string", "minLength": 1, "maxLength": 220},
+        "priority": {"type": "string", "enum": ["low", "normal", "high", "critical"]},
+        "owner": {"type": "string", "maxLength": 80},
+        "verification_hint": {"type": "string", "maxLength": 1000},
+    }, ["finding_id", "title"]),
+    "knownet.submit_implementation_evidence": object_schema({
+        "finding_id": {"type": "string", "minLength": 1, "maxLength": 120},
+        "implemented": {"type": "boolean"},
+        "commit": {"type": "string", "maxLength": 80},
+        "note": {"type": "string", "minLength": 1, "maxLength": 4000},
+    }, ["finding_id", "implemented", "note"]),
 }
 
 PROMPT_ARGUMENTS: dict[str, dict[str, Any]] = {
@@ -119,6 +154,9 @@ PROMPT_ARGUMENTS: dict[str, dict[str, Any]] = {
         "focus": {"type": "string", "maxLength": 240},
         "max_pages": {"type": "integer", "default": 5, "minimum": 1, "maximum": 20},
     }),
+    "knownet.compact_review": object_schema({"focus": {"type": "string", "maxLength": 240}}),
+    "knownet.implementation_candidate": object_schema({"finding_id": {"type": "string", "maxLength": 120}}),
+    "knownet.provider_risk_check": object_schema({"provider": {"type": "string", "maxLength": 80}}),
 }
 
 
@@ -180,6 +218,9 @@ class KnowNetMcpServer:
             {"name": "knownet_list_citations", "description": "List scoped citation audits.", "inputSchema": TOOL_SCHEMAS["knownet_list_citations"]},
             {"name": "knownet_review_dry_run", "description": "Parse a review without creating records.", "inputSchema": TOOL_SCHEMAS["knownet_review_dry_run"]},
             {"name": "knownet_submit_review", "description": "Submit a structured agent review.", "inputSchema": TOOL_SCHEMAS["knownet_submit_review"]},
+            {"name": "knownet.propose_finding", "description": "Draft and dry-run one parser-ready finding. Does not create records.", "inputSchema": TOOL_SCHEMAS["knownet.propose_finding"]},
+            {"name": "knownet.propose_task", "description": "Return an operator-gated task proposal. Does not create or assign a task.", "inputSchema": TOOL_SCHEMAS["knownet.propose_task"]},
+            {"name": "knownet.submit_implementation_evidence", "description": "Return an operator-gated implementation evidence proposal. Does not mark a finding implemented.", "inputSchema": TOOL_SCHEMAS["knownet.submit_implementation_evidence"]},
         ]
 
     def resource_specs(self) -> list[dict[str, Any]]:
@@ -194,6 +235,14 @@ class KnowNetMcpServer:
             {"uri": "knownet://agent/findings", "name": "Collaboration findings", "mimeType": "application/json"},
             {"uri": "knownet://agent/graph", "name": "Graph summary", "mimeType": "application/json"},
             {"uri": "knownet://agent/citations", "name": "Citation audits", "mimeType": "application/json"},
+            {"uri": "knownet://snapshot/overview", "name": "Snapshot overview", "mimeType": "application/json"},
+            {"uri": "knownet://snapshot/stability", "name": "Snapshot stability", "mimeType": "application/json"},
+            {"uri": "knownet://snapshot/performance", "name": "Snapshot performance", "mimeType": "application/json"},
+            {"uri": "knownet://snapshot/security", "name": "Snapshot security", "mimeType": "application/json"},
+            {"uri": "knownet://snapshot/implementation", "name": "Snapshot implementation", "mimeType": "application/json"},
+            {"uri": "knownet://snapshot/provider_review", "name": "Snapshot provider review", "mimeType": "application/json"},
+            {"uri": "knownet://node/{slug_or_page_id}", "name": "Node by slug or page id", "mimeType": "application/json"},
+            {"uri": "knownet://finding/recent", "name": "Recent findings", "mimeType": "application/json"},
         ]
 
     def prompt_specs(self) -> list[dict[str, Any]]:
@@ -215,6 +264,21 @@ class KnowNetMcpServer:
                     {"name": "focus", "required": False, "description": "Review focus."},
                     {"name": "max_pages", "required": False, "description": "Maximum pages to inspect."},
                 ],
+            },
+            {
+                "name": "knownet.compact_review",
+                "description": "Prepare a compact review using standard KnowNet MCP resources and proposal tools.",
+                "arguments": [{"name": "focus", "required": False, "description": "Review focus."}],
+            },
+            {
+                "name": "knownet.implementation_candidate",
+                "description": "Prepare one implementation candidate from a finding.",
+                "arguments": [{"name": "finding_id", "required": False, "description": "Finding id."}],
+            },
+            {
+                "name": "knownet.provider_risk_check",
+                "description": "Check provider stability, speed, and security risks using scoped resources.",
+                "arguments": [{"name": "provider", "required": False, "description": "Provider id."}],
             },
         ]
 
@@ -326,6 +390,9 @@ class KnowNetMcpServer:
             "knownet_list_citations": lambda a: self._request("GET", "/api/agent/citations", query={"limit": a["limit"], "offset": a["offset"], "status": a.get("status")}),
             "knownet_review_dry_run": lambda a: self._review(a, dry_run=True),
             "knownet_submit_review": lambda a: self._review(a, dry_run=False),
+            "knownet.propose_finding": self._propose_finding,
+            "knownet.propose_task": self._propose_task,
+            "knownet.submit_implementation_evidence": self._submit_implementation_evidence,
         }
         return table[name](args)
 
@@ -417,7 +484,42 @@ class KnowNetMcpServer:
             return self._request("GET", "/api/agent/graph", query={"limit": 200})
         if uri == "knownet://agent/citations":
             return self._with_next_offset(self._request("GET", "/api/agent/citations", query={"limit": 100, "offset": 0}), {"offset": 0})
+        if uri.startswith("knownet://snapshot/"):
+            profile = uri.removeprefix("knownet://snapshot/")
+            return self._snapshot_resource(profile)
+        if uri.startswith("knownet://node/"):
+            node_id = uri.removeprefix("knownet://node/")
+            if not node_id:
+                raise McpInputError("node slug or page id is required.")
+            return self._read_node_resource(node_id)
+        if uri == "knownet://finding/recent":
+            return self._with_next_offset(self._request("GET", "/api/agent/findings", query={"limit": 50, "offset": 0}), {"offset": 0})
         raise McpInputError(f"Unknown resource: {uri}")
+
+    def _snapshot_resource(self, profile: str) -> dict[str, Any]:
+        allowed = {"overview", "stability", "performance", "security", "implementation", "provider_review"}
+        if profile not in allowed:
+            raise McpInputError(f"Unknown snapshot profile: {profile}")
+        summary = self._request("GET", "/api/agent/state-summary")
+        payload = {
+            "id": f"snapshot:{profile}",
+            "type": "snapshot_resource",
+            "profile": profile,
+            "resource_uri": f"knownet://snapshot/{profile}",
+            "state_summary": summary.get("data", {}),
+            "links": {"self": {"href": f"knownet://snapshot/{profile}"}},
+            "forbidden": ["raw_db", "filesystem", "shell", "backups", "sessions", "users", "tokens"],
+        }
+        return {"ok": True, "data": payload, "meta": summary.get("meta", {})}
+
+    def _read_node_resource(self, node_id: str) -> dict[str, Any]:
+        pages = self._request("GET", "/api/agent/pages", query={"limit": 200, "offset": 0})
+        page_id = node_id
+        for page in pages.get("data", {}).get("pages", []):
+            if node_id in {str(page.get("id")), str(page.get("slug"))}:
+                page_id = str(page.get("id"))
+                break
+        return self._request("GET", f"/api/agent/pages/{urllib.parse.quote(page_id)}")
 
     def _review(self, args: dict[str, Any], *, dry_run: bool) -> dict[str, Any]:
         payload = {"markdown": args["markdown"]}
@@ -427,6 +529,51 @@ class KnowNetMcpServer:
             payload["source_model"] = args["source_model"]
         path = "/api/collaboration/reviews?dry_run=true" if dry_run else "/api/collaboration/reviews"
         return self._request("POST", path, payload=payload)
+
+    def _propose_finding(self, args: dict[str, Any]) -> dict[str, Any]:
+        markdown = (
+            "### Finding\n\n"
+            f"Title: {args['title']}\n"
+            f"Severity: {args['severity']}\n"
+            f"Area: {args['area']}\n"
+            f"Evidence quality: {args['evidence_quality']}\n\n"
+            "Evidence:\n"
+            f"{args['evidence']}\n\n"
+            "Proposed change:\n"
+            f"{args['proposed_change']}\n"
+        )
+        result = self._review({"markdown": markdown, "source_agent": "mcp", "source_model": "knownet.propose_finding"}, dry_run=True)
+        result["proposal"] = {"type": "finding", "operator_gated": True, "markdown": markdown}
+        return result
+
+    def _propose_task(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "data": {
+                "type": "task_proposal",
+                "operator_gated": True,
+                "finding_id": args["finding_id"],
+                "title": args["title"],
+                "priority": args.get("priority") or "normal",
+                "owner": args.get("owner"),
+                "verification_hint": args.get("verification_hint"),
+                "next_step": "operator_may_create_task_after_review",
+            },
+        }
+
+    def _submit_implementation_evidence(self, args: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "ok": True,
+            "data": {
+                "type": "implementation_evidence_proposal",
+                "operator_gated": True,
+                "finding_id": args["finding_id"],
+                "implemented": args["implemented"],
+                "commit": args.get("commit"),
+                "note": args["note"],
+                "next_step": "operator_may_submit_evidence_after_review",
+            },
+        }
 
     def _request(self, method: str, path: str, *, query: dict[str, Any] | None = None, payload: dict[str, Any] | None = None, auth: bool = True, timeout: float | None = None) -> dict[str, Any]:
         if auth and not self.token:
@@ -490,6 +637,9 @@ class KnowNetMcpServer:
                     raise McpInputError(f"{key} is too long.")
                 if "enum" in spec and value not in spec["enum"]:
                     raise McpInputError(f"{key} has an invalid value.")
+            elif expected == "boolean":
+                if not isinstance(value, bool):
+                    raise McpInputError(f"{key} must be a boolean.")
             if "enum" in spec and value not in spec["enum"]:
                 raise McpInputError(f"{key} has an invalid value.")
             validated[key] = value
@@ -544,6 +694,31 @@ class KnowNetMcpServer:
             return (
                 f"{safety}\n\nReview existing findings with status={status}. Suggest accept, reject, defer, or needs_more_context decisions. "
                 "Ground every decision in scoped evidence returned by KnowNet."
+            )
+        if name == "knownet.compact_review":
+            focus = args.get("focus") or "highest-impact implementation and reliability risks"
+            return (
+                "Use standard KnowNet MCP resources only. Read `knownet://snapshot/overview` first, then "
+                "`knownet://finding/recent` if findings are relevant. Keep the answer compact: summary, top risks, "
+                "and at most 3 importable proposals. Use `knownet.propose_finding` for any finding draft. "
+                "Do not request raw DB, shell, filesystem, backup, session, user, token, or release_check access.\n\n"
+                f"Focus: {focus}"
+            )
+        if name == "knownet.implementation_candidate":
+            finding_id = args.get("finding_id") or "the highest-priority recent finding"
+            return (
+                "Read `knownet://finding/recent` and, only if needed, `knownet://snapshot/implementation`. "
+                "Select one bounded implementation candidate and call `knownet.propose_task`; do not create tasks "
+                "directly. Include verification hints and keep scope small.\n\n"
+                f"Finding target: {finding_id}"
+            )
+        if name == "knownet.provider_risk_check":
+            provider = args.get("provider") or "all configured providers"
+            return (
+                "Read `knownet://snapshot/provider_review`. Review provider stability, speed, and security signals. "
+                "Return concise risks and use `knownet.propose_finding` only for concrete, evidence-backed issues. "
+                "Do not call providers live, request API keys, or run release_check.\n\n"
+                f"Provider target: {provider}"
             )
         max_pages = args.get("max_pages", 5)
         focus = args.get("focus") or "overall implementation quality"

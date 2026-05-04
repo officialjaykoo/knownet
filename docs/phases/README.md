@@ -8,10 +8,10 @@ release evidence.
 Use phase files when you need to understand why a feature exists or which
 completion gate introduced it.
 
-Current follow-up phase:
+Latest standardization phase:
 
 ```txt
-PHASE_20_TASKS.md - Machine-enforceable packet standardization:
-  structured role/access boundaries, explicit stale context rules, profile size
-  budgets, and provider-agnostic import-testable packet contracts.
+PHASE_23_TASKS.md - Real MCP compatibility baseline:
+  standard KnowNet MCP resource URIs, proposal-only tools, prompt names, and
+  tests that keep raw/admin surfaces out.
 ```

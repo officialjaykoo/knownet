@@ -78,6 +78,19 @@ apps/api/.venv/Scripts/python.exe apps/mcp/knownet_mcp/server.py
 
 The process speaks JSON-RPC over stdin/stdout. Logs are written to stderr.
 
+The standard KnowNet MCP baseline is documented in:
+
+```txt
+docs/MCP_SCOPE.md
+```
+
+New clients should prefer the standard resources, tools, and prompts from that
+scope: `knownet://snapshot/...`, `knownet://node/{slug_or_page_id}`,
+`knownet://finding/recent`, `knownet.propose_finding`,
+`knownet.propose_task`, `knownet.submit_implementation_evidence`,
+`knownet.compact_review`, `knownet.implementation_candidate`, and
+`knownet.provider_risk_check`.
+
 To verify that a stdio client can at least initialize and list tools/resources:
 
 ```powershell

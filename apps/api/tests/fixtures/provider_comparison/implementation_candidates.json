@@ -1,0 +1,16 @@
+{
+  "name": "implementation_candidates",
+  "payload": {
+    "output_mode": "implementation_candidates",
+    "implementation_candidates": {
+      "candidate": "Add schema validation",
+      "severity": "medium",
+      "area": "API",
+      "evidence_quality": "operator_verified",
+      "why": "Implementation candidate fixture.",
+      "implementation_shape": "Add parser assertion fixture."
+    }
+  },
+  "expected_finding_count": 1,
+  "expected_errors": []
+}

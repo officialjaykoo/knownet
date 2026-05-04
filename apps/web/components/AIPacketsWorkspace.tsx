@@ -82,7 +82,7 @@ export function AIPacketsWorkspace({
           <div className="operator-panel-head">
             <div>
               <h3>Project Snapshot Packet</h3>
-              <small>{projectSnapshotPacket.packet_id} / {projectSnapshotPacket.warnings.length} warning(s)</small>
+              <small>{projectSnapshotPacket.id} / {projectSnapshotPacket.warnings.length} warning(s)</small>
             </div>
             <div className="operator-actions">
               <button onClick={onCopyProjectSnapshotPacket} type="button">
@@ -97,8 +97,8 @@ export function AIPacketsWorkspace({
               <span>{projectSnapshotPacket.output_mode ?? "top_findings"}</span>
               <span>{projectSnapshotPacket.contract_version ?? "p19.v1"}</span>
               {projectSnapshotPacket.snapshot_quality ? <span>quality {projectSnapshotPacket.snapshot_quality.score}</span> : null}
-              <span>{projectSnapshotPacket.storage_path}</span>
-              <span>{projectSnapshotPacket.read_url}</span>
+              <span>{projectSnapshotPacket.links.storage?.href ?? "no storage link"}</span>
+              <span>{projectSnapshotPacket.links.self.href}</span>
             </div>
             {projectSnapshotPacket.snapshot_quality?.warnings?.length ? (
               <div className="model-run-stats warning-stats">
@@ -153,7 +153,7 @@ export function AIPacketsWorkspace({
         <div className="operator-panel-head">
           <div>
             <h3>External AI Packet</h3>
-            <small>{experimentPacket ? `${experimentPacket.included_nodes.length} node(s) / ${experimentPacket.packet_id}` : "Generate a copy-ready Claude/Codex packet"}</small>
+            <small>{experimentPacket ? `${experimentPacket.included_nodes.length} node(s) / ${experimentPacket.id}` : "Generate a copy-ready Claude/Codex packet"}</small>
           </div>
           <div className="operator-actions">
             <button disabled={!canOperate || operatorBusyAction === "experiment-packet"} onClick={onGenerateExperimentPacket} type="button">
@@ -187,7 +187,7 @@ export function AIPacketsWorkspace({
               <span>{experimentPacket.preflight.ai_state_pages} ai_state</span>
               <span>{experimentPacket.preflight.unresolved_nodes} unresolved</span>
               <span>{experimentPacket.preflight.pending_findings} pending findings</span>
-              <span>{experimentPacket.read_url}</span>
+              <span>{experimentPacket.links.self.href}</span>
             </div>
             <textarea readOnly rows={10} value={experimentPacket.content} />
           </div>

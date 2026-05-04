@@ -1,4 +1,5 @@
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -7,8 +8,9 @@ from fastapi.testclient import TestClient
 from knownet_api.config import get_settings
 from knownet_api.main import app
 from knownet_api.routes.collaboration import parse_review_markdown
-from knownet_api.services.packet_contract import build_packet_contract, explicit_stale_context_suppression
+from knownet_api.services.packet_contract import build_packet_contract, contract_shape, explicit_stale_context_suppression, validate_packet_header, validate_packet_schema_core
 from knownet_api.services.project_snapshot import snapshot_self_test
+from fixture_utils import load_json_fixture_dir
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -90,6 +92,47 @@ def test_phase20_packet_contract_self_test_validates_boundaries_budget_and_stale
     failed_codes = {check["code"] for check in failed["checks"] if check["status"] == "fail"}
     assert "structured_role_boundaries_present" in failed_codes
     assert "stale_context_suppression_explicit" in failed_codes
+
+
+def test_packet_schema_documents_standard_header_and_trace_fields():
+    schema = json.loads((REPO_ROOT / "docs" / "schemas" / "packet.p20.v1.schema.json").read_text(encoding="utf-8"))
+    assert schema["$id"] == "knownet://schemas/packet/p20.v1"
+    assert "protocol_version" in schema["required"]
+    assert "schema_ref" in schema["required"]
+    trace_schema = schema["$defs"]["trace"]
+    assert "traceparent" in trace_schema["required"]
+    assert trace_schema["properties"]["trace_id"]["pattern"] == "^[0-9a-f]{32}$"
+    assert "CLIENT" in trace_schema["properties"]["span_kind"]["enum"]
+
+
+def test_packet_schema_core_validator_uses_schema_required_fields():
+    schema = json.loads((REPO_ROOT / "docs" / "schemas" / "packet.p20.v1.schema.json").read_text(encoding="utf-8"))
+    contract = build_packet_contract(packet_kind="project_snapshot", target_agent="claude", operator_question="Review packet.")
+    packet = {
+        "id": "packet_test",
+        "type": "project_snapshot_packet",
+        "contract_version": "p20.v1",
+        "packet_schema_version": "p20.v1",
+        "protocol_version": "2026-05-05",
+        "schema_ref": "knownet://schemas/packet/p20.v1",
+        "generated_at": "2026-05-05T00:00:00Z",
+        "links": {"self": {"href": "/api/test"}},
+        "trace": {
+            "trace_id": "0" * 32,
+            "span_id": "1" * 16,
+            "traceparent": f"00-{'0' * 32}-{'1' * 16}-01",
+            "name": "knownet.test_packet",
+            "span_kind": "INTERNAL",
+            "attributes": {"service.name": "knownet"},
+        },
+        "contract": contract,
+        "contract_shape": contract_shape(contract),
+        "ai_context": {"role": "test", "target_agent": "claude", "task": "validate", "read_order": ["contract"]},
+    }
+    assert validate_packet_schema_core(packet, schema) == []
+    broken = dict(packet)
+    broken.pop("schema_ref")
+    assert "schema_required_missing:schema_ref" in validate_packet_schema_core(broken, schema)
 
 
 def test_parser_fallback_for_missing_finding_headings():
@@ -486,16 +529,22 @@ def test_project_snapshot_packet_summarizes_safe_handoff_state(tmp_path, monkeyp
         data = response.json()["data"]
         content = data["content"]
         assert data["copy_ready"] is True
-        assert data["storage_path"].startswith("project-snapshot-packets/")
+        assert data["type"] == "project_snapshot_packet"
+        assert data["generated_at"]
+        assert data["links"]["self"]["href"] == data["links"]["content"]["href"]
+        assert data["links"]["storage"]["href"].startswith("project-snapshot-packets/")
+        assert "packet_id" not in data
+        assert "read_url" not in data
+        assert "storage_path" not in data
         assert "KnowNet Project Snapshot Packet" in content
         assert "Tell Codex the next implementation move." in content
         assert "Recent Accepted Findings" in content
         assert finding_id in content
         assert "C:\\" not in content
         assert str(app.state.settings.data_dir) not in content
-        assert (app.state.settings.data_dir / data["storage_path"]).exists()
+        assert (app.state.settings.data_dir / data["links"]["storage"]["href"]).exists()
 
-        read = client.get(data["read_url"])
+        read = client.get(data["links"]["self"]["href"])
         assert read.status_code == 200, read.text
         assert read.json()["data"]["content_hash"] == data["content_hash"]
     get_settings.cache_clear()
@@ -519,13 +568,16 @@ def test_project_snapshot_packet_can_include_since_delta(tmp_path, monkeypatch):
         assert response.status_code == 200, response.text
         data = response.json()["data"]
         assert data["delta"]["since"] == "2026-01-01T00:00:00Z"
-        assert data["delta"]["findings"]
-        assert data["delta"]["finding_tasks"]
-        assert data["delta_summary"]["new_or_updated_findings"] >= 1
-        assert data["delta_summary"]["changed_tasks"] >= 1
-        assert data["delta"]["delta_summary"] == data["delta_summary"]
+        assert {"summary", "added", "changed", "removed"} <= set(data["delta"])
+        assert data["delta"]["changed"]["findings"]
+        assert data["delta"]["changed"]["finding_tasks"]
+        assert data["delta"]["summary"]["new_or_updated_findings"] >= 1
+        assert data["delta"]["summary"]["changed_tasks"] >= 1
+        assert "delta_summary" not in data
+        assert "delta_standard" not in data
         assert "Delta Since Last Snapshot" in data["content"]
-        assert "delta_summary" in data["content"]
+        assert "delta:" in data["content"]
+        assert "delta_summary" not in data["content"]
         assert "delta_counts" in data["content"]
 
         bad = client.post("/api/collaboration/project-snapshot-packets", json={"since": "not-a-date"})
@@ -574,7 +626,24 @@ Add provider retry and alerting.
         assert overview_data["profile"] == "overview"
         assert overview_data["effective_focus"].startswith("Summarize the current KnowNet state")
         assert overview_data["contract_version"] == "p20.v1"
+        assert overview_data["type"] == "project_snapshot_packet"
+        assert overview_data["generated_at"]
+        assert overview_data["links"]["self"]["href"].startswith("/api/collaboration/project-snapshot-packets/")
+        assert "packet_id" not in overview_data
         assert overview_data["packet_schema_version"] == "p20.v1"
+        assert overview_data["protocol_version"] == "2026-05-05"
+        assert overview_data["schema_ref"] == "knownet://schemas/packet/p20.v1"
+        assert overview_data["trace"]["name"] == "knownet.project_snapshot_packet"
+        assert re.fullmatch(r"[0-9a-f]{32}", overview_data["trace"]["trace_id"])
+        assert re.fullmatch(r"[0-9a-f]{16}", overview_data["trace"]["span_id"])
+        assert overview_data["trace"]["traceparent"] == f"00-{overview_data['trace']['trace_id']}-{overview_data['trace']['span_id']}-01"
+        assert overview_data["trace"]["span_kind"] == "INTERNAL"
+        assert overview_data["trace"]["attributes"]["knownet.packet.source_id"] == overview_data["id"]
+        assert overview_data["trace"]["attributes"]["knownet.packet.profile"] == "overview"
+        assert validate_packet_header(overview_data) == []
+        assert overview_data["contract"]["packet_metadata"]["protocol_version"] == "2026-05-05"
+        assert overview_data["contract_shape"]["protocol_version"] == "2026-05-05"
+        assert overview_data["contract"]["capabilities"]["resources"]["node_cards"] is True
         assert overview_data["ai_context"]["role"] == "overview_reviewer"
         assert overview_data["next_action_hints"]
         assert overview_data["issues"]
@@ -624,7 +693,7 @@ Add provider retry and alerting.
                 "output_mode": "provider_risk_check",
                 "focus": "Only stability risks.",
                 "target_agent": "deepseek",
-                "since_packet_id": overview_data["packet_id"],
+                "since_packet_id": overview_data["id"],
                 "allow_since_packet_fallback": False,
             },
         )
@@ -643,7 +712,7 @@ Add provider retry and alerting.
         assert "Stability Signals" in stability_data["content"]
         assert "Recent Accepted Findings" not in stability_data["content"]
         assert "profile_mismatch_delta" in stability_data["warnings"]
-        assert stability_data["since_packet"]["id"] == overview_data["packet_id"]
+        assert stability_data["since_packet"]["id"] == overview_data["id"]
 
         invalid = client.post("/api/collaboration/project-snapshot-packets", json={"profile": "unknown"})
         assert invalid.status_code == 422
@@ -722,6 +791,18 @@ def test_compact_output_contract_parser_and_feedback(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
+def test_output_mode_fixtures_assert_parser_behavior():
+    fixtures = load_json_fixture_dir("provider_comparison")
+    assert {fixture["name"] for fixture in fixtures} == {"decision_only", "implementation_candidates", "provider_risk_check", "top_findings_too_many"}
+    for fixture in fixtures:
+        payload = fixture["payload"]
+        metadata, findings, errors = parse_review_markdown(json.dumps(payload))
+        assert metadata["output_mode"] == payload["output_mode"]
+        assert len(findings) == fixture["expected_finding_count"]
+        for expected_error in fixture["expected_errors"]:
+            assert expected_error in errors
+
+
 def test_patch_suggestion_stub_exposes_safety_contract(tmp_path, monkeypatch):
     _isolate_settings(monkeypatch, tmp_path)
     with TestClient(app) as client:
@@ -774,6 +855,13 @@ fallback_order: Use inline context first.
         assert "Critical inline summary: do not guess from node names." in content
         data = response.json()["data"]
         assert data["packet_schema_version"] == "p20.v1"
+        assert data["protocol_version"] == "2026-05-05"
+        assert data["schema_ref"] == "knownet://schemas/packet/p20.v1"
+        assert data["trace"]["name"] == "knownet.experiment_packet"
+        assert re.fullmatch(r"[0-9a-f]{32}", data["trace"]["trace_id"])
+        assert data["trace"]["traceparent"] == f"00-{data['trace']['trace_id']}-{data['trace']['span_id']}-01"
+        assert data["trace"]["span_kind"] == "INTERNAL"
+        assert validate_packet_header(data) == []
         assert data["node_cards"][0]["slug"] == "access-fallback-protocol"
         assert data["node_cards"][0]["detail_url"] == "/api/pages/access-fallback-protocol"
     get_settings.cache_clear()
@@ -807,7 +895,7 @@ def test_phase20_packet_shape_and_dry_run_are_provider_agnostic(tmp_path, monkey
         packet_data = packet.json()["data"]
         assert packet_data["contract_shape"]["valid"] is True
         assert packet_data["contract_shape"]["sections"] == snapshot_shape["sections"]
-        packet_id = packet_data["packet_id"]
+        packet_id = packet_data["id"]
 
         responses = [
             ("claude", "claude-test", "Claude response passes same parser."),
@@ -1060,10 +1148,15 @@ context_limited findings may flag review work, but need operator verification be
         assert response.status_code == 200, response.text
         data = response.json()["data"]
         content = data["content"]
-        packet_id = data["packet_id"]
+        packet_id = data["id"]
         assert data["copy_ready"] is True
+        assert data["type"] == "experiment_packet"
+        assert data["generated_at"]
+        assert data["links"]["self"]["href"] == f"/api/collaboration/experiment-packets/{packet_id}"
+        assert "packet_id" not in data
+        assert "read_url" not in data
+        assert "content_path" not in data
         assert data["preflight"]["pages"] == 2
-        assert data["read_url"] == f"/api/collaboration/experiment-packets/{packet_id}"
         assert (app.state.settings.data_dir / "experiment-packets" / f"{packet_id}.md").exists()
         assert "Boundary smoke" in content
         assert "Node: Access Fallback Protocol" in content

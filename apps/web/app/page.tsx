@@ -261,21 +261,22 @@ type ReleaseReadiness = {
 };
 
 type ExperimentPacket = {
-  packet_id: string;
+  id: string;
+  type: string;
   content: string;
   content_hash: string;
-  read_url: string;
+  links: { self: { href: string }; content?: { href: string }; storage?: { href: string } };
   included_nodes: Array<{ page_id: string; slug: string; title: string }>;
   preflight: { pages: number; ai_state_pages: number; unresolved_nodes: number; pending_findings: number };
   copy_ready: boolean;
 };
 
 type ProjectSnapshotPacket = {
-  packet_id: string;
+  id: string;
+  type: string;
   content: string;
   content_hash: string;
-  read_url: string;
-  storage_path: string;
+  links: { self: { href: string }; content?: { href: string }; storage?: { href: string } };
   warnings: string[];
   profile?: string;
   output_mode?: string;
@@ -286,7 +287,7 @@ type ProjectSnapshotPacket = {
 
 type ExperimentResponseDryRun = {
   response_id: string;
-  packet_id: string;
+  packet: { id: string; type: string };
   finding_count: number;
   findings: CollaborationFinding[];
   parser_errors: string[];
@@ -943,7 +944,7 @@ export default function HomePage() {
         vaultId,
       );
       setProjectSnapshotPacket(data);
-      setStatus(`Project snapshot ready: ${data.packet_id}`);
+      setStatus(`Project snapshot ready: ${data.id}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Project snapshot failed");
     } finally {
@@ -957,7 +958,7 @@ export default function HomePage() {
     }
     try {
       await navigator.clipboard.writeText(projectSnapshotPacket.content);
-      setStatus(`Copied project snapshot: ${projectSnapshotPacket.packet_id}`);
+      setStatus(`Copied project snapshot: ${projectSnapshotPacket.id}`);
     } catch {
       setStatus("Clipboard unavailable");
     }
@@ -1024,7 +1025,7 @@ export default function HomePage() {
     setStatus("Parsing experiment response");
     try {
       const result = await fetchJson<ExperimentResponseDryRun>(
-        `/api/collaboration/experiment-packets/${experimentPacket.packet_id}/responses/dry-run`,
+        `/api/collaboration/experiment-packets/${experimentPacket.id}/responses/dry-run`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1051,7 +1052,7 @@ export default function HomePage() {
     setStatus("Importing experiment response");
     try {
       const result = await fetchJson<{ review: CollaborationReviewSummary; findings: CollaborationFinding[] }>(
-        `/api/collaboration/experiment-packets/${experimentPacket.packet_id}/responses/${experimentResponseDryRun.response_id}/import`,
+        `/api/collaboration/experiment-packets/${experimentPacket.id}/responses/${experimentResponseDryRun.response_id}/import`,
         { method: "POST" },
         sessionToken,
         vaultId,
