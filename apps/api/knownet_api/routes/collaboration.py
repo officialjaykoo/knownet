@@ -429,31 +429,6 @@ async def ensure_collaboration_schema(sqlite_path: Path) -> None:
     )
     await execute(sqlite_path, "CREATE INDEX IF NOT EXISTS idx_project_snapshot_packets_vault_created ON project_snapshot_packets(vault_id, created_at)", ())
 
-    existing = await fetch_all(sqlite_path, "PRAGMA table_info(collaboration_findings)", ())
-    if not existing:
-        return
-    columns = {row["name"] for row in existing}
-    if "evidence_quality" not in columns:
-        await execute(sqlite_path, "ALTER TABLE collaboration_findings ADD COLUMN evidence_quality TEXT NOT NULL DEFAULT 'unspecified'", ())
-    rows = await fetch_all(
-        sqlite_path,
-        "SELECT f.id, f.evidence_quality, r.source_agent, r.source_model, r.meta "
-        "FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
-        "WHERE f.evidence_quality IS NULL OR f.evidence_quality = 'unspecified'",
-        (),
-    )
-    for row in rows:
-        quality = "unspecified"
-        try:
-            meta = json.loads(row.get("meta") or "{}")
-        except json.JSONDecodeError:
-            meta = {}
-        frontmatter = meta.get("frontmatter") if isinstance(meta, dict) else {}
-        if isinstance(frontmatter, dict):
-            quality = _normalize_evidence_quality(frontmatter.get("evidence_quality"))
-        if quality != "unspecified":
-            await execute(sqlite_path, "UPDATE collaboration_findings SET evidence_quality = ? WHERE id = ?", (quality, row["id"]))
-
 
 def parse_review_markdown(markdown: str) -> tuple[dict, list[dict], list[str]]:
     metadata, body = _parse_frontmatter(markdown)

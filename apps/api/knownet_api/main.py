@@ -136,14 +136,6 @@ async def lifespan(app: FastAPI):
     app.state.sqlite_status = "unknown"
     if app.state.rust_core.available:
         await app.state.rust_core.request("init_db", {"sqlite_path": str(settings.sqlite_path)})
-        await app.state.rust_core.request(
-            "run_phase3_migration",
-            {
-                "sqlite_path": str(settings.sqlite_path),
-                "backup_dir": str(settings.data_dir / "backups"),
-                "migrated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-            },
-        )
         await app.state.rust_core.request("ensure_phase4_schema", {"sqlite_path": str(settings.sqlite_path)})
         await app.state.rust_core.request("ensure_graph_schema", {"sqlite_path": str(settings.sqlite_path)})
         await ensure_phase6_schema(settings.sqlite_path)

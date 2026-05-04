@@ -38,7 +38,7 @@ pub use pages::{
 };
 pub use phase3::{
     assign_vault_member, create_session, create_submission, create_user, create_vault,
-    recover_page, revoke_session, run_phase3_migration, tombstone_page, update_submission_status,
+    recover_page, revoke_session, tombstone_page, update_submission_status,
     AssignVaultMemberInput, CreateSessionInput, CreateSubmissionInput, CreateUserInput,
     CreateVaultInput, RecoverPageInput, TombstonePageInput, UpdateSubmissionStatusInput,
 };
@@ -71,6 +71,12 @@ pub fn init_db(sqlite_path: &str) -> Result<InitDbResult, CoreError> {
         .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
     connection
         .execute_batch(SCHEMA_SQL)
+        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
+    connection
+        .execute(
+            "INSERT OR IGNORE INTO vaults (id, name, created_at) VALUES ('local-default', 'Local', datetime('now'))",
+            [],
+        )
         .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
     let journal_mode: String = connection
         .query_row("PRAGMA journal_mode;", [], |row| row.get(0))

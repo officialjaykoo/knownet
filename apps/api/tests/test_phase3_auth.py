@@ -108,7 +108,7 @@ def test_security_headers_present(tmp_path, monkeypatch):
     get_settings.cache_clear()
 
 
-def test_phase3_migration_adds_default_vault_columns(tmp_path, monkeypatch):
+def test_canonical_schema_has_default_vault_columns(tmp_path, monkeypatch):
     _isolate_settings(monkeypatch, tmp_path)
     with TestClient(app) as client:
         health = client.get("/health")

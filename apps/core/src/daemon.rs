@@ -83,39 +83,6 @@ fn handle_request(request: Request) -> Response {
                 },
             }
         }
-        "run_phase3_migration" => {
-            let sqlite_path = request
-                .params
-                .get("sqlite_path")
-                .and_then(|value| value.as_str())
-                .unwrap_or("data/knownet.db");
-            let backup_dir = request
-                .params
-                .get("backup_dir")
-                .and_then(|value| value.as_str())
-                .unwrap_or("data/backups");
-            let migrated_at = request
-                .params
-                .get("migrated_at")
-                .and_then(|value| value.as_str())
-                .unwrap_or("");
-            match storage::run_phase3_migration(sqlite_path, backup_dir, migrated_at) {
-                Ok(vault_id) => Response::Success {
-                    id: request.id,
-                    ok: true,
-                    result: json!({"status": "migrated", "vault_id": vault_id}),
-                },
-                Err(error) => Response::Failure {
-                    id: request.id,
-                    ok: false,
-                    error: ErrorBody {
-                        code: error.code.to_string(),
-                        message: error.message,
-                        details: json!({}),
-                    },
-                },
-            }
-        }
         "ensure_phase4_schema" => {
             let sqlite_path = request
                 .params

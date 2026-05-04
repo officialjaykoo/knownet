@@ -37,17 +37,7 @@ def _fallback_title(citation_key: str) -> str:
     return citation_key
 
 
-async def ensure_citation_display_titles(sqlite_path: Path) -> None:
-    async with aiosqlite.connect(sqlite_path) as connection:
-        columns = await connection.execute_fetchall("PRAGMA table_info(citations)")
-        names = {row[1] for row in columns}
-        if "display_title" not in names:
-            await connection.execute("ALTER TABLE citations ADD COLUMN display_title TEXT")
-            await connection.commit()
-
-
 async def backfill_citation_display_titles(sqlite_path: Path) -> int:
-    await ensure_citation_display_titles(sqlite_path)
     rows = await fetch_all(
         sqlite_path,
         "SELECT c.citation_key, m.path AS message_path "
@@ -67,4 +57,3 @@ async def backfill_citation_display_titles(sqlite_path: Path) -> int:
             updated += cursor.rowcount if cursor.rowcount else 0
         await connection.commit()
     return updated
-
