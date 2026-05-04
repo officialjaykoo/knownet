@@ -55,7 +55,17 @@ def test_message_to_suggestion_to_page(tmp_path, monkeypatch):
         assert page.status_code == 200
         assert page.json()["data"]["slug"] == slug
 
-        restored = client.post(f"/api/pages/{slug}/revisions/{revision_id}/restore")
+        stale_restore = client.post(
+            f"/api/pages/{slug}/revisions/{revision_id}/restore",
+            json={"expected_current_revision_id": "rev_stale"},
+        )
+        assert stale_restore.status_code == 409
+        assert stale_restore.json()["detail"]["code"] == "page_revision_conflict"
+
+        restored = client.post(
+            f"/api/pages/{slug}/revisions/{revision_id}/restore",
+            json={"expected_current_revision_id": revision_id},
+        )
         assert restored.status_code == 200
         assert restored.json()["data"]["status"] == "restored"
 
@@ -70,11 +80,13 @@ def test_message_to_suggestion_to_page(tmp_path, monkeypatch):
         search = client.get("/api/search", params={"q": "NEAT"})
         assert search.status_code == 200
         assert search.json()["data"]["results"]
+        assert isinstance(search.json()["data"]["duration_ms"], int)
 
         semantic = client.post("/api/search/semantic", json={"q": "NEAT"})
         assert semantic.status_code == 200
         assert semantic.json()["data"]["status"] == "degraded"
         assert semantic.json()["data"]["fallback"] == "keyword"
+        assert isinstance(semantic.json()["data"]["duration_ms"], int)
 
         embedding = client.get("/api/maintenance/embedding/status")
         assert embedding.status_code == 200

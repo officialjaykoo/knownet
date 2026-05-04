@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from knownet_api.config import get_settings
 from knownet_api.main import app
+from knownet_api.services.model_runner import DeepSeekApiAdapter, GlmApiAdapter, KimiApiAdapter, MiniMaxApiAdapter, QwenApiAdapter, build_openai_compatible_review_messages, normalize_model_output
 
 
 def _isolate_settings(monkeypatch, tmp_path):
@@ -12,15 +13,35 @@ def _isolate_settings(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("SQLITE_PATH", str(data_dir / "knownet.db"))
     monkeypatch.setenv("GEMINI_RUNNER_ENABLED", "false")
+    monkeypatch.setenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
     monkeypatch.setenv("GEMINI_MODEL", "gemini-2.5-pro")
+    monkeypatch.setenv("GEMINI_RESPONSE_MIME_TYPE", "application/json")
+    monkeypatch.setenv("GEMINI_THINKING_BUDGET", "0")
     monkeypatch.setenv("DEEPSEEK_RUNNER_ENABLED", "false")
+    monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
     monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("DEEPSEEK_REASONING_EFFORT", "high")
+    monkeypatch.setenv("DEEPSEEK_THINKING_ENABLED", "true")
     monkeypatch.setenv("MINIMAX_RUNNER_ENABLED", "false")
+    monkeypatch.setenv("MINIMAX_BASE_URL", "https://api.minimaxi.com/v1")
     monkeypatch.setenv("MINIMAX_MODEL", "MiniMax-M2.7")
+    monkeypatch.setenv("MINIMAX_MAX_TOKENS", "4000")
+    monkeypatch.setenv("MINIMAX_REASONING_SPLIT", "true")
     monkeypatch.setenv("KIMI_RUNNER_ENABLED", "false")
-    monkeypatch.setenv("KIMI_MODEL", "kimi-k2-0905-preview")
+    monkeypatch.setenv("KIMI_MODEL", "kimi-k2.5")
+    monkeypatch.setenv("QWEN_RUNNER_ENABLED", "false")
+    monkeypatch.setenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    monkeypatch.setenv("QWEN_MODEL", "qwen-plus")
+    monkeypatch.setenv("QWEN_MAX_TOKENS", "4000")
+    monkeypatch.setenv("QWEN_ENABLE_SEARCH", "false")
     monkeypatch.setenv("GLM_RUNNER_ENABLED", "false")
     monkeypatch.setenv("GLM_MODEL", "glm-5.1")
+    monkeypatch.setenv("GLM_BASE_URL", "https://api.z.ai/api/paas/v4")
+    monkeypatch.setenv("GLM_MAX_TOKENS", "4000")
+    monkeypatch.setenv("GLM_THINKING_ENABLED", "false")
+    monkeypatch.setenv("KIMI_BASE_URL", "https://api.moonshot.ai/v1")
+    monkeypatch.setenv("KIMI_MAX_TOKENS", "4000")
+    monkeypatch.setenv("KIMI_THINKING_ENABLED", "false")
     monkeypatch.setenv("GEMINI_MAX_CONTEXT_TOKENS", "32000")
     monkeypatch.setenv("GEMINI_MAX_CONTEXT_CHARS", "120000")
 
@@ -39,6 +60,85 @@ def _seed_ai_state(sqlite_path):
             ),
         )
         connection.commit()
+
+
+def _seed_duplicate_findings(sqlite_path):
+    with sqlite3.connect(sqlite_path) as connection:
+        connection.execute(
+            "INSERT OR REPLACE INTO collaboration_reviews (id, vault_id, title, source_agent, review_type, status, created_at, updated_at) "
+            "VALUES ('review_context', 'local-default', 'Context Review', 'claude', 'agent_review', 'pending_review', '2026-05-03T00:00:00Z', '2026-05-03T00:00:00Z')"
+        )
+        for finding_id, status in [("finding_context_1", "pending"), ("finding_context_2", "accepted")]:
+            connection.execute(
+                "INSERT OR REPLACE INTO collaboration_findings (id, review_id, severity, area, title, evidence, proposed_change, evidence_quality, status, created_at, updated_at) "
+                "VALUES (?, 'review_context', 'medium', 'API', 'Duplicate context issue', 'Evidence from context.', 'Change the context handling.', 'context_limited', ?, '2026-05-03T00:00:00Z', '2026-05-03T00:00:00Z')",
+                (finding_id, status),
+            )
+        connection.commit()
+
+
+def test_normalize_model_output_dedupes_duplicate_titles():
+    output = normalize_model_output(
+        {
+            "review_title": "Deduping test",
+            "overall_assessment": "Duplicate titles should collapse.",
+            "findings": [
+                {
+                    "title": "Repeated finding",
+                    "severity": "medium",
+                    "area": "API",
+                    "evidence": "First evidence.",
+                    "proposed_change": "First change.",
+                },
+                {
+                    "title": "Repeated Finding!",
+                    "severity": "high",
+                    "area": "API",
+                    "evidence": "Second evidence.",
+                    "proposed_change": "Second change.",
+                },
+            ],
+            "summary": "Done.",
+        }
+    )
+    assert len(output["findings"]) == 1
+    assert output["findings"][0]["title"] == "Repeated finding"
+
+
+def test_openai_compatible_prompt_includes_protocol_header():
+    messages = build_openai_compatible_review_messages(
+        {
+            "request": {"review_focus": "protocol check"},
+            "context": {"protocols": {"access_fallback": "inline"}, "stale_suppression": {"do_not_repeat_existing_titles": []}},
+        },
+        provider_name="DeepSeek",
+    )
+    system_prompt = messages[0]["content"]
+    assert "access_fallback" in system_prompt
+    assert "boundary_enforcement" in system_prompt
+    assert "stale_suppression" in system_prompt
+    assert "avoid full release_check" in system_prompt
+
+
+def test_model_context_slims_and_dedupes_findings(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        settings = get_settings()
+        _seed_ai_state(settings.sqlite_path)
+        _seed_duplicate_findings(settings.sqlite_path)
+
+        response = client.post("/api/model-runs/gemini/reviews", json={"mock": True, "max_pages": 1, "max_findings": 1, "slim_context": True})
+        assert response.status_code == 200, response.text
+        summary = response.json()["data"]["run"]["context_summary"]
+        request_payload = response.json()["data"]["run"]["request"]
+        assert summary["page_count"] == 1
+        assert summary["context_mode"] == "slim"
+        assert summary["max_pages"] == 1
+        assert summary["max_findings"] == 1
+        assert summary["open_finding_count"] == 1
+        assert summary["existing_finding_title_count"] == 1
+        assert request_payload["max_findings"] == 1
+        assert request_payload["slim_context"] is True
 
 
 def test_gemini_mock_run_dry_run_import_flow(tmp_path, monkeypatch):
@@ -94,9 +194,12 @@ def test_gemini_non_mock_uses_provider_adapter(tmp_path, monkeypatch):
     class FakeGeminiAdapter:
         provider_id = "gemini"
 
-        def __init__(self, *, api_key, model, timeout_seconds):
+        def __init__(self, *, api_key, base_url, model, response_mime_type, thinking_budget, timeout_seconds):
             assert api_key == "test-gemini-key"
+            assert base_url == "https://generativelanguage.googleapis.com/v1beta"
             assert model == "gemini-2.5-pro"
+            assert response_mime_type == "application/json"
+            assert thinking_budget == 0
             assert timeout_seconds > 0
 
         async def generate_review(self, request):
@@ -131,6 +234,156 @@ def test_gemini_non_mock_uses_provider_adapter(tmp_path, monkeypatch):
         assert data["dry_run"]["parser_errors"] == []
 
 
+def test_review_now_uses_live_gemini_when_configured(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    monkeypatch.setenv("GEMINI_RUNNER_ENABLED", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+
+    class FakeGeminiAdapter:
+        provider_id = "gemini"
+
+        def __init__(self, *, api_key, base_url, model, response_mime_type, thinking_budget, timeout_seconds):
+            assert api_key == "test-gemini-key"
+            assert base_url == "https://generativelanguage.googleapis.com/v1beta"
+            assert model == "gemini-2.5-pro"
+            assert response_mime_type == "application/json"
+            assert thinking_budget == 0
+
+        async def generate_review(self, request):
+            assert request["request"]["mock"] is False
+            assert request["request"]["max_pages"] == 10
+            assert request["request"]["max_findings"] == 15
+            assert request["request"]["slim_context"] is True
+            assert request["context"]["contract_version"] == "p20.v1"
+            assert request["context"]["packet_schema_version"] == "p20.v1"
+            assert request["context"]["ai_context"]["role"] == "provider_review_reviewer"
+            assert "packet_summary" in request["context"]
+            assert "node_cards" in request["context"]
+            assert request["context"]["contract"]["packet_metadata"]["packet_kind"] == "provider_fast_lane"
+            assert request["context"]["contract"]["output_contract"]["output_mode"] == "top_findings"
+            assert request["context"]["protocols"]["boundary_enforcement"]
+            assert request["context"]["stale_suppression"]["rule"]
+            return {
+                "review_title": "Fast lane Gemini review",
+                "overall_assessment": "Fast lane invoked Gemini directly.",
+                "findings": [
+                    {
+                        "title": "Fast lane should bypass packet copy",
+                        "severity": "medium",
+                        "area": "API",
+                        "evidence": "The review-now endpoint selected the configured Gemini adapter.",
+                        "proposed_change": "Use server-side provider calls before packet fallback.",
+                        "confidence": 0.95,
+                    }
+                ],
+                "summary": "Fast lane result.",
+            }
+
+    monkeypatch.setattr("knownet_api.routes.model_runs.GeminiApiAdapter", FakeGeminiAdapter)
+    with TestClient(app) as client:
+        settings = get_settings()
+        _seed_ai_state(settings.sqlite_path)
+        response = client.post("/api/model-runs/review-now", json={"provider": "auto", "prefer_live": True, "allow_mock_fallback": False})
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["fast_lane"] is True
+        assert data["provider"] == "gemini"
+        assert data["live"] is True
+        assert data["mock_fallback"] is False
+        assert data["run"]["status"] == "dry_run_ready"
+        assert data["run"]["request"]["mock"] is False
+        assert data["dry_run"]["finding_count"] == 1
+    get_settings.cache_clear()
+
+
+def test_gemini_adapter_uses_documented_generate_content_payload(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "candidates": [
+                    {
+                        "content": {
+                            "parts": [
+                                {
+                                    "text": '{"review_title":"Gemini docs payload","overall_assessment":"ok","findings":[],"summary":"ok"}'
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, *, headers, json):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr("knownet_api.services.model_runner.httpx.AsyncClient", FakeAsyncClient)
+    from knownet_api.services.model_runner import GeminiApiAdapter
+
+    adapter = GeminiApiAdapter(
+        api_key="test-gemini-key",
+        base_url="https://generativelanguage.googleapis.com/v1beta",
+        model="gemini-2.5-flash",
+        response_mime_type="application/json",
+        thinking_budget=0,
+        timeout_seconds=12,
+    )
+    request = {"context": {"pages": []}, "request": {"mock": False, "review_focus": "payload"}}
+
+    import asyncio
+
+    result = asyncio.run(adapter.generate_review(request))
+    assert result["review_title"] == "Gemini docs payload"
+    assert captured["url"] == "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
+    assert captured["headers"]["x-goog-api-key"] == "test-gemini-key"
+    generation_config = captured["json"]["generationConfig"]
+    assert generation_config["responseMimeType"] == "application/json"
+    assert "responseJsonSchema" in generation_config
+    assert "responseSchema" not in generation_config
+    assert generation_config["thinkingConfig"] == {"thinkingBudget": 0}
+
+
+def test_review_now_can_mock_fallback_and_auto_import(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        settings = get_settings()
+        _seed_ai_state(settings.sqlite_path)
+        response = client.post("/api/model-runs/review-now", json={"allow_mock_fallback": True, "auto_import": True})
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["live"] is False
+        assert data["mock_fallback"] is True
+        assert data["run"]["status"] == "imported"
+        assert data["import"]["review"]["id"]
+        assert data["next_step"] == "triage_imported_findings"
+    get_settings.cache_clear()
+
+
+def test_review_now_requires_live_when_fallback_disabled(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        response = client.post("/api/model-runs/review-now", json={"prefer_live": True, "allow_mock_fallback": False})
+        assert response.status_code == 503
+        assert response.json()["detail"]["code"] == "gemini_fast_lane_unavailable"
+    get_settings.cache_clear()
+
+
 def test_deepseek_mock_run_and_disabled_real_path(tmp_path, monkeypatch):
     _isolate_settings(monkeypatch, tmp_path)
     with TestClient(app) as client:
@@ -158,9 +411,12 @@ def test_deepseek_non_mock_uses_provider_adapter(tmp_path, monkeypatch):
     class FakeDeepSeekAdapter:
         provider_id = "deepseek"
 
-        def __init__(self, *, api_key, model, timeout_seconds):
+        def __init__(self, *, api_key, base_url, model, reasoning_effort, thinking_enabled, timeout_seconds):
             assert api_key == "test-deepseek-key"
+            assert base_url == "https://api.deepseek.com"
             assert model == "deepseek-v4-flash"
+            assert reasoning_effort == "high"
+            assert thinking_enabled is True
             assert timeout_seconds > 0
 
         async def generate_review(self, request):
@@ -196,6 +452,62 @@ def test_deepseek_non_mock_uses_provider_adapter(tmp_path, monkeypatch):
         assert data["dry_run"]["parser_errors"] == []
 
 
+def test_deepseek_adapter_uses_documented_openai_compatible_payload(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"review_title":"DeepSeek docs payload","overall_assessment":"ok","findings":[],"summary":"ok"}'
+                        }
+                    }
+                ]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            captured["timeout"] = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, *, headers, json):
+            captured["url"] = url
+            captured["headers"] = headers
+            captured["json"] = json
+            return FakeResponse()
+
+    monkeypatch.setattr("knownet_api.services.model_runner.httpx.AsyncClient", FakeAsyncClient)
+    adapter = DeepSeekApiAdapter(
+        api_key="test-deepseek-key",
+        base_url="https://api.deepseek.com",
+        model="deepseek-v4-pro",
+        reasoning_effort="high",
+        thinking_enabled=True,
+        timeout_seconds=12,
+    )
+    request = {"context": {"pages": []}, "request": {"mock": False, "review_focus": "payload"}}
+
+    import asyncio
+
+    result = asyncio.run(adapter.generate_review(request))
+    assert result["review_title"] == "DeepSeek docs payload"
+    assert captured["url"] == "https://api.deepseek.com/chat/completions"
+    assert captured["headers"]["Authorization"] == "Bearer test-deepseek-key"
+    assert captured["json"]["model"] == "deepseek-v4-pro"
+    assert captured["json"]["stream"] is False
+    assert captured["json"]["reasoning_effort"] == "high"
+    assert captured["json"]["thinking"] == {"type": "enabled"}
+
+
 def test_minimax_mock_run_and_disabled_real_path(tmp_path, monkeypatch):
     _isolate_settings(monkeypatch, tmp_path)
     with TestClient(app) as client:
@@ -223,10 +535,12 @@ def test_minimax_non_mock_uses_provider_adapter(tmp_path, monkeypatch):
     class FakeMiniMaxAdapter:
         provider_id = "minimax"
 
-        def __init__(self, *, api_key, base_url, model, timeout_seconds):
+        def __init__(self, *, api_key, base_url, model, max_tokens, reasoning_split, timeout_seconds):
             assert api_key == "test-minimax-key"
-            assert base_url == "https://api.minimax.io/v1"
+            assert base_url == "https://api.minimaxi.com/v1"
             assert model == "MiniMax-M2.7"
+            assert max_tokens == 4000
+            assert reasoning_split is True
             assert timeout_seconds > 0
 
         async def generate_review(self, request):
@@ -260,6 +574,187 @@ def test_minimax_non_mock_uses_provider_adapter(tmp_path, monkeypatch):
         assert data["run"]["response"]["mock"] is False
         assert data["dry_run"]["finding_count"] == 1
         assert data["dry_run"]["parser_errors"] == []
+
+
+def test_minimax_adapter_uses_documented_openai_compatible_payload(monkeypatch):
+    captured = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"review_title":"MiniMax docs payload","overall_assessment":"ok","findings":[],"summary":"ok"}'
+                        }
+                    }
+                ]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, *, headers, json):
+            captured.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
+            return FakeResponse()
+
+    monkeypatch.setattr("knownet_api.services.model_runner.httpx.AsyncClient", FakeAsyncClient)
+    adapter = MiniMaxApiAdapter(
+        api_key="test-minimax-key",
+        base_url="https://api.minimaxi.com/v1",
+        model="MiniMax-M2.7",
+        max_tokens=4000,
+        reasoning_split=True,
+        timeout_seconds=12,
+    )
+    request = {"context": {"pages": []}, "request": {"mock": False, "review_focus": "payload"}}
+
+    import asyncio
+
+    result = asyncio.run(adapter.generate_review(request))
+    assert result["review_title"] == "MiniMax docs payload"
+    assert captured[0]["url"] == "https://api.minimaxi.com/v1/chat/completions"
+    assert captured[0]["headers"]["Authorization"] == "Bearer test-minimax-key"
+    payload = captured[0]["json"]
+    assert payload["model"] == "MiniMax-M2.7"
+    assert payload["stream"] is False
+    assert payload["max_tokens"] == 4000
+    assert payload["reasoning_split"] is True
+    assert payload["tools"]
+
+
+def test_qwen_mock_run_and_disabled_real_path(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        settings = get_settings()
+        _seed_ai_state(settings.sqlite_path)
+
+        mock = client.post("/api/model-runs/qwen/reviews", json={"mock": True, "review_focus": "Qwen path"})
+        assert mock.status_code == 200, mock.text
+        data = mock.json()["data"]
+        assert data["run"]["provider"] == "qwen"
+        assert data["run"]["status"] == "dry_run_ready"
+        assert data["run"]["response"]["mock"] is True
+        assert data["dry_run"]["finding_count"] == 1
+
+        real = client.post("/api/model-runs/qwen/reviews", json={"mock": False})
+        assert real.status_code == 503
+        assert real.json()["detail"]["code"] == "qwen_disabled"
+
+
+def test_qwen_non_mock_uses_provider_adapter(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    monkeypatch.setenv("QWEN_RUNNER_ENABLED", "true")
+    monkeypatch.setenv("QWEN_API_KEY", "test-qwen-key")
+
+    class FakeQwenAdapter:
+        provider_id = "qwen"
+
+        def __init__(self, *, api_key, base_url, model, max_tokens, enable_search, timeout_seconds):
+            assert api_key == "test-qwen-key"
+            assert base_url == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            assert model == "qwen-plus"
+            assert max_tokens == 4000
+            assert enable_search is False
+            assert timeout_seconds > 0
+
+        async def generate_review(self, request):
+            assert request["request"]["mock"] is False
+            assert request["context"]["pages"]
+            return {
+                "review_title": "Fake Qwen live adapter review",
+                "overall_assessment": "Qwen provider adapter route wiring works.",
+                "findings": [
+                    {
+                        "title": "Qwen adapter should stay dry-run-first",
+                        "severity": "medium",
+                        "area": "API",
+                        "evidence": "The non-mock Qwen route used the provider adapter and returned dry_run_ready.",
+                        "proposed_change": "Keep Qwen output behind the same operator import gate as Gemini, DeepSeek, and MiniMax.",
+                        "confidence": 0.86,
+                    }
+                ],
+                "summary": "Fake Qwen provider result.",
+            }
+
+    monkeypatch.setattr("knownet_api.routes.model_runs.QwenApiAdapter", FakeQwenAdapter)
+    with TestClient(app) as client:
+        settings = get_settings()
+        _seed_ai_state(settings.sqlite_path)
+        response = client.post("/api/model-runs/qwen/reviews", json={"mock": False, "review_focus": "adapter smoke"})
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["run"]["provider"] == "qwen"
+        assert data["run"]["status"] == "dry_run_ready"
+        assert data["run"]["response"]["mock"] is False
+        assert data["dry_run"]["finding_count"] == 1
+        assert data["dry_run"]["parser_errors"] == []
+
+
+def test_qwen_adapter_uses_dashscope_openai_compatible_payload(monkeypatch):
+    captured = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"review_title":"Qwen docs payload","overall_assessment":"ok","findings":[],"summary":"ok"}'
+                        }
+                    }
+                ]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, *, headers, json):
+            captured.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
+            return FakeResponse()
+
+    monkeypatch.setattr("knownet_api.services.model_runner.httpx.AsyncClient", FakeAsyncClient)
+    adapter = QwenApiAdapter(
+        api_key="test-qwen-key",
+        base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        model="qwen-plus",
+        max_tokens=4000,
+        enable_search=False,
+        timeout_seconds=12,
+    )
+    request = {"context": {"pages": []}, "request": {"mock": False, "review_focus": "payload"}}
+
+    import asyncio
+
+    result = asyncio.run(adapter.generate_review(request))
+    assert result["review_title"] == "Qwen docs payload"
+    assert captured[0]["url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+    assert captured[0]["headers"]["Authorization"] == "Bearer test-qwen-key"
+    payload = captured[0]["json"]
+    assert payload["model"] == "qwen-plus"
+    assert payload["stream"] is False
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["max_tokens"] == 4000
+    assert "enable_search" not in payload
+    assert payload["tools"]
 
 
 def test_glm_mock_run_and_disabled_real_path(tmp_path, monkeypatch):
@@ -308,10 +803,12 @@ def test_kimi_non_mock_uses_provider_adapter(tmp_path, monkeypatch):
     class FakeKimiAdapter:
         provider_id = "kimi"
 
-        def __init__(self, *, api_key, base_url, model, timeout_seconds):
+        def __init__(self, *, api_key, base_url, model, max_tokens, thinking_enabled, timeout_seconds):
             assert api_key == "test-kimi-key"
             assert base_url == "https://api.moonshot.ai/v1"
-            assert model == "kimi-k2-0905-preview"
+            assert model == "kimi-k2.5"
+            assert max_tokens == 4000
+            assert thinking_enabled is False
             assert timeout_seconds > 0
 
         async def generate_review(self, request):
@@ -347,6 +844,64 @@ def test_kimi_non_mock_uses_provider_adapter(tmp_path, monkeypatch):
         assert data["dry_run"]["parser_errors"] == []
 
 
+def test_kimi_adapter_uses_documented_openai_compatible_payload(monkeypatch):
+    captured = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"review_title":"Kimi docs payload","overall_assessment":"ok","findings":[],"summary":"ok"}'
+                        }
+                    }
+                ]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, *, headers, json):
+            captured.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
+            return FakeResponse()
+
+    monkeypatch.setattr("knownet_api.services.model_runner.httpx.AsyncClient", FakeAsyncClient)
+    adapter = KimiApiAdapter(
+        api_key="test-kimi-key",
+        base_url="https://api.moonshot.ai/v1",
+        model="kimi-k2.5",
+        max_tokens=4000,
+        thinking_enabled=False,
+        timeout_seconds=12,
+    )
+    request = {"context": {"pages": []}, "request": {"mock": False, "review_focus": "payload"}}
+
+    import asyncio
+
+    result = asyncio.run(adapter.generate_review(request))
+    assert result["review_title"] == "Kimi docs payload"
+    assert captured[0]["url"] == "https://api.moonshot.ai/v1/chat/completions"
+    assert captured[0]["headers"]["Authorization"] == "Bearer test-kimi-key"
+    payload = captured[0]["json"]
+    assert payload["model"] == "kimi-k2.5"
+    assert payload["stream"] is False
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["max_tokens"] == 4000
+    assert payload["thinking"] == {"type": "disabled"}
+    assert "temperature" not in payload
+    assert "max_completion_tokens" not in payload
+
+
 def test_glm_non_mock_uses_provider_adapter(tmp_path, monkeypatch):
     _isolate_settings(monkeypatch, tmp_path)
     monkeypatch.setenv("GLM_RUNNER_ENABLED", "true")
@@ -355,10 +910,12 @@ def test_glm_non_mock_uses_provider_adapter(tmp_path, monkeypatch):
     class FakeGlmAdapter:
         provider_id = "glm"
 
-        def __init__(self, *, api_key, base_url, model, timeout_seconds):
+        def __init__(self, *, api_key, base_url, model, max_tokens, thinking_enabled, timeout_seconds):
             assert api_key == "test-glm-key"
             assert base_url == "https://api.z.ai/api/paas/v4"
             assert model == "glm-5.1"
+            assert max_tokens == 4000
+            assert thinking_enabled is False
             assert timeout_seconds > 0
 
         async def generate_review(self, request):
@@ -392,6 +949,125 @@ def test_glm_non_mock_uses_provider_adapter(tmp_path, monkeypatch):
         assert data["run"]["response"]["mock"] is False
         assert data["dry_run"]["finding_count"] == 1
         assert data["dry_run"]["parser_errors"] == []
+
+
+def test_glm_adapter_uses_zai_openai_compatible_payload(monkeypatch):
+    captured = []
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": '{"review_title":"GLM docs payload","overall_assessment":"ok","findings":[],"summary":"ok"}'
+                        }
+                    }
+                ]
+            }
+
+    class FakeAsyncClient:
+        def __init__(self, *, timeout):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, *, headers, json):
+            captured.append({"url": url, "headers": headers, "json": json, "timeout": self.timeout})
+            return FakeResponse()
+
+    monkeypatch.setattr("knownet_api.services.model_runner.httpx.AsyncClient", FakeAsyncClient)
+    adapter = GlmApiAdapter(
+        api_key="test-glm-key",
+        base_url="https://api.z.ai/api/paas/v4",
+        model="glm-5.1",
+        max_tokens=4000,
+        thinking_enabled=False,
+        timeout_seconds=12,
+    )
+    request = {"context": {"pages": []}, "request": {"mock": False, "review_focus": "payload"}}
+
+    import asyncio
+
+    result = asyncio.run(adapter.generate_review(request))
+    assert result["review_title"] == "GLM docs payload"
+    assert captured[0]["url"] == "https://api.z.ai/api/paas/v4/chat/completions"
+    assert captured[0]["headers"]["Authorization"] == "Bearer test-glm-key"
+    payload = captured[0]["json"]
+    assert payload["model"] == "glm-5.1"
+    assert payload["stream"] is False
+    assert payload["response_format"] == {"type": "json_object"}
+    assert payload["max_tokens"] == 4000
+    assert "thinking" not in payload
+    assert payload["tools"]
+
+
+def test_provider_run_records_duration_on_success_and_failure(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+
+    class SuccessfulAdapter:
+        provider_id = "gemini"
+
+        def __init__(self, *, api_key, base_url, model, response_mime_type, thinking_budget, timeout_seconds):
+            pass
+
+        async def generate_review(self, request):
+            return {
+                "review_title": "Timed run",
+                "overall_assessment": "ok",
+                "findings": [
+                    {
+                        "title": "Duration is recorded",
+                        "severity": "low",
+                        "area": "Ops",
+                        "evidence": "The run completed through the fake adapter.",
+                        "proposed_change": "Keep duration_ms in model run responses.",
+                    }
+                ],
+                "summary": "ok",
+            }
+
+    monkeypatch.setenv("GEMINI_RUNNER_ENABLED", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    monkeypatch.setattr("knownet_api.routes.model_runs.GeminiApiAdapter", SuccessfulAdapter)
+    with TestClient(app) as client:
+        settings = get_settings()
+        _seed_ai_state(settings.sqlite_path)
+        success = client.post("/api/model-runs/gemini/reviews", json={"mock": False})
+        assert success.status_code == 200, success.text
+        assert isinstance(success.json()["data"]["run"]["response"]["duration_ms"], int)
+
+    get_settings.cache_clear()
+    _isolate_settings(monkeypatch, tmp_path)
+
+    class FailingAdapter:
+        provider_id = "gemini"
+
+        def __init__(self, *, api_key, base_url, model, response_mime_type, thinking_budget, timeout_seconds):
+            pass
+
+        async def generate_review(self, request):
+            from fastapi import HTTPException
+
+            raise HTTPException(status_code=504, detail={"code": "gemini_timeout", "message": "timeout"})
+
+    monkeypatch.setenv("GEMINI_RUNNER_ENABLED", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    monkeypatch.setattr("knownet_api.routes.model_runs.GeminiApiAdapter", FailingAdapter)
+    with TestClient(app) as client:
+        settings = get_settings()
+        _seed_ai_state(settings.sqlite_path)
+        failed = client.post("/api/model-runs/gemini/reviews", json={"mock": False})
+        assert failed.status_code == 504
+        row = sqlite3.connect(settings.sqlite_path).execute("SELECT response_json FROM model_review_runs WHERE status = 'failed'").fetchone()
+        assert row is not None
+        assert "duration_ms" in row[0]
 
 
 def test_model_context_rejects_secret_like_ai_state(tmp_path, monkeypatch):

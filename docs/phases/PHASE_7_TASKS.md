@@ -29,7 +29,7 @@ The product shape is a local-first AI collaboration tool for reviews,
 decisions, and implementation records.
 ```
 
-Design reference: [AI-Centered Design](./docs/AI_CENTERED_DESIGN.md). SQLite/JSON
+Design reference: [AI-Centered Design](../AI_CENTERED_DESIGN.md). SQLite/JSON
 records are the canonical AI collaboration state. Markdown is preserved as a
 narrative attachment for source review text and long-form context.
 

@@ -342,6 +342,7 @@ CREATE TABLE IF NOT EXISTS collaboration_findings (
   evidence TEXT,
   proposed_change TEXT,
   raw_text TEXT,
+  evidence_quality TEXT NOT NULL DEFAULT 'unspecified',
   status TEXT NOT NULL DEFAULT 'pending',
   decision_note TEXT,
   decided_by TEXT,
@@ -359,6 +360,21 @@ CREATE TABLE IF NOT EXISTS implementation_records (
   verification TEXT,
   notes TEXT,
   created_at TEXT NOT NULL,
+  FOREIGN KEY(finding_id) REFERENCES collaboration_findings(id)
+);
+
+CREATE TABLE IF NOT EXISTS finding_tasks (
+  id TEXT PRIMARY KEY,
+  finding_id TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL DEFAULT 'open',
+  priority TEXT NOT NULL DEFAULT 'normal',
+  owner TEXT,
+  task_prompt TEXT NOT NULL,
+  expected_verification TEXT,
+  notes TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
   FOREIGN KEY(finding_id) REFERENCES collaboration_findings(id)
 );
 
@@ -384,8 +400,62 @@ CREATE INDEX IF NOT EXISTS idx_collaboration_findings_review
 CREATE INDEX IF NOT EXISTS idx_implementation_records_finding
   ON implementation_records(finding_id);
 
+CREATE INDEX IF NOT EXISTS idx_finding_tasks_status
+  ON finding_tasks(status, priority, updated_at);
+
 CREATE INDEX IF NOT EXISTS idx_context_bundle_manifests_vault
   ON context_bundle_manifests(vault_id, created_at);
+
+CREATE TABLE IF NOT EXISTS experiment_packets (
+  id TEXT PRIMARY KEY,
+  vault_id TEXT NOT NULL DEFAULT 'local-default',
+  experiment_name TEXT NOT NULL,
+  target_agent TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  content_path TEXT NOT NULL,
+  node_slugs TEXT NOT NULL DEFAULT '[]',
+  scenarios TEXT NOT NULL DEFAULT '[]',
+  preflight_json TEXT NOT NULL DEFAULT '{}',
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS experiment_packet_responses (
+  id TEXT PRIMARY KEY,
+  packet_id TEXT NOT NULL,
+  source_agent TEXT NOT NULL,
+  source_model TEXT,
+  response_markdown TEXT NOT NULL,
+  dry_run_json TEXT NOT NULL DEFAULT '{}',
+  imported_review_id TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(packet_id) REFERENCES experiment_packets(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_experiment_packets_vault_created
+  ON experiment_packets(vault_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_experiment_packet_responses_packet
+  ON experiment_packet_responses(packet_id, created_at);
+
+CREATE TABLE IF NOT EXISTS project_snapshot_packets (
+  id TEXT PRIMARY KEY,
+  vault_id TEXT NOT NULL DEFAULT 'local-default',
+  target_agent TEXT NOT NULL,
+  profile TEXT NOT NULL DEFAULT 'overview',
+  output_mode TEXT NOT NULL DEFAULT 'top_findings',
+  focus TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  content_path TEXT NOT NULL,
+  warnings_json TEXT NOT NULL DEFAULT '[]',
+  snapshot_quality_json TEXT NOT NULL DEFAULT '{}',
+  contract_version TEXT NOT NULL DEFAULT 'p19.v1',
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_project_snapshot_packets_vault_created
+  ON project_snapshot_packets(vault_id, created_at);
 
 CREATE TABLE IF NOT EXISTS ai_state_pages (
   id TEXT PRIMARY KEY,

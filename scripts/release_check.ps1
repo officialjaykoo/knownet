@@ -5,6 +5,7 @@ $ApiDir = Join-Path $Root "apps/api"
 $CoreDir = Join-Path $Root "apps/core"
 $WebDir = Join-Path $Root "apps/web"
 $VenvPython = Join-Path $ApiDir ".venv/Scripts/python.exe"
+$EvidencePath = Join-Path $Root "docs/RELEASE_EVIDENCE.md"
 
 function Step($Message) {
   Write-Host ""
@@ -103,6 +104,17 @@ if (-not $verify.ok -or -not $verify.data.ok) {
 }
 Write-Host "verify-index: ok"
 
+$quality = Invoke-Json "GET" "http://127.0.0.1:8000/api/operator/ai-state-quality" @{"x-knownet-admin-token" = $adminToken}
+if (-not $quality.ok -or $quality.data.overall_status -eq "fail") {
+  throw "AI state quality failed"
+}
+Write-Host ("AI state quality: " + $quality.data.overall_status)
+
+$providers = Invoke-Json "GET" "http://127.0.0.1:8000/api/operator/provider-matrix" @{"x-knownet-admin-token" = $adminToken}
+if ($providers.ok) {
+  Write-Host ("provider verification: live=" + $providers.data.summary.live_verified + " configured=" + $providers.data.summary.configured + " mocked=" + $providers.data.summary.mocked)
+}
+
 Step "Security/path exposure checks"
 $patterns = @(
   "source_path",
@@ -123,6 +135,43 @@ foreach ($pattern in $patterns) {
     $matches | ForEach-Object { Write-Host ("  " + $_.Path + ":" + $_.LineNumber + " " + $_.Line.Trim()) }
   }
 }
+
+$gitStatus = @(git -C $Root status --short)
+$evidence = [ordered]@{
+  schema = "knownet.release_evidence.v1"
+  generated_at = (Get-Date).ToUniversalTime().ToString("o").Replace("+00:00", "Z")
+  git_status_clean = ($gitStatus.Count -eq 0)
+  git_status = $gitStatus
+  checks = [ordered]@{
+    rust_tests = "passed"
+    api_tests = "passed"
+    mcp_tests = "passed"
+    sdk_tests = "passed"
+    slow_operational_api_tests = "passed"
+    smoke_tests = "passed"
+    web_audit = "passed"
+    web_build = "passed"
+    health_overall_status = $health.data.overall_status
+    verify_index_ok = [bool]$verify.data.ok
+    ai_state_quality = $quality.data.overall_status
+    provider_matrix_summary = $providers.data.summary
+    snapshot_restore_test = "passed_by_slow_operational_api_tests"
+  }
+  notes = @(
+    "Provider live verification is evidence-based; mocked runs do not count as live_verified.",
+    "Snapshot restore is covered by the slow operational API test selection in this release check."
+  )
+}
+$evidenceJson = $evidence | ConvertTo-Json -Depth 8
+$evidenceMarkdown = @"
+# KnowNet Release Evidence
+
+``````json
+$evidenceJson
+``````
+"@
+Set-Content -LiteralPath $EvidencePath -Encoding utf8 -Value $evidenceMarkdown
+Write-Host ("Release evidence written: " + $EvidencePath)
 
 Write-Host ""
 Write-Host "Release checks passed." -ForegroundColor Green

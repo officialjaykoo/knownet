@@ -31,6 +31,7 @@ pub struct CreateCollaborationFindingInput<'a> {
     pub evidence: Option<&'a str>,
     pub proposed_change: Option<&'a str>,
     pub raw_text: Option<&'a str>,
+    pub evidence_quality: &'a str,
     pub status: &'a str,
     pub created_at: &'a str,
 }
@@ -191,8 +192,8 @@ pub fn create_collaboration_finding(
         .execute(
             "INSERT INTO collaboration_findings (
               id, review_id, severity, area, title, evidence, proposed_change,
-              raw_text, status, created_at, updated_at
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+              raw_text, evidence_quality, status, created_at, updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)",
             params![
                 input.finding_id,
                 input.review_id,
@@ -202,6 +203,7 @@ pub fn create_collaboration_finding(
                 input.evidence,
                 input.proposed_change,
                 input.raw_text,
+                input.evidence_quality,
                 input.status,
                 input.created_at
             ],

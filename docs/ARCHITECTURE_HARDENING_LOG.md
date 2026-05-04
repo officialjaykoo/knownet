@@ -14,6 +14,8 @@ KnowNet should become more complete by reducing ambiguity, hidden coupling, and 
 | Web page size | `apps/web/app/page.tsx` still owns workflow state, but Operations and Graph panels are now components. | Extract stable panels/components gradually without changing behavior. | Improved |
 | Rust daemon handler size | `apps/core/src/daemon.rs` still contains a large command handler, but page, suggestion, citation, and graph commands now route through `apps/core/src/commands/`. | Move only high-risk repeated command groups when touched; avoid splitting tiny one-off commands just to create files. | Improved |
 | Operations docs | Runbook exists but should keep matching actual health, restore, import, and release behavior. | Update docs alongside each hardening change. | Ongoing |
+| Operator console size | Phase 17 added operator workflow state to `apps/web/app/page.tsx`, increasing the main page again. | Extract model runs, provider matrix, and release readiness into components after behavior stabilizes. | Accepted |
+| Release evidence | `scripts/release_check.ps1` now writes structured evidence, but full release mode still depends on live servers and restore acceptance. | Keep evidence generation simple, then add explicit release/restore modes when the workflow is stable. | Improved |
 
 ## Completed In This Pass
 
@@ -27,8 +29,17 @@ KnowNet should become more complete by reducing ambiguity, hidden coupling, and 
 8. Removed third-party note-app import/export compatibility so KnowNet keeps a single native page and snapshot model.
 9. Moved citation validation status updates to Rust daemon command `update_citation_validation_status`.
 10. Moved graph rebuild/layout cache command routing out of the large daemon match arm and added shared command response/parameter helpers.
+11. Added Phase 17 operator endpoints for AI state quality, provider matrix,
+    release readiness, and restore-plan inspection.
+12. Added Operator Console UI for model runs, provider status, release
+    readiness, and guarded restore-plan inspection.
+13. Added release evidence generation to `scripts/release_check.ps1`.
+14. Consolidated stale historical docs into the current docs index, model-run
+    guide, MCP client guide, and release evidence record.
 
 ## Near-Term Work Queue
 
 1. Continue moving only large repeated Rust daemon command groups into `commands/` domain modules when those commands are touched.
 2. Keep direct-write inventory updates in this log or the active phase task file.
+3. Extract Phase 17 operator UI sections into components after the workflow
+   stops changing.

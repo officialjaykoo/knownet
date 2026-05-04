@@ -1,4 +1,4 @@
-# Phase 15 Tasks: Release Hardening Round 1
+﻿# Phase 15 Tasks: Release Hardening Round 1
 
 Phase 15 raises KnowNet quality after Phases 1-14. It is not a feature
 expansion phase. The goal is to make the already-built system safer, cleaner,
@@ -9,11 +9,6 @@ Implementation status: completed in the codebase.
 Completed surface:
 
 ```txt
-scripts/phase15_hardening.py
-  Live Phase 15 hardening runner for token cleanup, DB finding triage,
-  MCP flow verification, performance baseline collection, snapshot integrity,
-  docs/DB cross-check, and release-hardening report generation.
-
 scripts/release_check.ps1
   Release gate covering Rust, API, MCP, SDK, slow operational tests, smoke
   tests, web audit/build, live health, verify-index, and agent-surface exposure
@@ -28,12 +23,12 @@ apps/api/knownet_api/routes/agent.py
   Agent list metadata now returns offset-aware truncation metadata and
   next_offset for paginated AI-facing responses.
 
-docs/RELEASE_HARDENING_RUN.md
-docs/PERFORMANCE_BASELINE.md
-docs/EXTERNAL_AI_REVIEW_TRIAGE.md
-docs/EXTERNAL_AI_ACCESS_LOG.md
-  Phase 15 live run evidence, measured timings, final review/finding triage
-  status, and external token cleanup record.
+docs/RELEASE_EVIDENCE.md
+docs/MCP_CLIENTS.md
+docs/MODEL_RUNS.md
+  Phase 15 one-off run evidence and external AI experiment notes were
+  consolidated after Phase 17. The old phase-specific hardening script was
+  removed so the current release gate has a single source of truth.
 ```
 
 ## Fixed Decisions
@@ -98,7 +93,7 @@ Tasks:
    GET /api/agent/me or equivalent MCP call with 401.
 5. Verify the revoked token also fails through the MCP bridge or MCP tool path.
 6. Record the cleanup in audit_events.
-7. Update external AI access log with cleanup status.
+7. Record cleanup status in audit/events or the current release evidence.
 ```
 
 Done when:
@@ -117,7 +112,7 @@ Goal:
 
 ```txt
 Make the collaboration review queue reflect the triage already recorded in
-docs/EXTERNAL_AI_REVIEW_TRIAGE.md.
+structured collaboration findings and implementation records.
 ```
 
 Tasks:
@@ -131,7 +126,8 @@ Tasks:
    - release/ops follow-ups -> deferred
 3. Add implementation records where code/docs were changed in Phase 14.
 4. Ensure reviews with no pending findings become triaged.
-5. Keep docs/EXTERNAL_AI_REVIEW_TRIAGE.md as the readable AI summary.
+5. Keep current AI-readable state and release evidence aligned with the final
+   finding states.
 ```
 
 Rules:
@@ -223,7 +219,7 @@ Done when:
 ```txt
 The scenario can be run repeatably without corrupting pages, graph nodes,
 reviews, findings, citations, or ai_state rows.
-A short run report is written to docs/RELEASE_HARDENING_RUN.md.
+A short run report is written to docs/RELEASE_EVIDENCE.md.
 The report includes verify-index before/after results and the MCP flow result.
 The report confirms ai-state did not expose local filesystem paths or token
 material.
@@ -276,7 +272,7 @@ Do not optimize before measuring.
 Done when:
 
 ```txt
-docs/PERFORMANCE_BASELINE.md records median-ish local timings, obvious slow
+docs/RELEASE_EVIDENCE.md records median-ish local timings, obvious slow
 paths, and any fixes made.
 Endpoints used by external agents have predictable response sizes and no local
 filesystem paths in responses.
@@ -355,7 +351,7 @@ Do not print raw agent tokens in bridge logs.
 Done when:
 
 ```txt
-docs/RELEASE_HARDENING_RUN.md records bridge restart results and confirms local
+docs/RELEASE_EVIDENCE.md records bridge restart results and confirms local
 operation works with Cloudflare off.
 ```
 
@@ -426,7 +422,7 @@ Tasks:
 Done when:
 
 ```txt
-docs/RELEASE_HARDENING_RUN.md records snapshot path, archive format, manifest
+docs/RELEASE_EVIDENCE.md records snapshot path, archive format, manifest
 presence, and any skipped restore rationale.
 ```
 
@@ -442,7 +438,7 @@ still shows a large stale pending queue.
 Tasks:
 
 ```txt
-1. Compare docs/EXTERNAL_AI_REVIEW_TRIAGE.md issue groups against
+1. Compare docs/RELEASE_EVIDENCE.md issue groups against
    collaboration_findings statuses.
 2. Add a lightweight script or release-check step if practical.
 3. Record mismatches as release warnings.
@@ -485,7 +481,7 @@ Fix only commands or instructions that are wrong or confusing.
 Done when:
 
 ```txt
-docs/RELEASE_HARDENING_RUN.md includes a runbook validation result and any doc
+docs/RELEASE_EVIDENCE.md includes a runbook validation result and any doc
 edits made.
 ```
 
@@ -558,8 +554,8 @@ Closeout tasks:
 
 ```txt
 1. Update this document's implementation status.
-2. Update docs/RELEASE_HARDENING_RUN.md.
-3. Ensure docs/EXTERNAL_AI_REVIEW_TRIAGE.md reflects final finding states.
+2. Update docs/RELEASE_EVIDENCE.md.
+3. Ensure docs/RELEASE_EVIDENCE.md reflects final finding states.
 4. Run scripts/release_check.ps1.
 5. Commit and push.
 ```
@@ -606,3 +602,4 @@ Third work cluster:
 Final:
   P15-012 Phase 15 Closeout
 ```
+

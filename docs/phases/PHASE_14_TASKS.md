@@ -46,11 +46,10 @@ packages/knownet-agent-py/tests/test_client.py
   Cover the API, MCP, SDK onboarding entry points, dynamic action hints, locked
   page enforcement, read fields, and graph metadata.
 
-docs/EXTERNAL_AI_ACCESS_LOG.md
-docs/EXTERNAL_AI_REVIEW_TRIAGE.md
-  Record the external AI review access modes and close the review round by
-  grouping findings into resolved, intentional, false-positive, monitored, and
-  deferred issue groups.
+docs cleanup note
+  The old Phase 14 external AI access log and triage docs were consolidated
+  after Phase 17. Current external-agent setup lives in docs/MCP_CLIENTS.md,
+  and current release evidence lives in docs/RELEASE_EVIDENCE.md.
 ```
 
 ## Fixed Decisions

@@ -4,7 +4,7 @@ import re
 from shutil import move
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from ..audit import write_audit_event
@@ -22,6 +22,10 @@ router = APIRouter(prefix="/api/pages", tags=["pages"])
 class CreatePageRequest(BaseModel):
     slug: str
     title: str | None = None
+
+
+class RestoreRevisionRequest(BaseModel):
+    expected_current_revision_id: str | None = None
 
 
 def _utc_now() -> str:
@@ -499,6 +503,7 @@ async def restore_revision(
     slug: str,
     revision_id: str,
     request: Request,
+    payload: RestoreRevisionRequest | None = Body(default=None),
     actor: Actor = Depends(require_write_access),
 ):
     settings = request.app.state.settings
@@ -512,6 +517,21 @@ async def restore_revision(
         (slug,),
     )
     await raise_if_system_page_locked(settings.sqlite_path, slug=slug, page_id=page_row["id"] if page_row else None)
+    expected_current_revision_id = payload.expected_current_revision_id if payload else None
+    if expected_current_revision_id and page_row and page_row["current_revision_id"] != expected_current_revision_id:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "page_revision_conflict",
+                "message": "Page current revision changed before restore",
+                "details": {
+                    "slug": slug,
+                    "expected_current_revision_id": expected_current_revision_id,
+                    "actual_current_revision_id": page_row["current_revision_id"],
+                    "restore_revision_id": revision_id,
+                },
+            },
+        )
     try:
         result = await rust.request(
             "restore_revision",
@@ -550,7 +570,7 @@ async def restore_revision(
             target_id=page_row["id"] if page_row else _page_id_from_slug(slug),
             before_revision_id=page_row["current_revision_id"] if page_row else None,
             after_revision_id=revision_id,
-            metadata={"slug": slug, "path": result["path"]},
+            metadata={"slug": slug, "path": result["path"], "expected_current_revision_id": expected_current_revision_id},
         )
     except RustCoreError as error:
         status = 404 if error.code in {"page_not_found", "revision_not_found", "file_not_found"} else 500

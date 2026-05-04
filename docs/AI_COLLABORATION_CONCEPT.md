@@ -70,6 +70,6 @@ This document defines product direction only.
 Use the phase task files for implementation:
 
 ```txt
-PHASE_7_TASKS.md  collaboration MVP
-PHASE_8_TASKS.md  AI-centered hardening
+docs/phases/PHASE_7_TASKS.md  collaboration MVP
+docs/phases/PHASE_8_TASKS.md  AI-centered hardening
 ```

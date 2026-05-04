@@ -13,6 +13,8 @@ from fastapi import HTTPException
 
 from ..config import Settings
 from ..db.sqlite import fetch_all, fetch_one
+from .packet_contract import PACKET_CONTRACT_VERSION, build_packet_contract, contract_shape, explicit_stale_context_suppression, validate_packet_contract
+from .project_snapshot import finding_summary, node_card
 from ..security import utc_now
 
 
@@ -107,6 +109,10 @@ def sanitize_for_model(value: Any, *, label: str = "context") -> Any:
     return value
 
 
+def _dedupe_key(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.strip().lower()).strip()
+
+
 def normalize_model_output(raw: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(raw, dict):
         raise HTTPException(status_code=502, detail={"code": "model_response_invalid", "message": "Model response must be a JSON object", "details": {}})
@@ -114,6 +120,7 @@ def normalize_model_output(raw: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(findings_in, list):
         raise HTTPException(status_code=502, detail={"code": "model_response_invalid", "message": "Model response must include findings array", "details": {}})
     findings: list[dict[str, Any]] = []
+    seen_titles: set[str] = set()
     for index, finding in enumerate(findings_in[:50], start=1):
         if not isinstance(finding, dict):
             continue
@@ -129,6 +136,10 @@ def normalize_model_output(raw: dict[str, Any]) -> dict[str, Any]:
         title = str(finding.get("title") or "").strip()
         if not title:
             title = evidence.splitlines()[0][:120] or f"Model finding {index}"
+        title_key = _dedupe_key(title)
+        if title_key in seen_titles:
+            continue
+        seen_titles.add(title_key)
         confidence = finding.get("confidence")
         try:
             confidence_value = float(confidence) if confidence is not None else None
@@ -160,6 +171,7 @@ def model_output_to_markdown(output: dict[str, Any], *, source_agent: str, sourc
         "type: agent_review",
         f"source_agent: {source_agent}",
         f"source_model: {source_model}",
+        "evidence_quality: context_limited",
         "---",
         "",
         f"# {output['review_title']}",
@@ -233,7 +245,27 @@ async def assert_no_active_run(sqlite_path, provider: str) -> None:
         )
 
 
-async def build_safe_context(settings: Settings, *, vault_id: str, max_pages: int = 20) -> SafeContext:
+def _slim_state(state: dict[str, Any]) -> dict[str, Any]:
+    keep_keys = (
+        "summary",
+        "current_state",
+        "known_issues",
+        "review_targets",
+        "verification",
+        "next_actions",
+        "boundaries",
+        "non_goals",
+        "status",
+    )
+    slim = {key: state[key] for key in keep_keys if key in state}
+    if not slim:
+        for key, value in list(state.items())[:6]:
+            if key != "source":
+                slim[key] = value
+    return slim
+
+
+async def build_safe_context(settings: Settings, *, vault_id: str, max_pages: int = 20, max_findings: int = 20, slim: bool = True) -> SafeContext:
     counts = await fetch_one(
         settings.sqlite_path,
         "SELECT "
@@ -262,6 +294,8 @@ async def build_safe_context(settings: Settings, *, vault_id: str, max_pages: in
         except json.JSONDecodeError:
             state = {"parse_error": True}
         state = sanitize_for_model(state, label=f"ai_state.{row['slug']}")
+        if slim and isinstance(state, dict):
+            state = _slim_state(state)
         revision_id = row.get("current_revision_id")
         if revision_id:
             revision_ids.append(str(revision_id))
@@ -281,24 +315,90 @@ async def build_safe_context(settings: Settings, *, vault_id: str, max_pages: in
         )
     findings = await fetch_all(
         settings.sqlite_path,
-        "SELECT f.id, f.severity, f.area, f.title, f.status, r.id AS review_id, r.title AS review_title "
+        "SELECT f.id, f.severity, f.area, f.title, f.status, f.evidence_quality, r.id AS review_id, r.title AS review_title "
         "FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
-        "WHERE r.vault_id = ? AND f.status IN ('pending','needs_more_context','deferred') "
+        "WHERE r.vault_id = ? AND f.status IN ('pending','needs_more_context','accepted','deferred') "
         "ORDER BY CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, f.updated_at DESC LIMIT 50",
         (vault_id,),
     )
+    deduped_findings = []
+    seen_finding_titles: set[str] = set()
+    for finding in findings:
+        key = _dedupe_key(str(finding.get("title") or ""))
+        if key and key in seen_finding_titles:
+            continue
+        if key:
+            seen_finding_titles.add(key)
+        deduped_findings.append(finding)
+        if len(deduped_findings) >= max_findings:
+            break
+    existing_title_rows = await fetch_all(
+        settings.sqlite_path,
+        "SELECT f.title, f.status FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
+        "WHERE r.vault_id = ? ORDER BY f.updated_at DESC LIMIT 120",
+        (vault_id,),
+    )
+    existing_finding_titles = []
+    seen_existing: set[str] = set()
+    for row in existing_title_rows:
+        title = str(row.get("title") or "").strip()
+        key = _dedupe_key(title)
+        if not title or key in seen_existing:
+            continue
+        seen_existing.add(key)
+        existing_finding_titles.append({"title": title, "status": row.get("status"), "dedupe_key": key})
+        if len(existing_finding_titles) >= 50:
+            break
+    contract = build_packet_contract(
+        packet_kind="provider_fast_lane",
+        target_agent="external_model",
+        operator_question="Review the supplied KnowNet context and return import-ready findings only.",
+        output_mode="top_findings",
+        profile="provider_review",
+        stale_context_suppression=explicit_stale_context_suppression(),
+    )
+    contract_errors = validate_packet_contract(contract)
+    if contract_errors:
+        raise HTTPException(
+            status_code=500,
+            detail={"code": "provider_fast_lane_contract_invalid", "message": "Generated provider packet contract is invalid", "details": {"errors": contract_errors}},
+        )
     context = sanitize_for_model(
         {
             "generated_at": utc_now(),
+            "contract_version": PACKET_CONTRACT_VERSION,
+            "packet_schema_version": PACKET_CONTRACT_VERSION,
+            "contract": contract,
+            "contract_shape": contract_shape(contract),
+            "ai_context": {
+                "role": "provider_review_reviewer",
+                "target_agent": "external_model",
+                "task": "Review provider-fast-lane KnowNet context and return compact import-ready findings.",
+                "read_order": ["ai_context", "node_cards", "packet_summary", "contract"],
+            },
             "vault_id": vault_id,
             "purpose": "External model review context. Do not request raw database files, local filesystem paths, secrets, backups, sessions, or users.",
+            "protocols": {
+                "access_fallback": "If direct access is unavailable, state the limitation and continue only from supplied context.",
+                "boundary_enforcement": "Refuse secrets, raw database files, backups, sessions, users, shell access, and unreviewed writes. Escalate ambiguous write or restore requests.",
+                "evidence_quality": "Use context_limited unless the model directly observed the system state through the provided API response.",
+            },
             "summary": counts or {},
+            "packet_summary": {
+                "open_findings": [finding_summary(row) for row in deduped_findings],
+            },
+            "node_cards": [node_card(row, short_summary=str(row.get("state") or "")) for row in safe_pages],
             "pages": safe_pages,
-            "open_findings": findings,
+            "open_findings": deduped_findings,
+            "stale_suppression": {
+                "do_not_repeat_existing_titles": existing_finding_titles,
+                "rule": "Do not create a new finding for an issue that is already represented here unless the proposed change is materially different.",
+            },
             "rules": {
                 "output_format": "Return JSON only with review_title, overall_assessment, findings, and summary.",
                 "operator_import_required": True,
                 "canonical_state": "SQLite structured records and generated ai_state exposed through scoped APIs.",
+                "daily_verification": "Prefer targeted tests and API smoke checks. Do not recommend full release_check unless release verification is explicitly requested.",
             },
         },
         label="model_context",
@@ -321,7 +421,11 @@ async def build_safe_context(settings: Settings, *, vault_id: str, max_pages: in
         "page_count": len(safe_pages),
         "revision_ids": sorted(set(revision_ids))[:100],
         "content_hashes": [page["content_hash"] for page in safe_pages],
-        "open_finding_count": len(findings),
+        "open_finding_count": len(deduped_findings),
+        "existing_finding_title_count": len(existing_finding_titles),
+        "context_mode": "slim" if slim else "full",
+        "max_pages": max_pages,
+        "max_findings": max_findings,
         "estimated_input_tokens": tokens,
         "chars": len(text),
         "context_hash": hashlib.sha256(text.encode("utf-8")).hexdigest(),
@@ -431,11 +535,15 @@ def build_gemini_review_prompt(request: dict[str, Any]) -> str:
             "",
             "Rules:",
             "- Return JSON only, matching the requested schema.",
+            "- Follow contract_version and output_contract in the supplied packet contract. If unsupported, escalate instead of guessing.",
             "- Do not ask for raw database files, local filesystem paths, secrets, backups, sessions, users, or raw tokens.",
+            "- Apply the provided access_fallback and boundary_enforcement protocols before making recommendations.",
+            "- Do not repeat stale or duplicate findings listed under stale_suppression unless the new proposed change is materially different.",
             "- Focus on actionable implementation, API, data, security, ops, or docs findings.",
             "- Prefer 1 to 5 high-signal findings. Do not invent facts beyond the provided context.",
             "- Evidence must cite fields or observations from the provided context, not private assumptions.",
             "- Proposed change must be concrete enough for Codex to implement or verify.",
+            "- Prefer targeted tests/API smoke checks for daily iteration; avoid full release_check unless release verification is requested.",
             "",
             f"Review focus: {focus}",
             "",
@@ -448,21 +556,36 @@ def build_gemini_review_prompt(request: dict[str, Any]) -> str:
 class GeminiApiAdapter:
     provider_id = "gemini"
 
-    def __init__(self, *, api_key: str, model: str, timeout_seconds: float = 90.0) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str = "https://generativelanguage.googleapis.com/v1beta",
+        model: str,
+        response_mime_type: str = "application/json",
+        thinking_budget: int | None = 0,
+        timeout_seconds: float = 90.0,
+    ) -> None:
         self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
         self.model = model
+        self.response_mime_type = response_mime_type
+        self.thinking_budget = thinking_budget
         self.timeout_seconds = timeout_seconds
 
     async def generate_review(self, request: dict[str, Any]) -> dict[str, Any]:
         prompt = build_gemini_review_prompt(request)
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}:generateContent"
+        url = f"{self.base_url}/models/{self.model}:generateContent"
+        generation_config: dict[str, Any] = {
+            "temperature": 0.2,
+            "responseMimeType": self.response_mime_type,
+            "responseJsonSchema": GEMINI_REVIEW_RESPONSE_SCHEMA,
+        }
+        if self.thinking_budget is not None:
+            generation_config["thinkingConfig"] = {"thinkingBudget": self.thinking_budget}
         body = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0.2,
-                "responseMimeType": "application/json",
-                "responseSchema": GEMINI_REVIEW_RESPONSE_SCHEMA,
-            },
+            "generationConfig": generation_config,
         }
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
@@ -564,6 +687,9 @@ def build_openai_compatible_review_messages(request: dict[str, Any], *, provider
             "Return strict JSON only. The word json is intentionally included for JSON mode.",
             "Do not request or reveal raw database files, local filesystem paths, secrets, backups, sessions, users, raw tokens, or token hashes.",
             "Use only the provided sanitized context.",
+            "Apply the provided access_fallback and boundary_enforcement protocols before making recommendations.",
+            "Do not repeat stale or duplicate findings listed under stale_suppression unless the new proposed change is materially different.",
+            "Prefer targeted tests/API smoke checks for daily iteration; avoid full release_check unless release verification is requested.",
             "Severity must be one of: critical, high, medium, low, info.",
             "Area must be one of: API, UI, Rust, Security, Data, Ops, Docs.",
             "Output JSON must follow this example shape:",
@@ -617,6 +743,7 @@ MINIMAX_KNOWNET_TOOLS: list[dict[str, Any]] = [
 ]
 
 KIMI_KNOWNET_TOOLS = MINIMAX_KNOWNET_TOOLS
+QWEN_KNOWNET_TOOLS = MINIMAX_KNOWNET_TOOLS
 GLM_KNOWNET_TOOLS = MINIMAX_KNOWNET_TOOLS
 
 
@@ -642,9 +769,21 @@ def _execute_knownet_context_tool(context: dict[str, Any], name: str, arguments_
 class DeepSeekApiAdapter:
     provider_id = "deepseek"
 
-    def __init__(self, *, api_key: str, model: str, timeout_seconds: float = 90.0) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str = "https://api.deepseek.com",
+        model: str,
+        reasoning_effort: str | None = "high",
+        thinking_enabled: bool = True,
+        timeout_seconds: float = 90.0,
+    ) -> None:
         self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
         self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.thinking_enabled = thinking_enabled
         self.timeout_seconds = timeout_seconds
 
     async def generate_review(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -655,12 +794,14 @@ class DeepSeekApiAdapter:
             "temperature": 0.2,
             "max_tokens": 4000,
             "stream": False,
-            "thinking": {"type": "disabled"},
+            "thinking": {"type": "enabled" if self.thinking_enabled else "disabled"},
         }
+        if self.reasoning_effort:
+            body["reasoning_effort"] = self.reasoning_effort
         try:
             async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
                 response = await client.post(
-                    "https://api.deepseek.com/chat/completions",
+                    f"{self.base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
                     json=body,
                 )
@@ -700,10 +841,21 @@ class DeepSeekApiAdapter:
 class MiniMaxApiAdapter:
     provider_id = "minimax"
 
-    def __init__(self, *, api_key: str, base_url: str, model: str, timeout_seconds: float = 90.0) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        model: str,
+        max_tokens: int = 4000,
+        reasoning_split: bool = True,
+        timeout_seconds: float = 90.0,
+    ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.max_tokens = max_tokens
+        self.reasoning_split = reasoning_split
         self.timeout_seconds = timeout_seconds
 
     async def generate_review(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -714,9 +866,11 @@ class MiniMaxApiAdapter:
             "messages": messages,
             "tools": MINIMAX_KNOWNET_TOOLS,
             "temperature": 0.2,
-            "max_tokens": 4000,
+            "max_tokens": self.max_tokens,
             "stream": False,
         }
+        if self.reasoning_split:
+            body["reasoning_split"] = True
         first_payload = await self._post_chat(body)
         first_message = _extract_openai_compatible_message(first_payload, provider_code="minimax")
         tool_calls = first_message.get("tool_calls")
@@ -778,10 +932,21 @@ class MiniMaxApiAdapter:
 class KimiApiAdapter:
     provider_id = "kimi"
 
-    def __init__(self, *, api_key: str, base_url: str, model: str, timeout_seconds: float = 90.0) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        model: str,
+        max_tokens: int = 4000,
+        thinking_enabled: bool = False,
+        timeout_seconds: float = 90.0,
+    ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.max_tokens = max_tokens
+        self.thinking_enabled = thinking_enabled
         self.timeout_seconds = timeout_seconds
 
     async def generate_review(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -792,9 +957,9 @@ class KimiApiAdapter:
             "messages": messages,
             "tools": KIMI_KNOWNET_TOOLS,
             "response_format": {"type": "json_object"},
-            "temperature": 0.2,
-            "max_tokens": 4000,
+            "max_tokens": self.max_tokens,
             "stream": False,
+            "thinking": {"type": "enabled" if self.thinking_enabled else "disabled"},
         }
         first_payload = await self._post_chat(body)
         first_message = _extract_openai_compatible_message(first_payload, provider_code="kimi")
@@ -854,13 +1019,116 @@ class KimiApiAdapter:
             raise HTTPException(status_code=502, detail={"code": "kimi_invalid_response", "message": "Kimi API response was not JSON", "details": {}}) from error
 
 
-class GlmApiAdapter:
-    provider_id = "glm"
+class QwenApiAdapter:
+    provider_id = "qwen"
 
-    def __init__(self, *, api_key: str, base_url: str, model: str, timeout_seconds: float = 90.0) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        model: str,
+        max_tokens: int = 4000,
+        enable_search: bool = False,
+        timeout_seconds: float = 90.0,
+    ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
+        self.max_tokens = max_tokens
+        self.enable_search = enable_search
+        self.timeout_seconds = timeout_seconds
+
+    async def generate_review(self, request: dict[str, Any]) -> dict[str, Any]:
+        messages: list[dict[str, Any]] = build_openai_compatible_review_messages(request, provider_name="Qwen/DashScope")
+        messages[0]["content"] += "\nYou may use the provided knownet_* tools for read-only context lookup. Final answer must be strict JSON only."
+        body = {
+            "model": self.model,
+            "messages": messages,
+            "tools": QWEN_KNOWNET_TOOLS,
+            "response_format": {"type": "json_object"},
+            "temperature": 0.2,
+            "max_tokens": self.max_tokens,
+            "stream": False,
+        }
+        if self.enable_search:
+            body["enable_search"] = True
+        first_payload = await self._post_chat(body)
+        first_message = _extract_openai_compatible_message(first_payload, provider_code="qwen")
+        tool_calls = first_message.get("tool_calls")
+        if isinstance(tool_calls, list) and tool_calls:
+            messages.append(first_message)
+            context = request.get("context") or {}
+            for tool_call in tool_calls[:5]:
+                function = tool_call.get("function") if isinstance(tool_call, dict) else None
+                name = function.get("name") if isinstance(function, dict) else None
+                arguments = function.get("arguments") if isinstance(function, dict) else None
+                if not isinstance(name, str):
+                    raise HTTPException(status_code=502, detail={"code": "qwen_invalid_tool", "message": "Qwen returned a malformed tool call", "details": {}})
+                tool_result = _execute_knownet_context_tool(context, name, arguments if isinstance(arguments, str) else "{}", provider_code="qwen", provider_name="Qwen")
+                messages.append({"role": "tool", "tool_call_id": tool_call.get("id"), "content": json.dumps(tool_result, ensure_ascii=False)})
+            final_payload = await self._post_chat({**body, "messages": messages, "tools": QWEN_KNOWNET_TOOLS})
+            final_message = _extract_openai_compatible_message(final_payload, provider_code="qwen")
+            content = str(final_message.get("content") or "").strip()
+        else:
+            content = str(first_message.get("content") or "").strip()
+        content = _strip_think_tags(content)
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as error:
+            extracted = _extract_json_object_text(content)
+            if extracted:
+                try:
+                    return json.loads(extracted)
+                except json.JSONDecodeError:
+                    pass
+            raise HTTPException(status_code=502, detail={"code": "qwen_invalid_response", "message": "Qwen API response content was not valid JSON", "details": {}}) from error
+
+    async def _post_chat(self, body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
+                response = await client.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+                    json=body,
+                )
+        except httpx.TimeoutException as error:
+            raise HTTPException(status_code=504, detail={"code": "qwen_timeout", "message": "Qwen API request timed out", "details": {}}) from error
+        except httpx.HTTPError as error:
+            raise HTTPException(status_code=502, detail={"code": "qwen_request_failed", "message": sanitize_error_message(str(error)), "details": {}}) from error
+        if response.status_code >= 400:
+            message = _extract_openai_compatible_error_message(response)
+            if response.status_code == 429:
+                code = "qwen_rate_limited"
+            elif response.status_code in {401, 403}:
+                code = "qwen_auth_failed"
+            else:
+                code = "qwen_request_failed"
+            raise HTTPException(status_code=502, detail={"code": code, "message": sanitize_error_message(message) or "Qwen API request failed", "details": {"status_code": response.status_code}})
+        try:
+            return response.json()
+        except json.JSONDecodeError as error:
+            raise HTTPException(status_code=502, detail={"code": "qwen_invalid_response", "message": "Qwen API response was not JSON", "details": {}}) from error
+
+
+class GlmApiAdapter:
+    provider_id = "glm"
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str,
+        model: str,
+        max_tokens: int = 4000,
+        thinking_enabled: bool = False,
+        timeout_seconds: float = 90.0,
+    ) -> None:
+        self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.max_tokens = max_tokens
+        self.thinking_enabled = thinking_enabled
         self.timeout_seconds = timeout_seconds
 
     async def generate_review(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -872,9 +1140,11 @@ class GlmApiAdapter:
             "tools": GLM_KNOWNET_TOOLS,
             "response_format": {"type": "json_object"},
             "temperature": 0.2,
-            "max_tokens": 4000,
+            "max_tokens": self.max_tokens,
             "stream": False,
         }
+        if self.thinking_enabled:
+            body["thinking"] = {"type": "enabled"}
         first_payload = await self._post_chat(body)
         first_message = _extract_openai_compatible_message(first_payload, provider_code="glm")
         tool_calls = first_message.get("tool_calls")

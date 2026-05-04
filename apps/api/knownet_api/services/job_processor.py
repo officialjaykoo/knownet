@@ -40,7 +40,10 @@ class JobProcessor:
         self.settings = settings
         self.draft_service = draft_service or DraftService(
             api_key=getattr(settings, "openai_api_key", None),
-            model=getattr(settings, "openai_model", "gpt-4o-mini"),
+            base_url=getattr(settings, "openai_base_url", "https://api.openai.com/v1"),
+            model=getattr(settings, "openai_model", "gpt-5-mini"),
+            reasoning_effort=getattr(settings, "openai_reasoning_effort", "low"),
+            max_output_tokens=getattr(settings, "openai_max_output_tokens", 2000),
             timeout_seconds=getattr(settings, "openai_timeout_seconds", 60.0),
         )
         self.source_selector = source_selector or SourceSelector(settings.data_dir)

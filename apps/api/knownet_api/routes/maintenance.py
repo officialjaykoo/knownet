@@ -25,8 +25,9 @@ from ..status import operation_failure_status
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
 
-SNAPSHOT_DIRS = (PAGE_DIR_NAME, "revisions", "suggestions", "inbox", "sources")
+SNAPSHOT_DIRS = (PAGE_DIR_NAME, "revisions", "suggestions", "inbox", "sources", "experiment-packets", "project-snapshot-packets")
 LOCK_ACTIVE_STATUSES = ("active", "running")
+VERIFY_INDEX_WARNING_CODES = {"agent_token_expired_cleanup_candidate"}
 
 
 class RestoreRequest(BaseModel):
@@ -346,6 +347,37 @@ def _extract_snapshot(snapshot_path: Path, restore_dir: Path) -> dict[str, Any]:
     return manifest
 
 
+def _inspect_snapshot(snapshot_path: Path) -> dict[str, Any]:
+    with tarfile.open(snapshot_path, "r:gz") as archive:
+        members = archive.getmembers()
+        for member in members:
+            _validate_tar_member(member)
+        manifest_member = archive.extractfile("knownet-snapshot.json")
+        if not manifest_member:
+            raise HTTPException(status_code=400, detail={"code": "restore_plan_failed", "message": "Snapshot manifest missing", "details": {}})
+        manifest = json.loads(manifest_member.read().decode("utf-8"))
+        if manifest.get("kind") != "knownet.snapshot" or manifest.get("schema_version") != 1:
+            raise HTTPException(status_code=400, detail={"code": "restore_plan_failed", "message": "Unsupported snapshot manifest", "details": {}})
+        file_count = len([member for member in members if member.isfile()])
+    return {
+        "snapshot": snapshot_path.name,
+        "format": "tar.gz",
+        "size_bytes": snapshot_path.stat().st_size,
+        "manifest": {
+            "kind": manifest.get("kind"),
+            "schema_version": manifest.get("schema_version"),
+            "created_at": manifest.get("created_at"),
+            "app_version": manifest.get("app_version"),
+            "phase": manifest.get("phase"),
+            "included_files": manifest.get("included_files"),
+            "hash_count": len(manifest.get("sha256") or {}),
+        },
+        "file_count": file_count,
+        "safe_to_inspect": True,
+        "restore_requires_confirmation": True,
+    }
+
+
 def _move_current_data_to_backup(data_dir: Path, sqlite_path: Path, backup_dir: Path) -> dict[str, Any]:
     backup_dir.mkdir(parents=True, exist_ok=True)
     moved: list[str] = []
@@ -452,6 +484,24 @@ async def restore_snapshot(payload: RestoreRequest, request: Request, actor: Act
             rmtree(restore_dir, ignore_errors=True)
     await _release_lock(settings, lock_id)
     return {"ok": True, "data": result}
+
+
+@router.get("/restore-plan")
+async def restore_plan(snapshot_name: str, request: Request, actor: Actor = Depends(require_admin_access)):
+    settings = request.app.state.settings
+    backup_root = settings.data_dir / "backups"
+    snapshot_path = _safe_snapshot_path(backup_root, snapshot_name)
+    lock = await active_maintenance_lock(settings.sqlite_path)
+    plan = _inspect_snapshot(snapshot_path)
+    plan["active_lock"] = lock
+    plan["pre_restore_snapshot_required"] = settings.restore_require_snapshot
+    plan["can_restore_now"] = lock is None
+    plan["warnings"] = [
+        "Restore replaces current data after creating a pre-restore snapshot when configured.",
+        "Run verify-index after restore.",
+        "Do not restore while another maintenance lock is active.",
+    ]
+    return {"ok": True, "data": plan}
 
 
 @router.post("/embedding/prefetch-plan")
@@ -734,6 +784,15 @@ async def verify_index(request: Request, actor: Actor = Depends(require_admin_ac
         )
         for row in orphan_finding_rows:
             issues.append({"code": "collaboration_finding_orphan", "finding_id": row["id"], "review_id": row["review_id"]})
+        if await _column_exists(settings.sqlite_path, "collaboration_findings", "evidence_quality"):
+            invalid_quality_rows = await fetch_all(
+                settings.sqlite_path,
+                "SELECT id, evidence_quality FROM collaboration_findings "
+                "WHERE evidence_quality NOT IN ('direct_access','context_limited','inferred','operator_verified','unspecified')",
+                (),
+            )
+            for row in invalid_quality_rows:
+                issues.append({"code": "collaboration_finding_invalid_evidence_quality", "finding_id": row["id"], "evidence_quality": row["evidence_quality"]})
 
     if await _table_exists(settings.sqlite_path, "implementation_records"):
         orphan_record_rows = await fetch_all(
@@ -745,6 +804,17 @@ async def verify_index(request: Request, actor: Actor = Depends(require_admin_ac
         )
         for row in orphan_record_rows:
             issues.append({"code": "implementation_record_orphan", "record_id": row["id"], "finding_id": row["finding_id"]})
+
+    if await _table_exists(settings.sqlite_path, "finding_tasks"):
+        orphan_task_rows = await fetch_all(
+            settings.sqlite_path,
+            "SELECT t.id, t.finding_id FROM finding_tasks t "
+            "LEFT JOIN collaboration_findings f ON f.id = t.finding_id "
+            "WHERE f.id IS NULL",
+            (),
+        )
+        for row in orphan_task_rows:
+            issues.append({"code": "finding_task_orphan", "task_id": row["id"], "finding_id": row["finding_id"]})
 
     if await _table_exists(settings.sqlite_path, "context_bundle_manifests"):
         forbidden_terms = (".env", ".db", "backups/", "inbox/", "sessions", "users")
@@ -779,8 +849,8 @@ async def verify_index(request: Request, actor: Actor = Depends(require_admin_ac
     stale_patterns = ("Markdown" + "-first",)
     scan_paths = [
         REPO_ROOT / "README.md",
-        REPO_ROOT / "PHASE_7_TASKS.md",
-        REPO_ROOT / "PHASE_8_TASKS.md",
+        REPO_ROOT / "docs" / "phases" / "PHASE_7_TASKS.md",
+        REPO_ROOT / "docs" / "phases" / "PHASE_8_TASKS.md",
         REPO_ROOT / "docs",
         REPO_ROOT / "apps" / "api" / "knownet_api",
         REPO_ROOT / "apps" / "web" / "app",
@@ -796,15 +866,18 @@ async def verify_index(request: Request, actor: Actor = Depends(require_admin_ac
                 if pattern in text:
                     issues.append({"code": "current_terminology_mismatch", "path": _posix(path.relative_to(REPO_ROOT)), "pattern": pattern})
 
+    blocking_issues = [issue for issue in issues if issue.get("code") not in VERIFY_INDEX_WARNING_CODES]
+    warnings = [issue for issue in issues if issue.get("code") in VERIFY_INDEX_WARNING_CODES]
+    ok = len(blocking_issues) == 0
     await write_audit_event(
         settings.sqlite_path,
         action="maintenance.verify_index",
         actor=actor,
         target_type="index",
         target_id="pages",
-        metadata={"ok": len(issues) == 0, "issues_count": len(issues)},
+        metadata={"ok": ok, "issues_count": len(blocking_issues), "warnings_count": len(warnings)},
     )
-    return {"ok": True, "data": {"ok": len(issues) == 0, "issues": issues}}
+    return {"ok": True, "data": {"ok": ok, "issues": blocking_issues, "warnings": warnings}}
 
 
 @router.post("/citations/verify")

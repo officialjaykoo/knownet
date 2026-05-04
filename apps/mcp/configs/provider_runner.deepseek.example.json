@@ -4,7 +4,25 @@
   "runner_pattern": "openai_compatible_tool_calling",
   "knownet_surface": "common knownet_* tools through the runner",
   "base_url": "https://api.deepseek.com",
+  "anthropic_base_url": "https://api.deepseek.com/anthropic",
   "api_key_env": "DEEPSEEK_API_KEY",
+  "models": [
+    "deepseek-v4-flash",
+    "deepseek-v4-pro",
+    "deepseek-chat",
+    "deepseek-reasoner"
+  ],
+  "default_model": "deepseek-v4-flash",
+  "deprecated_after": {
+    "deepseek-chat": "2026-07-24",
+    "deepseek-reasoner": "2026-07-24"
+  },
+  "openai_compatible_request": {
+    "endpoint": "/chat/completions",
+    "stream": false,
+    "reasoning_effort_env": "DEEPSEEK_REASONING_EFFORT",
+    "thinking_env": "DEEPSEEK_THINKING_ENABLED"
+  },
   "allowed_actions": [
     "knownet_start_here",
     "knownet_state_summary",

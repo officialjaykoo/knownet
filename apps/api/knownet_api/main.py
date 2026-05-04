@@ -12,7 +12,7 @@ from .routes.agents import router as agents_router
 from .routes.auth import router as auth_router
 from .routes.audit import router as audit_router
 from .routes.citations import router as citations_router
-from .routes.collaboration import router as collaboration_router
+from .routes.collaboration import ensure_collaboration_schema, router as collaboration_router
 from .routes.events import router as events_router
 from .routes.graph import router as graph_router
 from .routes.jobs import router as jobs_router
@@ -24,6 +24,7 @@ from .routes.submissions import router as submissions_router
 from .routes.suggestions import router as suggestions_router
 from .routes.vaults import router as vaults_router
 from .routes.pages import router as pages_router
+from .routes.operator import router as operator_router
 from .services.draft_service import DraftService
 from .services.citation_verifier import CitationVerifier
 from .services.embedding_service import EmbeddingService
@@ -119,7 +120,10 @@ async def lifespan(app: FastAPI):
     app.state.settings = settings
     app.state.draft_service = DraftService(
         api_key=settings.openai_api_key,
+        base_url=settings.openai_base_url,
         model=settings.openai_model,
+        reasoning_effort=settings.openai_reasoning_effort,
+        max_output_tokens=settings.openai_max_output_tokens,
         timeout_seconds=settings.openai_timeout_seconds,
     )
     app.state.source_selector = SourceSelector(settings.data_dir)
@@ -146,6 +150,7 @@ async def lifespan(app: FastAPI):
         await backfill_citation_display_titles(settings.sqlite_path)
         await ensure_ai_state_schema(settings.sqlite_path)
         await ensure_system_pages_schema(settings.sqlite_path)
+        await ensure_collaboration_schema(settings.sqlite_path)
         await ensure_model_runner_schema(settings.sqlite_path)
         await register_onboarding_pages(settings.sqlite_path)
         await register_managed_seed_pages(settings.sqlite_path)
@@ -253,6 +258,7 @@ app.include_router(search_router)
 app.include_router(maintenance_router)
 app.include_router(audit_router)
 app.include_router(model_runs_router)
+app.include_router(operator_router)
 
 
 async def _health_payload() -> dict:
@@ -337,6 +343,9 @@ async def _health_payload() -> dict:
         "issue_details": issue_details,
         "checked_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
     }
+
+
+app.state.app_health_payload = _health_payload
 
 
 @app.get("/health")

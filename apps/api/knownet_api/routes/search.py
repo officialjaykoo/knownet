@@ -1,5 +1,6 @@
 import math
 import struct
+import time
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -38,19 +39,6 @@ async def _keyword_results(q: str, request: Request) -> list[dict]:
     if not query:
         return []
 
-    pages = []
-    for path in sorted(page_storage_dir(settings.data_dir).glob("*.md")):
-        markdown = path.read_text(encoding="utf-8")
-        if query.lower() in markdown.lower() or query.lower() in path.stem.lower():
-            pages.append(
-                {
-                    "slug": path.stem,
-                    "title": path.stem,
-                    "path": str(path).replace("\\", "/"),
-                    "match_type": "markdown",
-                }
-            )
-
     indexed = await fetch_all(
         settings.sqlite_path,
         "SELECT DISTINCT p.slug, p.title, p.path, 'index' AS match_type "
@@ -61,11 +49,25 @@ async def _keyword_results(q: str, request: Request) -> list[dict]:
         "LIMIT 50",
         tuple([f"%{query.lower()}%"] * 4),
     )
+    pages = [dict(row) for row in indexed]
     seen = {page["slug"] for page in pages}
-    for row in indexed:
-        if row["slug"] not in seen:
-            pages.append(row)
-            seen.add(row["slug"])
+    if len(pages) < 50:
+        for path in sorted(page_storage_dir(settings.data_dir).glob("*.md")):
+            if path.stem in seen:
+                continue
+            markdown = path.read_text(encoding="utf-8")
+            if query.lower() in markdown.lower() or query.lower() in path.stem.lower():
+                pages.append(
+                    {
+                        "slug": path.stem,
+                        "title": path.stem,
+                        "path": str(path).replace("\\", "/"),
+                        "match_type": "markdown",
+                    }
+                )
+                seen.add(path.stem)
+            if len(pages) >= 50:
+                break
     return pages[:50]
 
 
@@ -112,11 +114,14 @@ async def _semantic_results(q: str, request: Request) -> list[dict]:
 
 @router.get("")
 async def keyword_search(q: str, request: Request):
-    return {"ok": True, "data": {"results": await _keyword_results(q, request)}}
+    started = time.perf_counter()
+    results = await _keyword_results(q, request)
+    return {"ok": True, "data": {"results": results, "duration_ms": int((time.perf_counter() - started) * 1000)}}
 
 
 @router.post("/semantic")
 async def semantic_search(payload: SemanticSearchRequest, request: Request):
+    started = time.perf_counter()
     embedding = request.app.state.embedding_service
     health = embedding.health()
     if health["status"] != "ready":
@@ -127,6 +132,7 @@ async def semantic_search(payload: SemanticSearchRequest, request: Request):
                 "status": "degraded",
                 "fallback": "keyword",
                 "reason": health["reason"],
+                "duration_ms": int((time.perf_counter() - started) * 1000),
             },
         }
     try:
@@ -139,6 +145,7 @@ async def semantic_search(payload: SemanticSearchRequest, request: Request):
                 "status": "degraded",
                 "fallback": "keyword",
                 "reason": f"semantic_search_failed: {error}",
+                "duration_ms": int((time.perf_counter() - started) * 1000),
             },
         }
     return {
@@ -148,5 +155,6 @@ async def semantic_search(payload: SemanticSearchRequest, request: Request):
             "status": "ready",
             "fallback": None,
             "reason": None,
+            "duration_ms": int((time.perf_counter() - started) * 1000),
         },
     }

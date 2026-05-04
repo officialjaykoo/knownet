@@ -2,14 +2,9 @@
 
 KnowNet exposes a local stdio MCP server for scoped AI-agent access.
 
-The compatibility reference is in:
-
-```txt
-docs/MCP_COMPATIBILITY_REFERENCES.md
-```
-
-Use that document when deciding how a new AI client should connect. Keep this
-file focused on concrete setup commands.
+Use this document when deciding how a new AI client should connect. Keep client
+work on the shared `knownet_*` MCP surface unless a provider only supports
+search/fetch style connectors.
 
 The MCP server path is:
 
@@ -169,6 +164,34 @@ apps/mcp/configs/qwen_agent_mcp.example.json
 apps/mcp/configs/kimi_mcp.example.json
 apps/mcp/configs/minimax_agent.example.json
 apps/mcp/configs/glm_coding_mcp.example.json
+```
+
+## Client Compatibility Summary
+
+```txt
+Claude Desktop:
+  Preferred path is local stdio MCP. Do not use Cloudflare for normal local
+  Claude Desktop operation.
+
+Cursor and local agents:
+  Use the same stdio MCP server with scoped tokens in environment variables.
+
+ChatGPT connector:
+  Use HTTPS bridge/tunnel for testing. If full `knownet_*` tools are not
+  visible, use connector-compatible `search` and `fetch`.
+
+Manus:
+  Requires a protected HTTPS Custom MCP or Custom API path. Quick tunnels are
+  testing-only. Start read-only and do not provide `ADMIN_TOKEN`.
+
+Qwen:
+  Prefer Qwen-Agent with the KnowNet MCP server. The current stable support is
+  MCP config plus read/review scopes, not a Qwen-specific API runner.
+
+Kimi, DeepSeek, MiniMax, GLM/Z.AI:
+  Use MCP where the client supports it. Server-side model API runners are
+  tracked in `docs/MODEL_RUNS.md` and surfaced in the Operator Console provider
+  matrix.
 ```
 
 ## Preferred State Tool

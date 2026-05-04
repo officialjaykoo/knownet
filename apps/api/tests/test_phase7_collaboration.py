@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 
@@ -6,6 +7,8 @@ from fastapi.testclient import TestClient
 from knownet_api.config import get_settings
 from knownet_api.main import app
 from knownet_api.routes.collaboration import parse_review_markdown
+from knownet_api.services.packet_contract import build_packet_contract, explicit_stale_context_suppression
+from knownet_api.services.project_snapshot import snapshot_self_test
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -16,6 +19,8 @@ def _isolate_settings(monkeypatch, tmp_path):
     data_dir = tmp_path / "data"
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("SQLITE_PATH", str(data_dir / "knownet.db"))
+    monkeypatch.setenv("GEMINI_RUNNER_ENABLED", "false")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
 
 def _review_markdown():
@@ -57,12 +62,34 @@ Scan generated bundles before writing them.
 def test_parser_extracts_multiple_findings():
     metadata, findings, errors = parse_review_markdown(_review_markdown())
     assert metadata["source_agent"] == "claude"
+    assert metadata["evidence_quality"] == "unspecified"
     assert errors == []
     assert len(findings) == 2
     assert findings[0]["severity"] == "high"
     assert findings[0]["area"] == "Docs"
     assert findings[0]["title"] == "Durable review storage is required"
+    assert findings[0]["evidence_quality"] == "unspecified"
     assert findings[0]["status"] == "pending"
+
+
+def test_phase20_packet_contract_self_test_validates_boundaries_budget_and_stale_state():
+    contract = build_packet_contract(
+        packet_kind="project_snapshot",
+        target_agent="claude",
+        operator_question="Review packet.",
+        stale_context_suppression=explicit_stale_context_suppression(suppressed_before="2026-05-05T00:00:00Z"),
+    )
+    content = "# KnowNet Project Snapshot Packet\n\n## Packet Contract\n\n- contract_version: p20.v1\n- profile: overview\n\n## Important Changes\n\n## Do Not Suggest\n"
+    result = snapshot_self_test(content=content, contract=contract, profile="overview", required_sections=["## Packet Contract", "## Important Changes"])
+    assert result["overall_status"] == "pass", result
+
+    malformed = dict(contract)
+    malformed["stale_context_suppression"] = {}
+    malformed["role_and_access_boundaries"] = {"allowed": [], "refused": [], "escalate_on": [], "narrative": []}
+    failed = snapshot_self_test(content=content, contract=malformed, profile="overview", required_sections=["## Packet Contract"])
+    failed_codes = {check["code"] for check in failed["checks"] if check["status"] == "fail"}
+    assert "structured_role_boundaries_present" in failed_codes
+    assert "stale_context_suppression_explicit" in failed_codes
 
 
 def test_parser_fallback_for_missing_finding_headings():
@@ -131,6 +158,72 @@ Keep the fields.
     assert findings[0]["evidence"] == "Bold labels should parse."
 
 
+def test_parser_extracts_evidence_quality_defaults_and_overrides():
+    markdown = """---
+type: agent_review
+source_agent: claude
+evidence_quality: context_limited
+---
+
+# Review
+
+### Finding
+
+Title: Uses review default
+Severity: medium
+Area: Docs
+
+Evidence:
+Review frontmatter should supply the default.
+
+Proposed change:
+Keep the review-level quality.
+
+### Finding
+
+Title: Finding override
+Severity: low
+Area: Ops
+Evidence quality: operator_verified
+
+Evidence:
+Finding field should override the default.
+
+Proposed change:
+Store the finding-level quality.
+"""
+    metadata, findings, errors = parse_review_markdown(markdown)
+    assert errors == []
+    assert metadata["evidence_quality"] == "context_limited"
+    assert findings[0]["evidence_quality"] == "context_limited"
+    assert findings[1]["evidence_quality"] == "operator_verified"
+
+
+def test_parser_accepts_import_recommendation_finding_blocks():
+    markdown = """# Experiment Result
+
+## Findings To Import
+
+**Finding 1**
+Title: Import recommendation should become a draft finding
+Severity: medium
+Area: Ops
+Evidence quality: context_limited
+
+Evidence:
+Claude often emits import recommendations as bold Finding blocks rather than h3 headings.
+
+Proposed change:
+Parse bold Finding blocks with the same field contract as normal findings.
+"""
+    _metadata, findings, errors = parse_review_markdown(markdown)
+    assert errors == []
+    assert len(findings) == 1
+    assert findings[0]["title"] == "Import recommendation should become a draft finding"
+    assert findings[0]["area"] == "Ops"
+    assert findings[0]["evidence_quality"] == "context_limited"
+
+
 def test_parser_truncates_more_than_50_findings():
     finding = """### Finding
 
@@ -158,6 +251,7 @@ def test_import_triage_implementation_and_bundle(tmp_path, monkeypatch):
         review_id = data["review"]["id"]
         finding_id = data["findings"][0]["id"]
         assert len(data["findings"]) == 2
+        assert data["findings"][0]["evidence_quality"] == "unspecified"
         assert (app.state.settings.data_dir / "pages" / "reviews" / f"{review_id}.md").exists()
 
         reviews = client.get("/api/collaboration/reviews")
@@ -203,12 +297,662 @@ def test_import_triage_implementation_and_bundle(tmp_path, monkeypatch):
     with sqlite3.connect(db_path) as connection:
         review_count = connection.execute("SELECT COUNT(*) FROM collaboration_reviews").fetchone()[0]
         finding_status = connection.execute("SELECT status FROM collaboration_findings WHERE id = ?", (finding_id,)).fetchone()[0]
+        finding_quality = connection.execute("SELECT evidence_quality FROM collaboration_findings WHERE id = ?", (finding_id,)).fetchone()[0]
         manifest_count = connection.execute("SELECT COUNT(*) FROM context_bundle_manifests").fetchone()[0]
         audit_count = connection.execute("SELECT COUNT(*) FROM audit_events WHERE action = 'review.import'").fetchone()[0]
     assert review_count == 1
     assert finding_status == "implemented"
+    assert finding_quality == "unspecified"
     assert manifest_count == 1
     assert audit_count == 1
+    get_settings.cache_clear()
+
+
+def test_accepted_findings_become_actionable_tasks(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        imported = client.post("/api/collaboration/reviews", json={"markdown": _review_markdown(), "vault_id": "local-default"})
+        assert imported.status_code == 200, imported.text
+        finding_id = imported.json()["data"]["findings"][0]["id"]
+
+        blocked = client.post(f"/api/collaboration/findings/{finding_id}/task", json={"priority": "high"})
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"]["code"] == "finding_task_requires_accepted"
+
+        decided = client.post(
+            f"/api/collaboration/findings/{finding_id}/decision",
+            json={"status": "accepted", "decision_note": "Turn into task"},
+        )
+        assert decided.status_code == 200, decided.text
+        assert decided.json()["data"]["auto_task"] is None
+
+        queue = client.get("/api/collaboration/finding-queue")
+        assert queue.status_code == 200, queue.text
+        queue_items = queue.json()["data"]["queue"]
+        assert len(queue_items) == 1
+        assert queue_items[0]["id"] == finding_id
+        assert queue_items[0]["has_task"] is False
+        assert "Implement accepted KnowNet finding" in queue_items[0]["task_prompt"]
+        assert queue_items[0]["expected_verification"]
+
+        created = client.post(
+            f"/api/collaboration/findings/{finding_id}/task",
+            json={"priority": "high", "owner": "codex", "notes": "Created from Review Inbox"},
+        )
+        assert created.status_code == 200, created.text
+        task = created.json()["data"]["task"]
+        assert task["finding_id"] == finding_id
+        assert task["priority"] == "high"
+        assert task["owner"] == "codex"
+
+        tasks = client.get("/api/collaboration/finding-tasks?status=open")
+        assert tasks.status_code == 200, tasks.text
+        task_rows = tasks.json()["data"]["tasks"]
+        assert len(task_rows) == 1
+        assert task_rows[0]["id"] == task["id"]
+        assert task_rows[0]["title"] == "Durable review storage is required"
+
+        updated = client.post(
+            f"/api/collaboration/findings/{finding_id}/task",
+            json={"priority": "urgent", "task_prompt": "Do this exact task.", "expected_verification": "Run focused tests."},
+        )
+        assert updated.status_code == 200, updated.text
+        assert updated.json()["data"]["task"]["id"] == task["id"]
+        assert updated.json()["data"]["task"]["priority"] == "urgent"
+
+        queue_after = client.get("/api/collaboration/finding-queue")
+        assert queue_after.status_code == 200, queue_after.text
+        assert queue_after.json()["data"]["queue"][0]["has_task"] is True
+        assert queue_after.json()["data"]["queue"][0]["task_prompt"] == "Do this exact task."
+
+        next_action = client.get("/api/collaboration/next-action")
+        assert next_action.status_code == 200, next_action.text
+        action = next_action.json()["data"]
+        assert action["action_type"] == "implement_finding_task"
+        assert action["finding_id"] == finding_id
+        assert action["task_id"] == task["id"]
+        assert action["after_implementation"]["endpoint"] == f"/api/collaboration/findings/{finding_id}/implementation-evidence"
+        assert action["task_template"]["endpoint"] == f"/api/collaboration/findings/{finding_id}/implementation-evidence"
+        assert action["simple_evidence_template"]["endpoint"] == f"/api/collaboration/findings/{finding_id}/evidence"
+    get_settings.cache_clear()
+
+
+def test_next_action_falls_back_to_accepted_finding_then_snapshot(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        empty = client.get("/api/collaboration/next-action")
+        assert empty.status_code == 200, empty.text
+        assert empty.json()["data"]["action_type"] == "generate_project_snapshot"
+
+        imported = client.post("/api/collaboration/reviews", json={"markdown": _review_markdown(), "vault_id": "local-default"})
+        assert imported.status_code == 200, imported.text
+        finding_id = imported.json()["data"]["findings"][1]["id"]
+        pending = client.get("/api/collaboration/next-action")
+        assert pending.status_code == 200, pending.text
+        assert pending.json()["data"]["action_type"] == "triage_review_findings"
+
+        decided = client.post(
+            f"/api/collaboration/findings/{finding_id}/decision",
+            json={"status": "accepted", "decision_note": "Accepted but no task yet"},
+        )
+        assert decided.status_code == 200, decided.text
+        accepted = client.get("/api/collaboration/next-action")
+        assert accepted.status_code == 200, accepted.text
+        action = accepted.json()["data"]
+        assert action["action_type"] == "create_task_from_accepted_finding"
+        assert action["finding_id"] == finding_id
+        assert action["next_endpoint"] == f"/api/collaboration/findings/{finding_id}/task"
+        assert action["task_template"]["body"]["priority"] == "normal"
+    get_settings.cache_clear()
+
+
+def test_next_action_recommends_gemini_fast_lane_when_configured(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    monkeypatch.setenv("GEMINI_RUNNER_ENABLED", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    get_settings.cache_clear()
+    with TestClient(app) as client:
+        response = client.get("/api/collaboration/next-action")
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["action_type"] == "run_ai_review_now"
+        assert data["next_endpoint"] == "/api/model-runs/review-now"
+        assert data["payload"]["provider"] == "gemini"
+        assert data["payload"]["allow_mock_fallback"] is False
+    get_settings.cache_clear()
+
+
+def test_next_action_prefers_backlog_work_before_gemini(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    monkeypatch.setenv("GEMINI_RUNNER_ENABLED", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-gemini-key")
+    get_settings.cache_clear()
+    with TestClient(app) as client:
+        imported = client.post("/api/collaboration/reviews", json={"markdown": _review_markdown(), "vault_id": "local-default"})
+        assert imported.status_code == 200, imported.text
+        finding_id = imported.json()["data"]["findings"][0]["id"]
+        decided = client.post(
+            f"/api/collaboration/findings/{finding_id}/decision",
+            json={"status": "accepted", "decision_note": "Accepted but no task yet"},
+        )
+        assert decided.status_code == 200, decided.text
+
+        response = client.get("/api/collaboration/next-action")
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["action_type"] == "create_task_from_accepted_finding"
+        assert data["finding_id"] == finding_id
+        assert data["task_template"]["method"] == "POST"
+    get_settings.cache_clear()
+
+
+def test_finding_duplicates_and_dry_run_duplicate_candidates(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        first = client.post("/api/collaboration/reviews", json={"markdown": _review_markdown(), "vault_id": "local-default"})
+        assert first.status_code == 200, first.text
+        second = client.post("/api/collaboration/reviews", json={"markdown": _review_markdown(), "vault_id": "local-default"})
+        assert second.status_code == 200, second.text
+
+        duplicates = client.get("/api/collaboration/finding-duplicates")
+        assert duplicates.status_code == 200, duplicates.text
+        data = duplicates.json()["data"]
+        assert data["duplicate_group_count"] >= 2
+        titles = {group["title"] for group in data["duplicate_groups"]}
+        assert "Durable review storage is required" in titles
+
+        dry_run = client.post("/api/collaboration/reviews?dry_run=true", json={"markdown": _review_markdown(), "vault_id": "local-default"})
+        assert dry_run.status_code == 200, dry_run.text
+        assert dry_run.json()["data"]["duplicate_candidates"]
+    get_settings.cache_clear()
+
+
+def test_project_snapshot_packet_summarizes_safe_handoff_state(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        imported = client.post("/api/collaboration/reviews", json={"markdown": _review_markdown(), "vault_id": "local-default"})
+        assert imported.status_code == 200, imported.text
+        finding_id = imported.json()["data"]["findings"][0]["id"]
+        accepted = client.post(f"/api/collaboration/findings/{finding_id}/decision", json={"status": "accepted", "decision_note": "Snapshot task"})
+        assert accepted.status_code == 200, accepted.text
+        task = client.post(f"/api/collaboration/findings/{finding_id}/task", json={"priority": "high", "owner": "codex"})
+        assert task.status_code == 200, task.text
+
+        response = client.post(
+            "/api/collaboration/project-snapshot-packets",
+            json={"focus": "Tell Codex the next implementation move.", "target_agent": "codex"},
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        content = data["content"]
+        assert data["copy_ready"] is True
+        assert data["storage_path"].startswith("project-snapshot-packets/")
+        assert "KnowNet Project Snapshot Packet" in content
+        assert "Tell Codex the next implementation move." in content
+        assert "Recent Accepted Findings" in content
+        assert finding_id in content
+        assert "C:\\" not in content
+        assert str(app.state.settings.data_dir) not in content
+        assert (app.state.settings.data_dir / data["storage_path"]).exists()
+
+        read = client.get(data["read_url"])
+        assert read.status_code == 200, read.text
+        assert read.json()["data"]["content_hash"] == data["content_hash"]
+    get_settings.cache_clear()
+
+
+def test_project_snapshot_packet_can_include_since_delta(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        imported = client.post("/api/collaboration/reviews", json={"markdown": _review_markdown(), "vault_id": "local-default"})
+        assert imported.status_code == 200, imported.text
+        finding_id = imported.json()["data"]["findings"][0]["id"]
+        accepted = client.post(f"/api/collaboration/findings/{finding_id}/decision", json={"status": "accepted", "decision_note": "Delta task"})
+        assert accepted.status_code == 200, accepted.text
+        task = client.post(f"/api/collaboration/findings/{finding_id}/task", json={"priority": "high", "owner": "codex"})
+        assert task.status_code == 200, task.text
+
+        response = client.post(
+            "/api/collaboration/project-snapshot-packets",
+            json={"focus": "Only summarize recent changes.", "target_agent": "deepseek", "since": "2026-01-01T00:00:00Z"},
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["delta"]["since"] == "2026-01-01T00:00:00Z"
+        assert data["delta"]["findings"]
+        assert data["delta"]["finding_tasks"]
+        assert data["delta_summary"]["new_or_updated_findings"] >= 1
+        assert data["delta_summary"]["changed_tasks"] >= 1
+        assert data["delta"]["delta_summary"] == data["delta_summary"]
+        assert "Delta Since Last Snapshot" in data["content"]
+        assert "delta_summary" in data["content"]
+        assert "delta_counts" in data["content"]
+
+        bad = client.post("/api/collaboration/project-snapshot-packets", json={"since": "not-a-date"})
+        assert bad.status_code == 422
+        assert bad.json()["detail"]["code"] == "project_snapshot_invalid_since"
+    get_settings.cache_clear()
+
+
+def test_project_snapshot_profiles_contract_quality_and_since_packet(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        imported = client.post(
+            "/api/collaboration/reviews",
+            json={
+                "markdown": """---
+evidence_quality: direct_access
+---
+# Review
+
+### Finding
+
+Title: Provider run failed repeatedly
+Severity: high
+Area: Ops
+
+Evidence:
+Provider matrix reported repeated failures.
+
+Proposed change:
+Add provider retry and alerting.
+""",
+                "vault_id": "local-default",
+            },
+        )
+        assert imported.status_code == 200, imported.text
+        finding_id = imported.json()["data"]["findings"][0]["id"]
+        accepted = client.post(f"/api/collaboration/findings/{finding_id}/decision", json={"status": "accepted", "decision_note": "High confidence"})
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["data"]["auto_task"]["finding_id"] == finding_id
+        page = client.post("/api/pages", json={"slug": "snapshot-card-node", "title": "Snapshot Card Node"})
+        assert page.status_code == 200, page.text
+
+        overview = client.post("/api/collaboration/project-snapshot-packets", json={"target_agent": "claude"})
+        assert overview.status_code == 200, overview.text
+        overview_data = overview.json()["data"]
+        assert overview_data["profile"] == "overview"
+        assert overview_data["effective_focus"].startswith("Summarize the current KnowNet state")
+        assert overview_data["contract_version"] == "p20.v1"
+        assert overview_data["packet_schema_version"] == "p20.v1"
+        assert overview_data["ai_context"]["role"] == "overview_reviewer"
+        assert overview_data["next_action_hints"]
+        assert overview_data["issues"]
+        assert overview_data["issues"][0]["action_template"]
+        assert overview_data["packet_summary"]["accepted_findings"][0]["detail_url"] == f"/api/collaboration/findings/{finding_id}"
+        assert overview_data["packet_summary"]["finding_tasks"][0]["detail_url"].startswith("/api/collaboration/finding-tasks/")
+        assert overview_data["node_cards"]
+        assert overview_data["node_cards"][0]["detail_url"].startswith("/api/pages/")
+        assert overview_data["contract"]["packet_metadata"]["contract_version"] == "p20.v1"
+        boundaries = overview_data["contract"]["role_and_access_boundaries"]
+        assert boundaries["allowed"]
+        assert "raw_db" in boundaries["refused"]
+        assert "system_state_assertion" in boundaries["escalate_on"]
+        assert len(boundaries["narrative"]) <= 3
+        assert overview_data["contract"]["stale_context_suppression"] == {"active": False}
+        assert overview_data["contract"]["hard_limits"]["char_budget"] == 12000
+        assert overview_data["contract_shape"]["valid"] is True
+        assert "role_and_access_boundaries" in overview_data["contract_shape"]["sections"]
+        assert overview_data["snapshot_quality"]["advisory_only"] is True
+        assert overview_data["snapshot_quality"]["details"]["profile_char_budget"] == 12000
+        assert "details" in overview_data["snapshot_quality"]
+        assert overview_data["important_changes"]["summary"]["high_severity_findings"] >= 1
+        assert overview_data["important_changes"]["high_severity_findings"][0]["action_route"] == "implement"
+        assert overview_data["snapshot_diff_summary"]
+        assert overview_data["do_not_reopen"]["summary"]["implemented"] == 0
+        assert overview_data["snapshot_self_test"]["overall_status"] == "pass", overview_data["snapshot_self_test"]
+        assert overview_data["profile_hard_limits"]["max_findings"] == 3
+        assert any("release_check" in rule for rule in overview_data["do_not_suggest"])
+        assert "Important Changes" in overview_data["content"]
+        assert "Snapshot Diff Summary" in overview_data["content"]
+        assert "Known Done / Do Not Reopen" in overview_data["content"]
+        assert "Do Not Suggest" in overview_data["content"]
+        assert "Recent Accepted Findings" in overview_data["content"]
+        assert "AI Context" in overview_data["content"]
+        assert "Next Action Hints" in overview_data["content"]
+        assert "Issues" in overview_data["content"]
+        assert "Node Cards" in overview_data["content"]
+
+        finding_detail = client.get(f"/api/collaboration/findings/{finding_id}")
+        assert finding_detail.status_code == 200, finding_detail.text
+        assert finding_detail.json()["data"]["finding"]["id"] == finding_id
+
+        stability = client.post(
+            "/api/collaboration/project-snapshot-packets",
+            json={
+                "profile": "stability",
+                "output_mode": "provider_risk_check",
+                "focus": "Only stability risks.",
+                "target_agent": "deepseek",
+                "since_packet_id": overview_data["packet_id"],
+                "allow_since_packet_fallback": False,
+            },
+        )
+        assert stability.status_code == 200, stability.text
+        stability_data = stability.json()["data"]
+        assert stability_data["profile"] == "stability"
+        assert stability_data["effective_focus"].startswith("Only stability risks.")
+        assert stability_data["target_agent_policy"]["compact"] is True
+        assert stability_data["target_agent_policy"]["max_recent_tasks"] == 5
+        assert stability_data["profile_hard_limits"]["max_recent_runs"] == 6
+        assert stability_data["contract"]["target_agent_overrides"]["compact"] is True
+        assert stability_data["contract"]["stale_context_suppression"]["active"] is True
+        assert stability_data["contract"]["stale_context_suppression"]["suppressed_before"]
+        assert stability_data["contract_shape"]["valid"] is True
+        assert stability_data["packet_summary"]["model_runs"] == []
+        assert "Stability Signals" in stability_data["content"]
+        assert "Recent Accepted Findings" not in stability_data["content"]
+        assert "profile_mismatch_delta" in stability_data["warnings"]
+        assert stability_data["since_packet"]["id"] == overview_data["packet_id"]
+
+        invalid = client.post("/api/collaboration/project-snapshot-packets", json={"profile": "unknown"})
+        assert invalid.status_code == 422
+        assert invalid.json()["detail"]["code"] == "project_snapshot_invalid_profile"
+
+        missing = client.post("/api/collaboration/project-snapshot-packets", json={"since_packet_id": "snapshot_missing"})
+        assert missing.status_code == 404
+        assert missing.json()["detail"]["code"] == "project_snapshot_since_packet_not_found"
+    get_settings.cache_clear()
+
+
+def test_context_limited_high_finding_does_not_auto_create_task(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        imported = client.post(
+            "/api/collaboration/reviews",
+            json={
+                "markdown": """---
+evidence_quality: context_limited
+---
+# Review
+
+### Finding
+
+Title: Context limited high finding needs operator translation
+Severity: high
+Area: API
+
+Evidence:
+The external AI only saw a context-limited packet.
+
+Proposed change:
+Ask the operator to verify before creating implementation work.
+""",
+                "vault_id": "local-default",
+            },
+        )
+        assert imported.status_code == 200, imported.text
+        finding_id = imported.json()["data"]["findings"][0]["id"]
+        accepted = client.post(f"/api/collaboration/findings/{finding_id}/decision", json={"status": "accepted", "decision_note": "Accepted for review"})
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["data"]["auto_task"] is None
+        tasks = client.get("/api/collaboration/finding-tasks?status=all")
+        assert tasks.status_code == 200, tasks.text
+        assert tasks.json()["data"]["tasks"] == []
+    get_settings.cache_clear()
+
+
+def test_compact_output_contract_parser_and_feedback(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    compact = {
+        "output_mode": "top_findings",
+        "findings": [
+            {
+                "title": "Compact parser should import finding",
+                "severity": "medium",
+                "area": "API",
+                "evidence_quality": "direct_access",
+                "evidence": "The response used the compact JSON contract.",
+                "proposed_change": "Parse compact JSON findings before markdown fallback.",
+            }
+        ],
+    }
+    metadata, findings, errors = parse_review_markdown(json.dumps(compact))
+    assert errors == []
+    assert metadata["output_mode"] == "top_findings"
+    assert findings[0]["title"] == "Compact parser should import finding"
+    assert findings[0]["evidence_quality"] == "direct_access"
+
+    noisy = {"output_mode": "decision_only", "findings": [{"title": "Should not import"}], "unsupported_sections": ["Long Summary"]}
+    metadata, findings, errors = parse_review_markdown(json.dumps(noisy))
+    assert findings == []
+    assert "decision_only_does_not_accept_findings" in errors
+    assert "unsupported_sections_present" in errors
+    assert "ai_feedback_prompt" in metadata
+    get_settings.cache_clear()
+
+
+def test_patch_suggestion_stub_exposes_safety_contract(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        imported = client.post("/api/collaboration/reviews", json={"markdown": _review_markdown(), "vault_id": "local-default"})
+        assert imported.status_code == 200, imported.text
+        finding_id = imported.json()["data"]["findings"][0]["id"]
+        response = client.get(f"/api/collaboration/patch-suggestion?finding_id={finding_id}")
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        assert data["status"] == "unsupported_until_implemented"
+        assert data["safety_contract"]["requires_local_code_context"] is True
+        assert data["safety_contract"]["external_ai_raw_code_access"] is False
+    get_settings.cache_clear()
+
+
+def test_experiment_packet_accepts_minimum_inline_context(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        first = client.post("/api/pages", json={"slug": "access-fallback-protocol", "title": "Access Fallback Protocol"})
+        assert first.status_code == 200, first.text
+        path = app.state.settings.data_dir / "pages" / "access-fallback-protocol.md"
+        path.write_text(
+            """---
+title: Access Fallback Protocol
+slug: access-fallback-protocol
+---
+
+# Access Fallback Protocol
+
+fallback_order: Use inline context first.
+""",
+            encoding="utf-8",
+        )
+        response = client.post(
+            "/api/collaboration/experiment-packets",
+            json={
+                "experiment_name": "Minimum inline context test",
+                "task": "Check the supplied minimum context.",
+                "node_slugs": ["access-fallback-protocol"],
+                "minimum_inline_context": "Critical inline summary: do not guess from node names.",
+            },
+        )
+        assert response.status_code == 200, response.text
+        content = response.json()["data"]["content"]
+        assert "contract_version: p20.v1" in content
+        assert "output_mode: top_findings" in content
+        assert "Role And Access Boundaries" in content
+        assert "Node Cards" in content
+        assert "Operator-Supplied Minimum Inline Context" in content
+        assert "Critical inline summary: do not guess from node names." in content
+        data = response.json()["data"]
+        assert data["packet_schema_version"] == "p20.v1"
+        assert data["node_cards"][0]["slug"] == "access-fallback-protocol"
+        assert data["node_cards"][0]["detail_url"] == "/api/pages/access-fallback-protocol"
+    get_settings.cache_clear()
+
+
+def test_phase20_packet_shape_and_dry_run_are_provider_agnostic(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        page = client.post("/api/pages", json={"slug": "access-fallback-protocol", "title": "Access Fallback Protocol"})
+        assert page.status_code == 200, page.text
+        (app.state.settings.data_dir / "pages" / "access-fallback-protocol.md").write_text(
+            "# Access Fallback Protocol\n\nUse inline context and return compact findings.\n",
+            encoding="utf-8",
+        )
+
+        snapshot = client.post("/api/collaboration/project-snapshot-packets", json={"target_agent": "gemini", "profile": "provider_review"})
+        assert snapshot.status_code == 200, snapshot.text
+        snapshot_shape = snapshot.json()["data"]["contract_shape"]
+        assert snapshot_shape["valid"] is True
+
+        packet = client.post(
+            "/api/collaboration/experiment-packets",
+            json={
+                "experiment_name": "Provider agnostic parser",
+                "task": "Return one compact finding.",
+                "target_agent": "claude",
+                "node_slugs": ["access-fallback-protocol"],
+            },
+        )
+        assert packet.status_code == 200, packet.text
+        packet_data = packet.json()["data"]
+        assert packet_data["contract_shape"]["valid"] is True
+        assert packet_data["contract_shape"]["sections"] == snapshot_shape["sections"]
+        packet_id = packet_data["packet_id"]
+
+        responses = [
+            ("claude", "claude-test", "Claude response passes same parser."),
+            ("gemini", "gemini-test", "Gemini response passes same parser."),
+        ]
+        for source_agent, source_model, evidence in responses:
+            dry_run = client.post(
+                f"/api/collaboration/experiment-packets/{packet_id}/responses/dry-run",
+                json={
+                    "source_agent": source_agent,
+                    "source_model": source_model,
+                    "response_markdown": json.dumps(
+                        {
+                            "output_mode": "top_findings",
+                            "findings": [
+                                {
+                                    "title": f"{source_agent} compact finding",
+                                    "severity": "low",
+                                    "area": "Docs",
+                                    "evidence_quality": "context_limited",
+                                    "evidence": evidence,
+                                    "proposed_change": "Keep provider responses on the shared compact contract.",
+                                }
+                            ],
+                        }
+                    ),
+                },
+            )
+            assert dry_run.status_code == 200, dry_run.text
+            dry_data = dry_run.json()["data"]
+            assert dry_data["import_ready"] is True
+            assert dry_data["parser_errors"] == []
+            assert dry_data["findings"][0]["evidence_quality"] == "context_limited"
+
+        noisy = client.post(
+            f"/api/collaboration/experiment-packets/{packet_id}/responses/dry-run",
+            json={
+                "source_agent": "claude",
+                "response_markdown": json.dumps(
+                    {
+                        "output_mode": "top_findings",
+                        "unsupported_sections": ["Long Summary"],
+                        "findings": [
+                            {
+                                "title": "Noisy response",
+                                "severity": "low",
+                                "area": "Docs",
+                                "evidence_quality": "context_limited",
+                                "evidence": "Unsupported sections should reject import readiness.",
+                                "proposed_change": "Return only compact findings.",
+                            }
+                        ],
+                    }
+                ),
+            },
+        )
+        assert noisy.status_code == 200, noisy.text
+        noisy_data = noisy.json()["data"]
+        assert noisy_data["import_ready"] is False
+        assert noisy_data["rejection_reason"] == "parser_errors"
+        assert "unsupported_sections_present" in noisy_data["parser_errors"]
+        assert noisy_data["ai_feedback_prompt"]
+
+        blocked_import = client.post(f"/api/collaboration/experiment-packets/{packet_id}/responses/{noisy_data['response_id']}/import")
+        assert blocked_import.status_code == 422
+        assert blocked_import.json()["detail"]["code"] == "experiment_packet_response_parser_errors"
+    get_settings.cache_clear()
+
+
+def test_implementation_evidence_dry_run_and_record_updates_task(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        imported = client.post("/api/collaboration/reviews", json={"markdown": _review_markdown(), "vault_id": "local-default"})
+        assert imported.status_code == 200, imported.text
+        finding_id = imported.json()["data"]["findings"][0]["id"]
+        accepted = client.post(f"/api/collaboration/findings/{finding_id}/decision", json={"status": "accepted", "decision_note": "Implement now"})
+        assert accepted.status_code == 200, accepted.text
+        task = client.post(f"/api/collaboration/findings/{finding_id}/task", json={"priority": "normal", "owner": "codex"})
+        assert task.status_code == 200, task.text
+        task_id = task.json()["data"]["task"]["id"]
+
+        bad_path = client.post(
+            f"/api/collaboration/findings/{finding_id}/implementation-evidence",
+            json={"verification": "pytest", "changed_files": ["C:/knownet/data/knownet.db"]},
+        )
+        assert bad_path.status_code == 422
+        assert bad_path.json()["detail"]["code"] == "implementation_file_forbidden_path"
+
+        dry_run = client.post(
+            f"/api/collaboration/findings/{finding_id}/implementation-evidence",
+            json={"dry_run": True, "changed_files": ["apps/api/knownet_api/routes/collaboration.py"], "verification": "targeted pytest passed"},
+        )
+        assert dry_run.status_code == 200, dry_run.text
+        draft = dry_run.json()["data"]["draft"]
+        assert dry_run.json()["data"]["dry_run"] is True
+        assert draft["task_id"] == task_id
+        assert draft["would_mark_task_done"] is True
+
+        with sqlite3.connect(app.state.settings.sqlite_path) as connection:
+            assert connection.execute("SELECT status FROM collaboration_findings WHERE id = ?", (finding_id,)).fetchone()[0] == "accepted"
+            assert connection.execute("SELECT status FROM finding_tasks WHERE id = ?", (task_id,)).fetchone()[0] == "open"
+
+        recorded = client.post(
+            f"/api/collaboration/findings/{finding_id}/implementation-evidence",
+            json={"dry_run": False, "changed_files": ["apps/api/knownet_api/routes/collaboration.py"], "verification": "targeted pytest passed", "notes": "Evidence endpoint smoke"},
+        )
+        assert recorded.status_code == 200, recorded.text
+        assert recorded.json()["data"]["record"]["task_id"] == task_id
+        with sqlite3.connect(app.state.settings.sqlite_path) as connection:
+            assert connection.execute("SELECT status FROM collaboration_findings WHERE id = ?", (finding_id,)).fetchone()[0] == "implemented"
+            assert connection.execute("SELECT status FROM finding_tasks WHERE id = ?", (task_id,)).fetchone()[0] == "done"
+            assert connection.execute("SELECT COUNT(*) FROM implementation_records WHERE finding_id = ?", (finding_id,)).fetchone()[0] == 1
+    get_settings.cache_clear()
+
+
+def test_simple_evidence_endpoint_records_minimal_payload(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        imported = client.post("/api/collaboration/reviews", json={"markdown": _review_markdown(), "vault_id": "local-default"})
+        assert imported.status_code == 200, imported.text
+        finding_id = imported.json()["data"]["findings"][0]["id"]
+        accepted = client.post(f"/api/collaboration/findings/{finding_id}/decision", json={"status": "accepted", "decision_note": "Simple evidence"})
+        assert accepted.status_code == 200, accepted.text
+
+        dry_run = client.post(
+            f"/api/collaboration/findings/{finding_id}/evidence",
+            json={"dry_run": True, "implemented": True, "commit": "abcdef1", "note": "Targeted pytest passed."},
+        )
+        assert dry_run.status_code == 200, dry_run.text
+        assert dry_run.json()["data"]["dry_run"] is True
+        assert dry_run.json()["data"]["draft"]["verification"] == "Targeted pytest passed."
+
+        blocked = client.post(f"/api/collaboration/findings/{finding_id}/evidence", json={"implemented": False, "note": "Blocked"})
+        assert blocked.status_code == 409
+        assert blocked.json()["detail"]["code"] == "implementation_evidence_not_implemented"
+
+        recorded = client.post(
+            f"/api/collaboration/findings/{finding_id}/evidence",
+            json={"implemented": True, "commit": "abcdef1", "note": "Targeted pytest passed."},
+        )
+        assert recorded.status_code == 200, recorded.text
+        assert recorded.json()["data"]["dry_run"] is False
+        with sqlite3.connect(app.state.settings.sqlite_path) as connection:
+            assert connection.execute("SELECT status FROM collaboration_findings WHERE id = ?", (finding_id,)).fetchone()[0] == "implemented"
+            assert connection.execute("SELECT commit_sha FROM implementation_records WHERE finding_id = ?", (finding_id,)).fetchone()[0] == "abcdef1"
     get_settings.cache_clear()
 
 
@@ -263,6 +1007,122 @@ def test_context_bundle_rejects_configured_admin_token_value(tmp_path, monkeypat
         )
         assert response.status_code == 422
         assert response.json()["detail"]["code"] == "context_bundle_secret_detected"
+    get_settings.cache_clear()
+
+
+def test_experiment_packet_generates_inline_context(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        first = client.post("/api/pages", json={"slug": "access-fallback-protocol", "title": "Access Fallback Protocol"})
+        second = client.post("/api/pages", json={"slug": "evidence-quality-registry", "title": "Evidence Quality Registry"})
+        assert first.status_code == 200, first.text
+        assert second.status_code == 200, second.text
+        (app.state.settings.data_dir / "pages" / "access-fallback-protocol.md").write_text(
+            """---
+schema_version: 1
+id: page_access_fallback_protocol
+title: Access Fallback Protocol
+slug: access-fallback-protocol
+status: active
+---
+# Access Fallback Protocol
+
+If direct KnowNet access fails, state the limitation and continue from supplied context.
+""",
+            encoding="utf-8",
+        )
+        (app.state.settings.data_dir / "pages" / "evidence-quality-registry.md").write_text(
+            """---
+schema_version: 1
+id: page_evidence_quality_registry
+title: Evidence Quality Registry
+slug: evidence-quality-registry
+status: active
+---
+# Evidence Quality Registry
+
+context_limited findings may flag review work, but need operator verification before release blocking.
+""",
+            encoding="utf-8",
+        )
+
+        response = client.post(
+            "/api/collaboration/experiment-packets",
+            json={
+                "experiment_name": "Boundary smoke",
+                "task": "Decide scenarios only.",
+                "target_agent": "claude",
+                "node_slugs": ["access-fallback-protocol", "evidence-quality-registry"],
+                "scenarios": ["Can a model infer whole-system health from ping?"],
+                "output_schema": "Return Access Status and Scenario Decision Table.",
+            },
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        content = data["content"]
+        packet_id = data["packet_id"]
+        assert data["copy_ready"] is True
+        assert data["preflight"]["pages"] == 2
+        assert data["read_url"] == f"/api/collaboration/experiment-packets/{packet_id}"
+        assert (app.state.settings.data_dir / "experiment-packets" / f"{packet_id}.md").exists()
+        assert "Boundary smoke" in content
+        assert "Node: Access Fallback Protocol" in content
+        assert "context_limited findings may flag review work" in content
+        assert "Can a model infer whole-system health from ping?" in content
+        assert "### Finding" in content
+
+        read = client.get(f"/api/collaboration/experiment-packets/{packet_id}")
+        assert read.status_code == 200, read.text
+        assert read.json()["data"]["content_hash"] == data["content_hash"]
+
+        dry_run = client.post(
+            f"/api/collaboration/experiment-packets/{packet_id}/responses/dry-run",
+            json={
+                "source_agent": "claude",
+                "source_model": "claude-test",
+                "response_markdown": """# Response
+
+**Finding 1**
+Title: Packet response parses
+Severity: low
+Area: Docs
+Evidence quality: context_limited
+
+Evidence:
+The response dry-run endpoint parsed this finding.
+
+Proposed change:
+Use the dry-run before importing.
+""",
+            },
+        )
+        assert dry_run.status_code == 200, dry_run.text
+        dry_run_data = dry_run.json()["data"]
+        assert dry_run_data["finding_count"] == 1
+        assert dry_run_data["findings"][0]["evidence_quality"] == "context_limited"
+
+        imported = client.post(f"/api/collaboration/experiment-packets/{packet_id}/responses/{dry_run_data['response_id']}/import")
+        assert imported.status_code == 200, imported.text
+        imported_data = imported.json()["data"]
+        assert imported_data["review"]["id"]
+        assert imported_data["findings"][0]["title"] == "Packet response parses"
+        assert imported_data["findings"][0]["evidence_quality"] == "context_limited"
+
+        duplicate = client.post(f"/api/collaboration/experiment-packets/{packet_id}/responses/{dry_run_data['response_id']}/import")
+        assert duplicate.status_code == 409
+        assert duplicate.json()["detail"]["code"] == "experiment_packet_response_already_imported"
+    get_settings.cache_clear()
+
+
+def test_experiment_packet_reports_missing_nodes(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/collaboration/experiment-packets",
+            json={"experiment_name": "Missing node", "task": "Build packet.", "node_slugs": ["missing-node"]},
+        )
+        assert response.status_code == 404
+        assert response.json()["detail"]["code"] == "experiment_packet_node_missing"
     get_settings.cache_clear()
 
 
@@ -335,8 +1195,16 @@ def test_verify_index_reports_collaboration_drift(tmp_path, monkeypatch):
                 "VALUES ('finding_orphan', 'review_orphan', 'high', 'API', 'Orphan', 'pending', '2026-05-02T00:00:00Z', '2026-05-02T00:00:00Z')"
             )
             connection.execute(
+                "INSERT INTO collaboration_findings (id, review_id, severity, area, title, evidence_quality, status, created_at, updated_at) "
+                "VALUES ('finding_bad_quality', 'review_missing_page', 'low', 'Docs', 'Bad quality', 'direct-ish', 'pending', '2026-05-02T00:00:00Z', '2026-05-02T00:00:00Z')"
+            )
+            connection.execute(
                 "INSERT INTO implementation_records (id, finding_id, changed_files, verification, created_at) "
                 "VALUES ('impl_orphan', 'finding_missing', '[]', 'not run', '2026-05-02T00:00:00Z')"
+            )
+            connection.execute(
+                "INSERT INTO finding_tasks (id, finding_id, task_prompt, expected_verification, created_at, updated_at) "
+                "VALUES ('task_orphan', 'finding_missing', 'do work', 'run tests', '2026-05-02T00:00:00Z', '2026-05-02T00:00:00Z')"
             )
             connection.execute(
                 "INSERT INTO context_bundle_manifests (id, vault_id, filename, path, selected_pages, included_sections, excluded_sections, content_hash, created_by, created_at) "
@@ -349,7 +1217,9 @@ def test_verify_index_reports_collaboration_drift(tmp_path, monkeypatch):
         codes = {issue["code"] for issue in verify.json()["data"]["issues"]}
         assert "collaboration_review_missing_page" in codes
         assert "collaboration_finding_orphan" in codes
+        assert "collaboration_finding_invalid_evidence_quality" in codes
         assert "implementation_record_orphan" in codes
+        assert "finding_task_orphan" in codes
         assert "context_bundle_forbidden_reference" in codes
     get_settings.cache_clear()
 
@@ -357,8 +1227,8 @@ def test_verify_index_reports_collaboration_drift(tmp_path, monkeypatch):
 def test_active_docs_and_app_code_use_current_terms():
     scan_roots = [
         REPO_ROOT / "README.md",
-        REPO_ROOT / "PHASE_7_TASKS.md",
-        REPO_ROOT / "PHASE_8_TASKS.md",
+        REPO_ROOT / "docs" / "phases" / "PHASE_7_TASKS.md",
+        REPO_ROOT / "docs" / "phases" / "PHASE_8_TASKS.md",
         REPO_ROOT / "docs",
         REPO_ROOT / "apps" / "api" / "knownet_api",
         REPO_ROOT / "apps" / "web" / "app",

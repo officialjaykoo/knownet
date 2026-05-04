@@ -1,4 +1,4 @@
-# KnowNet
+﻿# KnowNet
 
 AI-centered collaboration knowledge base.
 
@@ -115,21 +115,27 @@ Python SDK setup and workflow examples live in [SDK client docs](./docs/SDK_CLIE
 
 Implementation task lists:
 
-- [Phase 1 Tasks](./PHASE_1_TASKS.md)
-- [Phase 2 Tasks](./PHASE_2_TASKS.md)
-- [Phase 3 Tasks](./PHASE_3_TASKS.md)
-- [Phase 4 Tasks](./PHASE_4_TASKS.md)
-- [Phase 5 Tasks](./PHASE_5_TASKS.md)
-- [Phase 6 Tasks](./PHASE_6_TASKS.md)
-- [Phase 7 Tasks](./PHASE_7_TASKS.md)
-- [Phase 8 Tasks](./PHASE_8_TASKS.md)
-- [Phase 9 Tasks](./PHASE_9_TASKS.md)
-- [Phase 10 Tasks](./PHASE_10_TASKS.md)
-- [Phase 11 Tasks](./PHASE_11_TASKS.md)
-- [Phase 12 Tasks](./PHASE_12_TASKS.md)
+- [Phase 1 Tasks](./docs/phases/PHASE_1_TASKS.md)
+- [Phase 2 Tasks](./docs/phases/PHASE_2_TASKS.md)
+- [Phase 3 Tasks](./docs/phases/PHASE_3_TASKS.md)
+- [Phase 4 Tasks](./docs/phases/PHASE_4_TASKS.md)
+- [Phase 5 Tasks](./docs/phases/PHASE_5_TASKS.md)
+- [Phase 6 Tasks](./docs/phases/PHASE_6_TASKS.md)
+- [Phase 7 Tasks](./docs/phases/PHASE_7_TASKS.md)
+- [Phase 8 Tasks](./docs/phases/PHASE_8_TASKS.md)
+- [Phase 9 Tasks](./docs/phases/PHASE_9_TASKS.md)
+- [Phase 10 Tasks](./docs/phases/PHASE_10_TASKS.md)
+- [Phase 11 Tasks](./docs/phases/PHASE_11_TASKS.md)
+- [Phase 12 Tasks](./docs/phases/PHASE_12_TASKS.md)
+- [Phase 13 Tasks](./docs/phases/PHASE_13_TASKS.md)
+- [Phase 14 Tasks](./docs/phases/PHASE_14_TASKS.md)
+- [Phase 15 Tasks](./docs/phases/PHASE_15_TASKS.md)
+- [Phase 16 Tasks](./docs/phases/PHASE_16_TASKS.md)
+- [Phase 17 Tasks](./docs/phases/PHASE_17_TASKS.md)
 
 Operational docs:
 
+- [Docs Index](./docs/README.md)
 - [Security Plan](./docs/SECURITY_PLAN.md)
 - [Runbook](./docs/RUNBOOK.md)
 - [Docker](./docs/DOCKER.md)
@@ -141,3 +147,4 @@ Product direction:
 
 - [AI-Centered Design](./docs/AI_CENTERED_DESIGN.md)
 - [AI Collaboration Concept](./docs/AI_COLLABORATION_CONCEPT.md)
+

@@ -80,9 +80,21 @@ class DraftResult:
 class DraftService:
     prompt_version = "source-to-page-v1"
 
-    def __init__(self, *, api_key: str | None, model: str, timeout_seconds: float) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str | None,
+        base_url: str = "https://api.openai.com/v1",
+        model: str,
+        reasoning_effort: str | None = "low",
+        max_output_tokens: int = 2000,
+        timeout_seconds: float,
+    ) -> None:
         self.api_key = api_key
+        self.base_url = base_url.rstrip("/")
         self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.max_output_tokens = max_output_tokens
         self.timeout_seconds = timeout_seconds
 
     async def create_draft(
@@ -160,10 +172,13 @@ class DraftService:
                     "schema": DRAFT_JSON_SCHEMA,
                 }
             },
+            "max_output_tokens": self.max_output_tokens,
         }
+        if self.reasoning_effort:
+            payload["reasoning"] = {"effort": self.reasoning_effort}
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
-            response = await client.post("https://api.openai.com/v1/responses", headers=headers, json=payload)
+            response = await client.post(f"{self.base_url}/responses", headers=headers, json=payload)
         if response.status_code == 429:
             raise RuntimeError("draft_rate_limited")
         if response.status_code >= 400:

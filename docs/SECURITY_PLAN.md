@@ -59,6 +59,7 @@ Protected operations:
 - `POST /api/suggestions/{id}/apply`
 - `POST /api/pages/{slug}/revisions/{revision_id}/restore`
 - `POST /api/maintenance/*`
+- `/api/operator/*` administrative readiness and provider status endpoints
 - Future import/export/rebuild endpoints
 
 Requirements:
@@ -225,11 +226,15 @@ Implementation status:
 
 - Done. Maintenance endpoints that are mutating, expensive, or operational are admin-only.
 - Done. Harmless embedding health remains readable.
+- Done. Phase 17 operator endpoints for AI state quality, provider matrix, and
+  release readiness are admin-only.
 
 ## 7. Backup And Recovery
 
-Because Markdown is the source of truth, backups must include files and database
-state together.
+Backups must keep narrative files and structured state together. Markdown pages
+are durable human-readable source material, while SQLite/JSON records hold the
+canonical collaboration state used for findings, decisions, audit, graph, and
+AI-readable handoff.
 
 Backup scope:
 
@@ -246,8 +251,10 @@ Requirements:
 - Create snapshots before import, bulk apply, restore, or rebuild operations.
 - Use `.tar.gz` snapshot archives so backups are portable outside the app.
 - Provide a restore procedure in docs.
+- Provide a restore-plan inspection path before browser/operator restore.
 - Keep `verify-index` able to detect missing files, missing frontmatter, missing sections, broken citations, and stale metadata.
-- Ensure `knownet.db` can be rebuilt from Markdown/frontmatter/body where possible.
+- Keep Markdown/frontmatter/body recoverable into a usable database where
+  possible, while preserving structured snapshot restore as the preferred path.
 
 Done when:
 
@@ -258,20 +265,72 @@ Implementation status:
 
 - Done. `POST /api/maintenance/snapshots` creates an admin-only `.tar.gz` snapshot of Markdown data and `knownet.db`.
 - Done. `GET /api/maintenance/snapshots` lists snapshots.
+- Done. `GET /api/maintenance/restore-plan` inspects snapshot manifest, tar
+  path safety, active locks, and pre-restore snapshot requirements without
+  restoring data.
 - Done. `verify-index` detects missing files, missing frontmatter, missing sections, broken citation state, and graph/index drift where available.
 
 Restore procedure:
 
 ```txt
-1. Stop the API/web processes.
-2. Copy the desired .tar.gz from data/backups to a safe working folder.
-3. Extract it outside the repo first and inspect its contents.
-4. Replace data/pages, data/revisions, data/suggestions, data/inbox, data/sources, and data/knownet.db from the extracted snapshot.
-5. Restart the API.
-6. Run GET /api/maintenance/verify-index with admin auth.
+1. List snapshots with GET /api/maintenance/snapshots.
+2. Inspect the candidate snapshot with GET /api/maintenance/restore-plan.
+3. Confirm no active maintenance lock blocks restore.
+4. Confirm the snapshot ends with .tar.gz and has a valid manifest.
+5. Use POST /api/maintenance/restore only after operator confirmation.
+6. Let the restore flow create a pre-restore snapshot when configured.
+7. Run GET /api/maintenance/verify-index with admin auth.
 ```
 
-## 8. Basic Public/Team Operations Baseline
+Manual offline restore remains possible for emergency recovery, but the
+operator path should prefer the API restore workflow because it validates tar
+members, records maintenance runs, audits the restore, and rebuilds graph state
+where possible.
+
+## 8. External Model Runner And AI State Quality
+
+KnowNet may call external model APIs from the server side. These calls are
+operator-controlled review runs, not autonomous write agents.
+
+Rules:
+
+- API keys stay in server-side environment/config only.
+- External models receive only sanitized safe context.
+- External models never receive raw database files, local absolute paths,
+  backups, inbox raw messages, sessions, users, raw tokens, token hashes, or
+  `.env` values.
+- Model output becomes `dry_run_ready` first.
+- Operator import is required before model output becomes collaboration reviews
+  or findings.
+- Mocked provider tests never count as live provider verification.
+- Provider verification levels are evidence-based:
+  `mocked`, `configured`, `live_verified`, `failed`, or `unavailable`.
+
+Implementation status:
+
+- Done. `model_review_runs` stores sanitized run metadata, token estimates,
+  dry-run output, import linkage, and sanitized errors.
+- Done. Safe context builder rejects secret/path-like content before provider
+  calls.
+- Done. Phase 17 AI state quality endpoint checks whether canonical AI-readable
+  state is useful and safe before handoff.
+- Done. Phase 17 provider matrix makes mocked/configured/live verification
+  explicit for operator and release review.
+
+## 9. Release Evidence
+
+Release evidence must be durable and safe for AI handoff.
+
+Implementation status:
+
+- Done. `scripts/release_check.ps1` checks AI state quality and provider matrix
+  after health and verify-index.
+- Done. `scripts/release_check.ps1` writes `docs/RELEASE_EVIDENCE.md` with a
+  structured JSON evidence record.
+- Done. Release evidence records provider verification summary without secrets
+  or raw local paths.
+
+## 10. Basic Public/Team Operations Baseline
 
 This is the minimum security layer for operating KnowNet beyond a single local
 developer process.

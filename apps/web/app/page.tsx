@@ -18,11 +18,13 @@ import {
   SquarePen,
   X,
 } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import { GraphPanel, GraphData, GraphNode } from "../components/GraphPanel";
-import { AgentAccessPanel } from "../components/AgentAccessPanel";
-import { OperationsPanel } from "../components/OperationsPanel";
+import { AgentDashboardWorkspace } from "../components/AgentDashboardWorkspace";
+import { AIReviewsWorkspace } from "../components/AIReviewsWorkspace";
+import { AIPacketsWorkspace } from "../components/AIPacketsWorkspace";
+import { MarkdownView } from "../components/MarkdownView";
+import { OperatorConsoleWorkspace } from "../components/OperatorConsoleWorkspace";
+import { WorkspaceTabs } from "../components/WorkspaceTabs";
 
 type PageSummary = {
   slug: string;
@@ -132,6 +134,26 @@ type SnapshotSummary = {
   size_bytes: number;
 };
 
+type MaintenanceLock = {
+  id: string;
+  operation: string;
+  status: string;
+  created_at: string;
+};
+
+type RestorePlan = {
+  snapshot: string;
+  can_restore_now: boolean;
+  pre_restore_snapshot_required: boolean;
+  manifest: {
+    created_at?: string | null;
+    included_files?: number | null;
+    hash_count?: number | null;
+  };
+  active_lock?: MaintenanceLock | null;
+  warnings: string[];
+};
+
 type CollaborationReviewSummary = {
   id: string;
   title: string;
@@ -148,7 +170,18 @@ type CollaborationFinding = {
   title: string;
   evidence?: string | null;
   proposed_change?: string | null;
+  evidence_quality?: string | null;
   status: string;
+};
+
+type FindingTask = {
+  id: string;
+  finding_id: string;
+  status: string;
+  priority: string;
+  owner?: string | null;
+  task_prompt: string;
+  expected_verification?: string | null;
 };
 
 type CollaborationReviewDetail = {
@@ -156,172 +189,116 @@ type CollaborationReviewDetail = {
   findings: CollaborationFinding[];
 };
 
+type QualityCheck = {
+  code: string;
+  status: "pass" | "warn" | "fail";
+  title: string;
+  detail: string;
+  action?: string | null;
+};
+
+type AiStateQuality = {
+  overall_status: "pass" | "warn" | "fail";
+  checks: QualityCheck[];
+  summary?: Record<string, number>;
+  checked_at: string;
+};
+
+type ProviderMatrix = {
+  providers: Array<{
+    provider_id: string;
+    label: string;
+    route_type: string;
+    implemented_surface: string;
+    verification_level: string;
+    last_verified_at?: string | null;
+    required_config_present: boolean;
+    model?: string | null;
+    known_limitations: string[];
+    run_counts: { mock_successful: number; live_successful: number; failed: number };
+  }>;
+  summary: Record<string, number>;
+  checked_at: string;
+};
+
+type ModelRun = {
+  id: string;
+  provider: string;
+  model: string;
+  prompt_profile: string;
+  status: string;
+  review_id?: string | null;
+  input_tokens?: number | null;
+  output_tokens?: number | null;
+  estimated_cost_usd?: number | null;
+  error_code?: string | null;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+  context_summary?: {
+    page_count?: number;
+    open_finding_count?: number;
+    estimated_input_tokens?: number;
+    chars?: number;
+    context_hash?: string;
+  };
+  request?: { mock?: boolean; review_focus?: string | null };
+  response?: {
+    mock?: boolean;
+    dry_run?: { finding_count?: number; findings?: CollaborationFinding[]; parser_errors?: string[] };
+    import?: { review_id?: string; finding_count?: number };
+  };
+};
+
+type ReleaseReadiness = {
+  release_ready: boolean;
+  blockers: string[];
+  warnings: string[];
+  ai_state_quality: { overall_status: string; summary?: Record<string, number> };
+  provider_matrix: Record<string, number>;
+  latest_model_run?: { id: string; provider: string; status: string; updated_at: string } | null;
+  checked_at: string;
+};
+
+type ExperimentPacket = {
+  packet_id: string;
+  content: string;
+  content_hash: string;
+  read_url: string;
+  included_nodes: Array<{ page_id: string; slug: string; title: string }>;
+  preflight: { pages: number; ai_state_pages: number; unresolved_nodes: number; pending_findings: number };
+  copy_ready: boolean;
+};
+
+type ProjectSnapshotPacket = {
+  packet_id: string;
+  content: string;
+  content_hash: string;
+  read_url: string;
+  storage_path: string;
+  warnings: string[];
+  profile?: string;
+  output_mode?: string;
+  contract_version?: string;
+  snapshot_quality?: { score: number; warnings: string[]; advisory_only: boolean; acknowledgement_required_for_ui_send: boolean; acknowledged: boolean };
+  copy_ready: boolean;
+};
+
+type ExperimentResponseDryRun = {
+  response_id: string;
+  packet_id: string;
+  finding_count: number;
+  findings: CollaborationFinding[];
+  parser_errors: string[];
+  truncated_findings: boolean;
+};
+
 const apiBase = process.env.NEXT_PUBLIC_API_BASE ?? "";
 const sessionStorageKey = "knownet.session";
 const vaultStorageKey = "knownet.vault";
 
-function stripFrontmatter(markdown: string): string {
-  if (!markdown.startsWith("---\n")) {
-    return markdown;
-  }
-  const end = markdown.indexOf("\n---\n", 4);
-  return end === -1 ? markdown : markdown.slice(end + 5).trimStart();
-}
-
-function pageSlug(target: string): string {
-  return String(target).trim().toLowerCase().replace(/[^a-z0-9\uac00-\ud7a3_-]+/g, "-").replace(/^-+|-+$/g, "");
-}
-
 function pageIdFromSlug(slug: string): string {
   return `page_${slug.replace(/-/g, "_")}`;
-}
-
-function domId(value: string): string {
-  return value.replace(/[^A-Za-z0-9_-]+/g, "-");
-}
-
-function prepareMarkdown(markdown: string, citationSources: CitationSource[] = []): string {
-  const indexByKey = new Map(citationSources.map((source, index) => [source.key, String(index + 1)]));
-  return stripFrontmatter(markdown)
-    .split("\n")
-    .filter((line) => !/^\s*\[\^[^\]]+\]:/.test(line))
-    .map((line) =>
-      line
-        .replace(/\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/g, (_match, target, label) => {
-          const text = label || target;
-          return `[${text}](page:${encodeURIComponent(pageSlug(target))})`;
-        })
-        .replace(/\[\^([^\]]+)\]/g, (_match, key) => {
-          const cleanKey = String(key).trim();
-          const label = indexByKey.get(cleanKey) || cleanKey;
-          return `[${label}](#citation-ref-${domId(cleanKey)})`;
-        }),
-    )
-    .join("\n");
-}
-
-function citationPreview(source?: CitationSource): string {
-  if (!source) {
-    return "Citation source not loaded.";
-  }
-  return source.excerpt || source.definition || source.reason || source.key;
-}
-
-function citationTitle(source?: CitationSource): string {
-  return source?.display_title || source?.key || "Citation";
-}
-
-function isExternalHref(href: string): boolean {
-  return /^https?:\/\//i.test(href);
-}
-
-function MarkdownView({
-  markdown,
-  citationSources = [],
-  compact = false,
-  collapsible = false,
-  onOpenPage,
-}: {
-  markdown: string;
-  citationSources?: CitationSource[];
-  compact?: boolean;
-  collapsible?: boolean;
-  onOpenPage?: (slug: string) => void;
-}) {
-  const [expanded, setExpanded] = useState(false);
-  const [activeCitationKey, setActiveCitationKey] = useState<string | null>(null);
-  const prepared = useMemo(() => prepareMarkdown(markdown, citationSources), [markdown, citationSources]);
-  const citationByKey = useMemo(() => new Map(citationSources.map((source) => [source.key, source])), [citationSources]);
-  const citationKeyByDomId = useMemo(
-    () => new Map(citationSources.map((source) => [`citation-ref-${domId(source.key)}`, source.key])),
-    [citationSources],
-  );
-  const activeCitation = activeCitationKey ? citationByKey.get(activeCitationKey) : undefined;
-  const shouldCollapse = collapsible && (prepared.length > 2200 || /\n\|.+\|\n\|[-:|\s]+\|/.test(prepared));
-
-  return (
-    <>
-      <article className={`${compact ? "markdown compact" : "markdown"} ${shouldCollapse && !expanded ? "is-collapsed" : ""}`}>
-        <ReactMarkdown
-          remarkPlugins={[remarkGfm]}
-          components={{
-            a: ({ href, children }) => {
-              const target = href || "";
-              if (target.startsWith("page:")) {
-                const slug = decodeURIComponent(target.slice(5));
-                return (
-                  <button className="page-inline-link" onClick={() => onOpenPage?.(slug)} type="button">
-                    {children}
-                  </button>
-                );
-              }
-              if (target.startsWith("#citation-ref-")) {
-                const citationDomId = target.slice(1);
-                const key = citationKeyByDomId.get(citationDomId) || citationDomId.replace(/^citation-ref-/, "");
-                const source = citationByKey.get(key);
-                return (
-                  <sup className="citation-ref">
-                    <button
-                      aria-label={`Open citation ${citationTitle(source)}`}
-                      data-preview={citationPreview(source)}
-                      onBlur={() => setActiveCitationKey(null)}
-                      onClick={() => document.getElementById(`citation-${domId(key)}`)?.scrollIntoView({ behavior: "smooth", block: "start" })}
-                      onFocus={() => setActiveCitationKey(key)}
-                      onMouseEnter={() => setActiveCitationKey(key)}
-                      onMouseLeave={() => setActiveCitationKey(null)}
-                      title={citationPreview(source)}
-                      type="button"
-                    >
-                      {children}
-                    </button>
-                  </sup>
-                );
-              }
-              return (
-                <a href={target} rel={isExternalHref(target) ? "noreferrer" : undefined} target={isExternalHref(target) ? "_blank" : undefined}>
-                  {children}
-                </a>
-              );
-            },
-          }}
-        >
-          {prepared}
-        </ReactMarkdown>
-      </article>
-      {shouldCollapse ? (
-        <button className="markdown-toggle" onClick={() => setExpanded((value) => !value)} type="button">
-          {expanded ? <ChevronsUp aria-hidden size={16} /> : <ChevronsDown aria-hidden size={16} />}
-          {expanded ? "Collapse" : "Expand"}
-        </button>
-      ) : null}
-      {activeCitation ? (
-        <aside className="citation-hover-card" role="status">
-          <strong>{citationTitle(activeCitation)}</strong>
-          {activeCitation.display_title && activeCitation.display_title !== activeCitation.key ? <small>{activeCitation.key}</small> : null}
-          <small>{activeCitation.status || "unchecked"}</small>
-          <p>{citationPreview(activeCitation)}</p>
-          {activeCitation.reason ? <small>{activeCitation.reason}</small> : null}
-        </aside>
-      ) : null}
-      {!compact && citationSources.length ? (
-        <section className="citation-references" aria-label="References">
-          <p className="eyebrow">References</p>
-          {citationSources.map((source, index) => (
-            <div className="citation-reference" id={`citation-${domId(source.key)}`} key={source.key}>
-              <span>{index + 1}</span>
-              <div>
-                <strong>{source.display_title || source.key}</strong>
-                {source.display_title && source.display_title !== source.key ? <small>{source.key}</small> : null}
-                <small>{source.status || "unchecked"}</small>
-                <p>{source.excerpt || source.definition || "No source excerpt available."}</p>
-                {source.reason ? <small>{source.reason}</small> : null}
-              </div>
-            </div>
-          ))}
-        </section>
-      ) : null}
-    </>
-  );
 }
 
 async function fetchJson<T>(path: string, init?: RequestInit, token?: string | null, vaultId?: string | null): Promise<T> {
@@ -373,15 +350,36 @@ export default function HomePage() {
   const [graphError, setGraphError] = useState<string | null>(null);
   const [healthSummary, setHealthSummary] = useState<HealthSummary | null>(null);
   const [snapshots, setSnapshots] = useState<SnapshotSummary[]>([]);
+  const [maintenanceLocks, setMaintenanceLocks] = useState<MaintenanceLock[]>([]);
+  const [restorePlan, setRestorePlan] = useState<RestorePlan | null>(null);
+  const [restoreConfirmValue, setRestoreConfirmValue] = useState("");
   const [verifyIssues, setVerifyIssues] = useState(0);
   const [opsBusyAction, setOpsBusyAction] = useState<string | null>(null);
-  const [showAgentDashboard, setShowAgentDashboard] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [activeWorkspace, setActiveWorkspace] = useState<"operator" | "map" | "reviews" | "packets" | "agents">("operator");
   const [reviewMarkdown, setReviewMarkdown] = useState("");
   const [collaborationReviews, setCollaborationReviews] = useState<CollaborationReviewSummary[]>([]);
   const [selectedCollaborationReview, setSelectedCollaborationReview] = useState<CollaborationReviewDetail | null>(null);
   const [bundleStatus, setBundleStatus] = useState("");
   const [bundlePageIds, setBundlePageIds] = useState<string[]>([]);
+  const [aiStateQuality, setAiStateQuality] = useState<AiStateQuality | null>(null);
+  const [providerMatrix, setProviderMatrix] = useState<ProviderMatrix | null>(null);
+  const [modelRuns, setModelRuns] = useState<ModelRun[]>([]);
+  const [selectedModelRun, setSelectedModelRun] = useState<ModelRun | null>(null);
+  const [releaseReadiness, setReleaseReadiness] = useState<ReleaseReadiness | null>(null);
+  const [operatorBusyAction, setOperatorBusyAction] = useState<string | null>(null);
+  const [projectSnapshotPacket, setProjectSnapshotPacket] = useState<ProjectSnapshotPacket | null>(null);
+  const [projectSnapshotProfile, setProjectSnapshotProfile] = useState("overview");
+  const [projectSnapshotOutputMode, setProjectSnapshotOutputMode] = useState("top_findings");
+  const [projectSnapshotSincePacketId, setProjectSnapshotSincePacketId] = useState("");
+  const [projectSnapshotQualityAcknowledged, setProjectSnapshotQualityAcknowledged] = useState(false);
+  const [experimentPacket, setExperimentPacket] = useState<ExperimentPacket | null>(null);
+  const [experimentName, setExperimentName] = useState("Boundary Interpretation Divergence Test");
+  const [experimentTask, setExperimentTask] = useState("Decide scenarios only. Return parser-ready findings only for items that should be imported.");
+  const [experimentScenarios, setExperimentScenarios] = useState("Can a context_limited finding be a release blocker?\nCan a model infer whole-system health from /api/agent/ping?");
+  const [experimentResponseMarkdown, setExperimentResponseMarkdown] = useState("");
+  const [experimentResponseDryRun, setExperimentResponseDryRun] = useState<ExperimentResponseDryRun | null>(null);
+  const [experimentImportedReviewId, setExperimentImportedReviewId] = useState<string | null>(null);
 
   async function loadPages() {
     const data = await fetchJson<{ pages: PageSummary[] }>("/api/pages");
@@ -519,6 +517,40 @@ export default function HomePage() {
     loadCollaborationReviews();
   }, [sessionToken, actor?.role, vaultId]);
 
+  async function loadOperatorConsole() {
+    if (!sessionToken && actor?.actor_type !== "local") {
+      setAiStateQuality(null);
+      setProviderMatrix(null);
+      setModelRuns([]);
+      setReleaseReadiness(null);
+      return;
+    }
+    try {
+      const [quality, matrix, runs, readiness] = await Promise.all([
+        fetchJson<AiStateQuality>(`/api/operator/ai-state-quality?vault_id=${encodeURIComponent(vaultId)}`, {}, sessionToken, vaultId),
+        fetchJson<ProviderMatrix>("/api/operator/provider-matrix", {}, sessionToken, vaultId),
+        fetchJson<{ runs: ModelRun[] }>("/api/model-runs?limit=12", {}, sessionToken, vaultId),
+        fetchJson<ReleaseReadiness>(`/api/operator/release-readiness?vault_id=${encodeURIComponent(vaultId)}`, {}, sessionToken, vaultId),
+      ]);
+      setAiStateQuality(quality);
+      setProviderMatrix(matrix);
+      setModelRuns(runs.runs);
+      setReleaseReadiness(readiness);
+      if (selectedModelRun) {
+        const refreshed = runs.runs.find((run) => run.id === selectedModelRun.id);
+        if (refreshed) {
+          setSelectedModelRun(refreshed);
+        }
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Operator console load failed");
+    }
+  }
+
+  useEffect(() => {
+    loadOperatorConsole();
+  }, [sessionToken, actor?.actor_type, vaultId]);
+
   async function loadGraph() {
     try {
       const params = new URLSearchParams({
@@ -555,13 +587,19 @@ export default function HomePage() {
     }
     if (!sessionToken && actor?.actor_type !== "local") {
       setSnapshots([]);
+      setMaintenanceLocks([]);
       return;
     }
     try {
-      const snapshotData = await fetchJson<{ snapshots: SnapshotSummary[] }>("/api/maintenance/snapshots", {}, sessionToken, vaultId);
+      const [snapshotData, lockData] = await Promise.all([
+        fetchJson<{ snapshots: SnapshotSummary[] }>("/api/maintenance/snapshots", {}, sessionToken, vaultId),
+        fetchJson<{ locks: MaintenanceLock[] }>("/api/maintenance/locks", {}, sessionToken, vaultId),
+      ]);
       setSnapshots(snapshotData.snapshots);
+      setMaintenanceLocks(lockData.locks);
     } catch {
       setSnapshots([]);
+      setMaintenanceLocks([]);
     }
   }
 
@@ -701,6 +739,7 @@ export default function HomePage() {
 
   const canWrite = !actor || ["owner", "admin", "editor"].includes(actor.role);
   const canOperate = Boolean(actor && ["owner", "admin"].includes(actor.role));
+  const canManageAgents = Boolean(actor && ["owner", "admin"].includes(actor.role));
 
   async function rebuildGraph() {
     if (!canOperate) {
@@ -772,6 +811,259 @@ export default function HomePage() {
       setStatus(error instanceof Error ? error.message : "Verify failed");
     } finally {
       setOpsBusyAction(null);
+    }
+  }
+
+  async function inspectRestorePlan() {
+    if (!canOperate || !snapshots[0]) {
+      return;
+    }
+    setOpsBusyAction("restore-plan");
+    setStatus("Inspecting restore plan");
+    try {
+      const plan = await fetchJson<RestorePlan>(
+        `/api/maintenance/restore-plan?snapshot_name=${encodeURIComponent(snapshots[0].name)}`,
+        {},
+        sessionToken,
+        vaultId,
+      );
+      setRestorePlan(plan);
+      setRestoreConfirmValue("");
+      setStatus(plan.can_restore_now ? "Restore plan ready" : "Restore blocked by maintenance lock");
+      await loadOperations();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Restore plan failed");
+    } finally {
+      setOpsBusyAction(null);
+    }
+  }
+
+  async function restoreSnapshotFromPlan() {
+    if (!canOperate || !restorePlan || restoreConfirmValue !== restorePlan.snapshot) {
+      return;
+    }
+    setOpsBusyAction("restore");
+    setStatus("Restoring snapshot");
+    try {
+      await fetchJson<{ snapshot: string; pre_restore?: { name?: string } }>(
+        "/api/maintenance/restore",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ snapshot_name: restorePlan.snapshot }),
+        },
+        sessionToken,
+        vaultId,
+      );
+      setStatus("Snapshot restored; running verify-index is required");
+      setRestoreConfirmValue("");
+      setRestorePlan(null);
+      await loadOperations();
+      await loadPages();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Restore failed");
+    } finally {
+      setOpsBusyAction(null);
+    }
+  }
+
+  async function startGeminiMockRun() {
+    if (!canOperate) {
+      setStatus("Owner or admin login required");
+      return;
+    }
+    setOperatorBusyAction("mock-run");
+    setStatus("Starting Gemini mock review");
+    try {
+      const result = await fetchJson<{ run: ModelRun }>(
+        "/api/model-runs/gemini/reviews",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mock: true, review_focus: "Phase 17 operator console acceptance run", max_pages: 20 }),
+        },
+        sessionToken,
+        vaultId,
+      );
+      setSelectedModelRun(result.run);
+      setStatus(`Model run ready: ${result.run.id}`);
+      await loadOperatorConsole();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Model run failed");
+    } finally {
+      setOperatorBusyAction(null);
+    }
+  }
+
+  async function importSelectedModelRun() {
+    if (!selectedModelRun) {
+      return;
+    }
+    setOperatorBusyAction("import-run");
+    setStatus("Importing model review");
+    try {
+      const result = await fetchJson<{ run: ModelRun; findings: CollaborationFinding[] }>(
+        `/api/model-runs/${selectedModelRun.id}/import`,
+        { method: "POST" },
+        sessionToken,
+        vaultId,
+      );
+      setSelectedModelRun(result.run);
+      setStatus(`Imported ${result.findings.length} finding(s)`);
+      await loadOperatorConsole();
+      await loadCollaborationReviews();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Model import failed");
+    } finally {
+      setOperatorBusyAction(null);
+    }
+  }
+
+  async function generateProjectSnapshotPacket() {
+    setOperatorBusyAction("project-snapshot");
+    setStatus("Generating project snapshot packet");
+    try {
+      const data = await fetchJson<ProjectSnapshotPacket>(
+        "/api/collaboration/project-snapshot-packets",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            vault_id: vaultId,
+            target_agent: "codex",
+            profile: projectSnapshotProfile,
+            output_mode: projectSnapshotOutputMode,
+            since_packet_id: projectSnapshotSincePacketId.trim() || undefined,
+            allow_since_packet_fallback: false,
+            quality_acknowledged: projectSnapshotQualityAcknowledged,
+            focus: "Read this KnowNet project state, identify the highest-leverage next action, and avoid release_check unless release verification is explicitly requested.",
+          }),
+        },
+        sessionToken,
+        vaultId,
+      );
+      setProjectSnapshotPacket(data);
+      setStatus(`Project snapshot ready: ${data.packet_id}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Project snapshot failed");
+    } finally {
+      setOperatorBusyAction(null);
+    }
+  }
+
+  async function copyProjectSnapshotPacket() {
+    if (!projectSnapshotPacket) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(projectSnapshotPacket.content);
+      setStatus(`Copied project snapshot: ${projectSnapshotPacket.packet_id}`);
+    } catch {
+      setStatus("Clipboard unavailable");
+    }
+  }
+
+  async function generateExperimentPacket() {
+    if (!canOperate) {
+      setStatus("Owner or admin login required");
+      return;
+    }
+    setOperatorBusyAction("experiment-packet");
+    setStatus("Generating experiment packet");
+    try {
+      const scenarios = experimentScenarios
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean);
+      const result = await fetchJson<ExperimentPacket>(
+        "/api/collaboration/experiment-packets",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            vault_id: vaultId,
+            experiment_name: experimentName.trim() || "External AI experiment",
+            task: experimentTask.trim() || "Perform the requested experiment step only.",
+            target_agent: "claude",
+            scenarios,
+            output_schema: "Return Access Status and Scenario Decision Table first. Include parser-ready Finding blocks only when an item should be imported.",
+            max_node_chars: 1200,
+          }),
+        },
+        sessionToken,
+        vaultId,
+      );
+      setExperimentPacket(result);
+      setExperimentResponseDryRun(null);
+      setExperimentImportedReviewId(null);
+      setStatus(`Experiment packet ready: ${result.content_hash.slice(0, 12)}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Experiment packet failed");
+    } finally {
+      setOperatorBusyAction(null);
+    }
+  }
+
+  async function copyExperimentPacket() {
+    if (!experimentPacket) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(experimentPacket.content);
+      setStatus("Experiment packet copied");
+    } catch {
+      setStatus("Clipboard copy failed");
+    }
+  }
+
+  async function dryRunExperimentResponse() {
+    if (!experimentPacket || !experimentResponseMarkdown.trim()) {
+      return;
+    }
+    setOperatorBusyAction("experiment-response");
+    setStatus("Parsing experiment response");
+    try {
+      const result = await fetchJson<ExperimentResponseDryRun>(
+        `/api/collaboration/experiment-packets/${experimentPacket.packet_id}/responses/dry-run`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ source_agent: "external_ai", response_markdown: experimentResponseMarkdown }),
+        },
+        sessionToken,
+        vaultId,
+      );
+      setExperimentResponseDryRun(result);
+      setExperimentImportedReviewId(null);
+      setStatus(`Response parsed: ${result.finding_count} finding(s)`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Response parse failed");
+    } finally {
+      setOperatorBusyAction(null);
+    }
+  }
+
+  async function importExperimentResponse() {
+    if (!experimentPacket || !experimentResponseDryRun) {
+      return;
+    }
+    setOperatorBusyAction("experiment-import");
+    setStatus("Importing experiment response");
+    try {
+      const result = await fetchJson<{ review: CollaborationReviewSummary; findings: CollaborationFinding[] }>(
+        `/api/collaboration/experiment-packets/${experimentPacket.packet_id}/responses/${experimentResponseDryRun.response_id}/import`,
+        { method: "POST" },
+        sessionToken,
+        vaultId,
+      );
+      setExperimentImportedReviewId(result.review.id);
+      setStatus(`Imported response: ${result.findings.length} finding(s)`);
+      await loadCollaborationReviews();
+      await loadCollaborationReview(result.review.id);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Response import failed");
+    } finally {
+      setOperatorBusyAction(null);
     }
   }
 
@@ -929,6 +1221,27 @@ export default function HomePage() {
     }
   }
 
+  async function createFindingTask(findingId: string) {
+    try {
+      const data = await fetchJson<{ task: FindingTask }>(
+        `/api/collaboration/findings/${findingId}/task`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ priority: "normal", owner: "codex", notes: "Created from Review Inbox" }),
+        },
+        sessionToken,
+        vaultId,
+      );
+      setStatus(`Task ready: ${data.task.id}`);
+      if (selectedCollaborationReview) {
+        await loadCollaborationReview(selectedCollaborationReview.review.id);
+      }
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Task creation failed");
+    }
+  }
+
   async function createContextBundleForCurrentPage() {
     const selectedPageIds = bundlePageIds.length ? bundlePageIds : selectedSlug ? [pageIdFromSlug(selectedSlug)] : [];
     if (!selectedPageIds.length) {
@@ -1020,36 +1333,40 @@ export default function HomePage() {
             Hide
           </button>
         </div>
-        <div className="page-list-tools" aria-label="Page sorting">
-          <select aria-label="Sort pages" value={pageSort} onChange={(event) => setPageSort(event.target.value as "recent" | "links" | "class")}>
-            <option value="recent">Recent</option>
-            <option value="links">Connected</option>
-            <option value="class">Class</option>
-          </select>
-          <button aria-label="Toggle page sort direction" onClick={() => setPageSortDir((current) => (current === "asc" ? "desc" : "asc"))} type="button">
-            {pageSortDir === "asc" ? <ChevronsUp aria-hidden size={15} /> : <ChevronsDown aria-hidden size={15} />}
-            {pageSortDir === "asc" ? "Asc" : "Desc"}
-          </button>
-        </div>
-        <nav className="page-list" aria-label="Pages">
-          {sortedPages.map((item) => (
-            <button
-              className={item.slug === selectedSlug ? "page-link active" : "page-link"}
-              key={item.slug}
-              onClick={() => setSelectedSlug(item.slug)}
-              type="button"
-            >
-              <span>
-                <FileText aria-hidden className={pageIconClass(item)} size={15} />
-                {item.title}
-              </span>
-              <small>
-                {item.links_count} links / {item.citations_count} refs
-                {item.system_kind ? ` / ${item.system_kind}` : ""}
-              </small>
-            </button>
-          ))}
-        </nav>
+        {activeWorkspace === "map" ? (
+          <>
+            <div className="page-list-tools" aria-label="Page sorting">
+              <select aria-label="Sort pages" value={pageSort} onChange={(event) => setPageSort(event.target.value as "recent" | "links" | "class")}>
+                <option value="recent">Recent</option>
+                <option value="links">Connected</option>
+                <option value="class">Class</option>
+              </select>
+              <button aria-label="Toggle page sort direction" onClick={() => setPageSortDir((current) => (current === "asc" ? "desc" : "asc"))} type="button">
+                {pageSortDir === "asc" ? <ChevronsUp aria-hidden size={15} /> : <ChevronsDown aria-hidden size={15} />}
+                {pageSortDir === "asc" ? "Asc" : "Desc"}
+              </button>
+            </div>
+            <nav className="page-list" aria-label="Pages">
+              {sortedPages.map((item) => (
+                <button
+                  className={item.slug === selectedSlug ? "page-link active" : "page-link"}
+                  key={item.slug}
+                  onClick={() => setSelectedSlug(item.slug)}
+                  type="button"
+                >
+                  <span>
+                    <FileText aria-hidden className={pageIconClass(item)} size={15} />
+                    {item.title}
+                  </span>
+                  <small>
+                    {item.links_count} links / {item.citations_count} refs
+                    {item.system_kind ? ` / ${item.system_kind}` : ""}
+                  </small>
+                </button>
+              ))}
+            </nav>
+          </>
+        ) : null}
         <section className="auth-panel">
           <div className="actor-row">
             <div>
@@ -1064,12 +1381,6 @@ export default function HomePage() {
               </button>
             ) : null}
           </div>
-          {actor && ["owner", "admin"].includes(actor.role) ? (
-            <button onClick={() => setShowAgentDashboard(true)} type="button">
-              <KeyRound aria-hidden size={15} />
-              Agent Dashboard
-            </button>
-          ) : null}
           {!sessionToken ? (
             <form className="auth-form" onSubmit={submitAuth}>
               <div className="auth-tabs">
@@ -1130,42 +1441,46 @@ export default function HomePage() {
             ) : null}
           </div>
         </section>
-        <form className="inbox" onSubmit={submitMessage}>
-          <label htmlFor="message">Inbox</label>
-          <textarea
-            id="message"
-            placeholder="Drop a note, question, or experiment log"
-            value={message}
-            onChange={(event) => setMessage(event.target.value)}
-          />
-          <button disabled={submitting || !canWrite} type="submit">
-            <Save aria-hidden size={15} />
-            {submitting ? "Saving" : "Save"}
-          </button>
-          <p>{status}</p>
-        </form>
-        {submissions.length ? (
-          <section className="review-panel">
-            <p className="eyebrow">Review</p>
-            {submissions.slice(0, 5).map((item) => (
-              <div className="review-item" key={item.id}>
-                <small>{item.actor_type}</small>
-                <strong>{item.message_id}</strong>
-                <div>
-                  <button onClick={() => reviewSubmission(item.id, "reject")} type="button">
-                    <X aria-hidden size={15} />
-                    Reject
-                  </button>
-                  <button onClick={() => reviewSubmission(item.id, "approve")} type="button">
-                    <Check aria-hidden size={15} />
-                    Approve
-                  </button>
-                </div>
-              </div>
-            ))}
-          </section>
+        {activeWorkspace === "operator" ? (
+          <>
+            <form className="inbox" onSubmit={submitMessage}>
+              <label htmlFor="message">Inbox</label>
+              <textarea
+                id="message"
+                placeholder="Drop a note, question, or experiment log"
+                value={message}
+                onChange={(event) => setMessage(event.target.value)}
+              />
+              <button disabled={submitting || !canWrite} type="submit">
+                <Save aria-hidden size={15} />
+                {submitting ? "Saving" : "Save"}
+              </button>
+              <p>{status}</p>
+            </form>
+            {submissions.length ? (
+              <section className="review-panel">
+                <p className="eyebrow">Review</p>
+                {submissions.slice(0, 5).map((item) => (
+                  <div className="review-item" key={item.id}>
+                    <small>{item.actor_type}</small>
+                    <strong>{item.message_id}</strong>
+                    <div>
+                      <button onClick={() => reviewSubmission(item.id, "reject")} type="button">
+                        <X aria-hidden size={15} />
+                        Reject
+                      </button>
+                      <button onClick={() => reviewSubmission(item.id, "approve")} type="button">
+                        <Check aria-hidden size={15} />
+                        Approve
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </section>
+            ) : null}
+          </>
         ) : null}
-        {citationAudits.length ? (
+        {activeWorkspace === "map" && citationAudits.length ? (
           <section className="review-panel citation-panel">
             <p className="eyebrow">Citations</p>
             {citationAudits.slice(0, 5).map((item) => (
@@ -1184,75 +1499,91 @@ export default function HomePage() {
             ))}
           </section>
         ) : null}
-        <section className="review-panel collaboration-panel">
-          <p className="eyebrow">AI Reviews</p>
-          <form className="collab-import" onSubmit={importCollaborationReview}>
-            <textarea
-              aria-label="Agent review Markdown"
-              placeholder="Paste an agent_review Markdown document"
-              value={reviewMarkdown}
-              onChange={(event) => setReviewMarkdown(event.target.value)}
-            />
-            <button disabled={!canWrite || !reviewMarkdown.trim()} type="submit">
-              <Save aria-hidden size={15} />
-              Import review
-            </button>
-          </form>
-          {collaborationReviews.slice(0, 5).map((item) => (
-            <button className="review-open" key={item.id} onClick={() => loadCollaborationReview(item.id)} type="button">
-              <span>{item.source_agent}</span>
-              <strong>{item.title}</strong>
-              <small>
-                {item.pending_count}/{item.finding_count} pending
-              </small>
-            </button>
-          ))}
-          <div className="bundle-picker" aria-label="Context bundle pages">
-            {pages.slice(0, 8).map((item) => {
-              const pageId = pageIdFromSlug(item.slug);
-              return (
-                <label key={item.slug}>
-                  <input checked={bundlePageIds.includes(pageId)} onChange={() => toggleBundlePage(item.slug)} type="checkbox" />
-                  <span>{item.title}</span>
-                </label>
-              );
-            })}
-          </div>
-          <button className="bundle-button" disabled={!(actor && ["owner", "admin"].includes(actor.role)) || (!selectedSlug && !bundlePageIds.length)} onClick={createContextBundleForCurrentPage} type="button">
-            <FileText aria-hidden size={15} />
-            {bundlePageIds.length ? `Bundle ${bundlePageIds.length} pages` : "Bundle current page"}
-          </button>
-          {bundleStatus ? <small>Last bundle: {bundleStatus}</small> : null}
-        </section>
-        {actor && ["owner", "admin"].includes(actor.role) ? (
-          <OperationsPanel
+      </aside>
+      <section className="workspace">
+        <WorkspaceTabs activeWorkspace={activeWorkspace} canManageAgents={canManageAgents} onChange={setActiveWorkspace} />
+        {activeWorkspace === "agents" && canManageAgents ? (
+          <AgentDashboardWorkspace sessionToken={sessionToken} vaultId={vaultId} />
+        ) : (
+          <>
+        {activeWorkspace === "operator" ? (
+          <OperatorConsoleWorkspace
             healthSummary={healthSummary}
-            snapshots={snapshots}
-            verifyIssues={verifyIssues}
+            aiStateQuality={aiStateQuality}
+            releaseReadiness={releaseReadiness}
+            providerMatrix={providerMatrix}
+            modelRuns={modelRuns}
+            selectedModelRun={selectedModelRun}
             canOperate={canOperate}
-            busyAction={opsBusyAction}
+            canManageAgents={canManageAgents}
+            operatorBusyAction={operatorBusyAction}
+            opsBusyAction={opsBusyAction}
+            snapshots={snapshots}
+            maintenanceLocks={maintenanceLocks}
+            restorePlan={restorePlan}
+            restoreConfirmValue={restoreConfirmValue}
+            verifyIssues={verifyIssues}
+            onRefresh={loadOperatorConsole}
+            onStartGeminiMockRun={startGeminiMockRun}
+            onSelectModelRun={setSelectedModelRun}
+            onOpenCollaborationReview={loadCollaborationReview}
+            onImportSelectedModelRun={importSelectedModelRun}
             onCreateSnapshot={createSnapshot}
             onRunVerifyIndex={runVerifyIndex}
             onRebuildGraph={rebuildGraph}
+            onInspectRestorePlan={inspectRestorePlan}
+            onRestoreConfirmChange={setRestoreConfirmValue}
+            onRestoreSnapshot={restoreSnapshotFromPlan}
           />
         ) : null}
-      </aside>
-      <section className="workspace">
-        {showAgentDashboard ? (
-          <aside className="workspace-dashboard">
-            <div className="workspace-dashboard-head">
-              <div>
-                <p className="eyebrow">Agent Dashboard</p>
-                <h2>External Agent Access</h2>
-              </div>
-              <button onClick={() => setShowAgentDashboard(false)} type="button">
-                <X aria-hidden size={15} />
-                Close
-              </button>
-            </div>
-            <AgentAccessPanel sessionToken={sessionToken} vaultId={vaultId} />
-          </aside>
-        ) : (
+        {activeWorkspace === "packets" ? (
+          <AIPacketsWorkspace
+            canOperate={canOperate}
+            operatorBusyAction={operatorBusyAction}
+            projectSnapshotPacket={projectSnapshotPacket}
+            projectSnapshotProfile={projectSnapshotProfile}
+            projectSnapshotOutputMode={projectSnapshotOutputMode}
+            projectSnapshotSincePacketId={projectSnapshotSincePacketId}
+            projectSnapshotQualityAcknowledged={projectSnapshotQualityAcknowledged}
+            experimentPacket={experimentPacket}
+            experimentName={experimentName}
+            experimentTask={experimentTask}
+            experimentScenarios={experimentScenarios}
+            experimentResponseMarkdown={experimentResponseMarkdown}
+            experimentResponseDryRun={experimentResponseDryRun}
+            experimentImportedReviewId={experimentImportedReviewId}
+            onGenerateProjectSnapshotPacket={generateProjectSnapshotPacket}
+            onCopyProjectSnapshotPacket={copyProjectSnapshotPacket}
+            onProjectSnapshotProfileChange={setProjectSnapshotProfile}
+            onProjectSnapshotOutputModeChange={setProjectSnapshotOutputMode}
+            onProjectSnapshotSincePacketIdChange={setProjectSnapshotSincePacketId}
+            onProjectSnapshotQualityAcknowledgedChange={setProjectSnapshotQualityAcknowledged}
+            onGenerateExperimentPacket={generateExperimentPacket}
+            onCopyExperimentPacket={copyExperimentPacket}
+            onExperimentNameChange={setExperimentName}
+            onExperimentTaskChange={setExperimentTask}
+            onExperimentScenariosChange={setExperimentScenarios}
+            onExperimentResponseMarkdownChange={setExperimentResponseMarkdown}
+            onDryRunExperimentResponse={dryRunExperimentResponse}
+            onImportExperimentResponse={importExperimentResponse}
+          />
+        ) : null}
+        {activeWorkspace === "reviews" ? (
+          <AIReviewsWorkspace
+            canWrite={canWrite}
+            canOperate={canOperate}
+            reviewMarkdown={reviewMarkdown}
+            collaborationReviews={collaborationReviews}
+            selectedCollaborationReview={selectedCollaborationReview}
+            onReviewMarkdownChange={setReviewMarkdown}
+            onImportReview={importCollaborationReview}
+            onRefresh={loadCollaborationReviews}
+            onLoadReview={loadCollaborationReview}
+            onDecideFinding={decideCollaborationFinding}
+            onCreateFindingTask={createFindingTask}
+          />
+        ) : null}
+        {activeWorkspace === "map" ? (
           <>
         {suggestion ? (
           <aside className="suggestion">
@@ -1311,95 +1642,60 @@ export default function HomePage() {
           onOpenGraphNode={openGraphNode}
           onToggleGraphNodePin={toggleGraphNodePin}
         />
-        {selectedCollaborationReview ? (
-          <aside className="collaboration-detail">
-            <div>
-              <p className="eyebrow">Review Inbox</p>
-              <h2>{selectedCollaborationReview.review.title}</h2>
-              <small>
-                {selectedCollaborationReview.review.source_agent} / {selectedCollaborationReview.review.status}
-              </small>
-            </div>
-            <div className="finding-grid">
-              {selectedCollaborationReview.findings.map((finding) => (
-                <article className={`finding-card ${finding.status}`} key={finding.id}>
-                  <div>
-                    <span>{finding.severity}</span>
-                    <span>{finding.area}</span>
-                    <span>{finding.status}</span>
-                  </div>
-                  <h3>{finding.title}</h3>
-                  {finding.evidence ? <p>{finding.evidence}</p> : null}
-                  {finding.proposed_change ? <p>{finding.proposed_change}</p> : null}
-                  <footer>
-                    <button onClick={() => decideCollaborationFinding(finding.id, "rejected")} type="button">
-                      <X aria-hidden size={14} />
-                      Reject
-                    </button>
-                    <button onClick={() => decideCollaborationFinding(finding.id, "deferred")} type="button">
-                      <SquarePen aria-hidden size={14} />
-                      Defer
-                    </button>
-                    <button onClick={() => decideCollaborationFinding(finding.id, "accepted")} type="button">
-                      <Check aria-hidden size={14} />
-                      Accept
-                    </button>
-                  </footer>
-                </article>
-              ))}
-            </div>
-          </aside>
-        ) : null}
-        {page ? (
-          <>
-            <header className="page-header">
-              <div>
-                <p className="eyebrow">/{page.slug}</p>
-                <h2>{page.title}</h2>
-              </div>
-              <div className="stats">
-                <span>{page.sections.length} sections</span>
-                <span>{page.links.length} links</span>
-                <span>{page.citations.length} refs</span>
-              </div>
-            </header>
-            <section className="link-panel">
-              <div>
-                <p className="eyebrow">Backlinks</p>
-                {backlinkSummary?.backlinks.length ? (
-                  <div className="link-chips">
-                    {backlinkSummary.backlinks.slice(0, 8).map((link, index) => (
-                      <button key={`${link.source_slug}-${link.raw}-${index}`} onClick={() => setSelectedSlug(link.source_slug)} type="button">
-                        <Link2 aria-hidden size={14} />
-                        {link.source_title || link.source_slug}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p>No backlinks.</p>
-                )}
-              </div>
-              <div>
-                <p className="eyebrow">Unresolved</p>
-                {linkSummary?.unresolved.length ? (
-                  <div className="link-chips unresolved">
-                    {linkSummary.unresolved.slice(0, 8).map((link, index) => (
-                      <button disabled={!canWrite} key={`${link.target}-${index}`} onClick={() => createPageFromLink(link.target)} type="button">
-                        <CirclePlus aria-hidden size={14} />
-                        {link.display || link.target}
-                      </button>
-                    ))}
-                  </div>
-                ) : (
-                  <p>No unresolved links.</p>
-                )}
-              </div>
-            </section>
-            <MarkdownView citationSources={page.citation_sources || []} collapsible markdown={page.markdown} onOpenPage={setSelectedSlug} />
           </>
-        ) : (
-          <p className="empty">Loading page.</p>
-        )}
+        ) : null}
+        {activeWorkspace === "map" ? (
+          page ? (
+            <>
+              <header className="page-header">
+                <div>
+                  <p className="eyebrow">/{page.slug}</p>
+                  <h2>{page.title}</h2>
+                </div>
+                <div className="stats">
+                  <span>{page.sections.length} sections</span>
+                  <span>{page.links.length} links</span>
+                  <span>{page.citations.length} refs</span>
+                </div>
+              </header>
+              <section className="link-panel">
+                <div>
+                  <p className="eyebrow">Backlinks</p>
+                  {backlinkSummary?.backlinks.length ? (
+                    <div className="link-chips">
+                      {backlinkSummary.backlinks.slice(0, 8).map((link, index) => (
+                        <button key={`${link.source_slug}-${link.raw}-${index}`} onClick={() => setSelectedSlug(link.source_slug)} type="button">
+                          <Link2 aria-hidden size={14} />
+                          {link.source_title || link.source_slug}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p>No backlinks.</p>
+                  )}
+                </div>
+                <div>
+                  <p className="eyebrow">Unresolved</p>
+                  {linkSummary?.unresolved.length ? (
+                    <div className="link-chips unresolved">
+                      {linkSummary.unresolved.slice(0, 8).map((link, index) => (
+                        <button disabled={!canWrite} key={`${link.target}-${index}`} onClick={() => createPageFromLink(link.target)} type="button">
+                          <CirclePlus aria-hidden size={14} />
+                          {link.display || link.target}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p>No unresolved links.</p>
+                  )}
+                </div>
+              </section>
+              <MarkdownView citationSources={page.citation_sources || []} collapsible markdown={page.markdown} onOpenPage={setSelectedSlug} />
+            </>
+          ) : (
+            <p className="empty">Loading page.</p>
+          )
+        ) : null}
           </>
         )}
       </section>

@@ -99,6 +99,7 @@ fn create_collaboration_finding(request: &Request) -> Response {
     let evidence = opt_str_param(request, "evidence");
     let proposed_change = opt_str_param(request, "proposed_change");
     let raw_text = opt_str_param(request, "raw_text");
+    let evidence_quality = str_param(request, "evidence_quality", "unspecified");
     let status = str_param(request, "status", "pending");
     let created_at = str_param(request, "created_at", "");
     match storage::create_collaboration_finding(storage::CreateCollaborationFindingInput {
@@ -111,6 +112,7 @@ fn create_collaboration_finding(request: &Request) -> Response {
         evidence,
         proposed_change,
         raw_text,
+        evidence_quality,
         status,
         created_at,
     }) {
@@ -125,6 +127,7 @@ fn create_collaboration_finding(request: &Request) -> Response {
                 "evidence": evidence,
                 "proposed_change": proposed_change,
                 "raw_text": raw_text,
+                "evidence_quality": evidence_quality,
                 "status": status,
                 "created_at": created_at,
                 "updated_at": created_at
