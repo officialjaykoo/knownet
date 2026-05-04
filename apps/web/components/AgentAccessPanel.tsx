@@ -5,15 +5,21 @@ import {
   AlertTriangle,
   Check,
   Clipboard,
-  Copy,
-  Filter,
-  KeyRound,
   RefreshCw,
   RotateCcw,
-  Search,
   Shield,
-  X,
 } from "lucide-react";
+import {
+  AgentAccessDenied,
+  AgentAccessLoading,
+  AgentAccessSummary,
+  AgentTokenCreateForm,
+  AgentTokenFiltersBar,
+  RawAgentTokenNotice,
+  clearOneTimeRawTokenState,
+  formatTokenId,
+  statusIcon,
+} from "./AgentAccessSupport";
 import {
   absoluteTimeTitle,
   agentDashboardAllowed,
@@ -23,7 +29,6 @@ import {
   AgentTokenSummary,
   buildCreateAgentTokenPayload,
   calculateDashboardSummary,
-  clearOneTimeRawTokenState,
   createConfirmation,
   createCopyFeedback,
   filterAndSortTokens,
@@ -48,11 +53,6 @@ class ApiRequestError extends Error {
   }
 }
 
-const presets = [
-  { value: "preset:reader", label: "Reader", help: "pages, graph, and citation reads" },
-  { value: "preset:reviewer", label: "Reviewer", help: "review and finding reads plus review submission" },
-  { value: "preset:contributor", label: "Contributor", help: "review submission plus message creation" },
-];
 const apiBase = process.env.NEXT_PUBLIC_API_BASE ?? "";
 
 async function fetchJson<T>(path: string, init?: RequestInit, token?: string | null, vaultId?: string | null): Promise<T> {
@@ -65,16 +65,6 @@ async function fetchJson<T>(path: string, init?: RequestInit, token?: string | n
     throw new ApiRequestError(body.detail?.message ?? "Request failed", response.status);
   }
   return body.data as T;
-}
-
-function formatTokenId(id: string): string {
-  return id.length > 18 ? `${id.slice(0, 12)}...${id.slice(-4)}` : id;
-}
-
-function statusIcon(state: string) {
-  if (state === "revoked" || state === "expired") return <AlertTriangle aria-hidden size={13} />;
-  if (state === "expiring") return <AlertTriangle aria-hidden size={13} />;
-  return <Check aria-hidden size={13} />;
 }
 
 export function AgentAccessPanel({ sessionToken, vaultId }: { sessionToken: string | null; vaultId: string }) {
@@ -111,8 +101,6 @@ export function AgentAccessPanel({ sessionToken, vaultId }: { sessionToken: stri
   const summary = useMemo(() => calculateDashboardSummary(tokens, events), [tokens, events]);
   const selectedSignals = useMemo(() => (selected ? tokenSignals(selected, events) : []), [selected, events]);
   const selectedState = selected ? tokenState(selected) : null;
-  const selectedPreset = presets.find((preset) => preset.value === form.scope_preset);
-
   async function loadTokens() {
     setLoadingTokens(true);
     setListError("");
@@ -243,34 +231,11 @@ export function AgentAccessPanel({ sessionToken, vaultId }: { sessionToken: stri
   }
 
   if (loadingTokens && actorRole === null && !tokens.length && !listError) {
-    return (
-      <section className="agent-panel">
-        <div className="agent-panel-head">
-          <div>
-            <p className="eyebrow">Agent Access</p>
-            <strong>Loading operator dashboard</strong>
-          </div>
-          <RefreshCw aria-hidden size={18} />
-        </div>
-        <p className="agent-muted">Checking permissions and token inventory...</p>
-      </section>
-    );
+    return <AgentAccessLoading />;
   }
 
   if (accessDenied) {
-    return (
-      <section className="agent-panel">
-        <div className="agent-panel-head">
-          <div>
-            <p className="eyebrow">Agent Access</p>
-            <strong>Owner/admin access required</strong>
-          </div>
-          <Shield aria-hidden size={18} />
-        </div>
-        <p className="agent-muted">This dashboard manages external agent tokens and is hidden from non-operator roles.</p>
-        {listError ? <p className="agent-error">{listError}</p> : null}
-      </section>
-    );
+    return <AgentAccessDenied listError={listError} />;
   }
 
   return (
@@ -287,94 +252,15 @@ export function AgentAccessPanel({ sessionToken, vaultId }: { sessionToken: stri
         </button>
       </div>
 
-      <div className="agent-summary" aria-label="Agent token summary">
-        <span><strong>{summary.active}</strong> active</span>
-        <span><strong>{summary.expiring}</strong> expiring</span>
-        <span><strong>{summary.revoked}</strong> revoked</span>
-        <span><strong>{summary.denied}</strong> denied</span>
-        <span><strong>{summary.rateLimited}</strong> limited</span>
-      </div>
+      <AgentAccessSummary summary={summary} />
 
       {rawToken ? (
-        <div className="raw-token" role="status">
-          <div>
-            <strong>Raw token shown once</strong>
-            <small>
-              This token cannot be viewed again after dismissal. Store it in the target MCP/SDK environment before closing this panel.
-            </small>
-          </div>
-          <code>{rawToken.value}</code>
-          <div className="raw-token-actions">
-            <button aria-label="Copy one-time raw agent token" onClick={() => copyText(rawToken.value)} type="button">
-              <Copy aria-hidden size={14} />
-              Copy
-            </button>
-            <button aria-label="Dismiss one-time raw agent token" onClick={() => setRawToken(clearOneTimeRawTokenState())} type="button">
-              <X aria-hidden size={14} />
-              Dismiss
-            </button>
-          </div>
-          {copyFeedback === "copied" ? <small className="agent-ok">Copied</small> : null}
-          {copyFeedback === "failed" ? <small className="agent-error">Copy failed; select the token manually.</small> : null}
-          <small>
-            New token id: <code>{rawToken.tokenId}</code>. Setup: <a href="/docs/MCP_CLIENTS.md">MCP</a> /{" "}
-            <a href="/docs/SDK_CLIENTS.md">SDK</a>
-          </small>
-        </div>
+        <RawAgentTokenNotice rawToken={rawToken} copyFeedback={copyFeedback} copyText={copyText} dismiss={() => setRawToken(clearOneTimeRawTokenState())} />
       ) : null}
 
-      <form className="agent-create" onSubmit={createToken}>
-        <div className="agent-form-grid">
-          <input placeholder="Label" value={form.label} onChange={(event) => setForm({ ...form, label: event.target.value })} required />
-          <input placeholder="Agent name" value={form.agent_name} onChange={(event) => setForm({ ...form, agent_name: event.target.value })} required />
-          <input placeholder="Model" value={form.agent_model} onChange={(event) => setForm({ ...form, agent_model: event.target.value })} />
-          <input placeholder="Purpose" value={form.purpose} onChange={(event) => setForm({ ...form, purpose: event.target.value })} required />
-          <select aria-label="Agent role" value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}>
-            <option value="agent_reader">reader</option>
-            <option value="agent_reviewer">reviewer</option>
-            <option value="agent_contributor">contributor</option>
-          </select>
-          <select aria-label="Scope preset" value={form.scope_preset} onChange={(event) => setForm({ ...form, scope_preset: event.target.value })}>
-            {presets.map((preset) => <option key={preset.value} value={preset.value}>{preset.label}</option>)}
-          </select>
-          <input placeholder="Extra scopes, comma separated" value={form.scopes} onChange={(event) => setForm({ ...form, scopes: event.target.value })} />
-          <input aria-label="Expiration" type="datetime-local" value={form.expires_at} onChange={(event) => setForm({ ...form, expires_at: event.target.value })} />
-          <input aria-label="Maximum pages per request" type="number" value={form.max_pages_per_request} onChange={(event) => setForm({ ...form, max_pages_per_request: event.target.value })} />
-          <input aria-label="Maximum characters per request" type="number" value={form.max_chars_per_request} onChange={(event) => setForm({ ...form, max_chars_per_request: event.target.value })} />
-        </div>
-        <small>{selectedPreset?.label}: {selectedPreset?.help}</small>
-        <button type="submit">
-          <KeyRound aria-hidden size={14} />
-          Create token
-        </button>
-      </form>
+      <AgentTokenCreateForm form={form} setForm={setForm} onSubmit={createToken} />
 
-      <div className="agent-filters">
-        <label>
-          <Filter aria-hidden size={14} />
-          <select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
-            <option value="all">all status</option>
-            <option value="active">active</option>
-            <option value="expiring">expiring</option>
-            <option value="expired">expired</option>
-            <option value="revoked">revoked</option>
-          </select>
-        </label>
-        <label>
-          <Shield aria-hidden size={14} />
-          <select value={filters.role} onChange={(event) => setFilters({ ...filters, role: event.target.value })}>
-            <option value="all">all roles</option>
-            <option value="agent_reader">reader</option>
-            <option value="agent_reviewer">reviewer</option>
-            <option value="agent_contributor">contributor</option>
-          </select>
-        </label>
-        <label>
-          <Search aria-hidden size={14} />
-          <input placeholder="agent, label, id" value={filters.search} onChange={(event) => setFilters({ ...filters, search: event.target.value })} />
-        </label>
-        <input placeholder="scope filter" value={filters.scope} onChange={(event) => setFilters({ ...filters, scope: event.target.value })} />
-      </div>
+      <AgentTokenFiltersBar filters={filters} setFilters={setFilters} />
 
       {loadingTokens && !tokens.length ? <p className="agent-muted">Loading token list...</p> : null}
       {listError ? <p className="agent-error">{listError} <button onClick={loadTokens} type="button">Retry</button></p> : null}

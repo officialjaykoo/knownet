@@ -7,21 +7,18 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Protocol
 
-import aiosqlite
 import httpx
 from fastapi import HTTPException
 
 from ..config import Settings
 from ..db.sqlite import fetch_all, fetch_one
+from .model_output import _dedupe_key, extract_json_object_text, model_output_to_markdown, normalize_model_output, sanitize_error_message, strip_think_tags
+from .model_runner_store import ACTIVE_STATUSES, MODEL_REVIEW_RUN_STATUSES, assert_no_active_run, ensure_model_runner_schema
 from .packet_contract import PACKET_CONTRACT_VERSION, PACKET_PROTOCOL_VERSION, PACKET_SCHEMA_REF, build_packet_contract, contract_shape, explicit_stale_context_suppression, packet_trace, validate_packet_contract, validate_packet_schema_core
 from .project_snapshot import finding_summary, node_card
 from ..security import utc_now
 
 
-MODEL_REVIEW_RUN_STATUSES = {"queued", "running", "dry_run_ready", "imported", "failed", "cancelled"}
-SEVERITIES = {"critical", "high", "medium", "low", "info"}
-AREAS = {"API", "UI", "Rust", "Security", "Data", "Ops", "Docs"}
-ACTIVE_STATUSES = {"queued", "running"}
 SECRET_ASSIGNMENT_RE = re.compile(r"^\s*(ADMIN_TOKEN|OPENAI_API_KEY|GEMINI_API_KEY|DEEPSEEK_API_KEY|MINIMAX_API_KEY|KIMI_API_KEY|MOONSHOT_API_KEY|GLM_API_KEY|ZAI_API_KEY|Z_AI_API_KEY|API_KEY|SECRET|PASSWORD)\s*=", re.IGNORECASE)
 LOCAL_PATH_RE = re.compile(r"(?i)\b[A-Z]:[\\/][^\s\"']+")
 FORBIDDEN_TEXT_MARKERS = (
@@ -107,145 +104,6 @@ def sanitize_for_model(value: Any, *, label: str = "context") -> Any:
         _reject_forbidden_text(value, label=label)
         return value
     return value
-
-
-def _dedupe_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", value.strip().lower()).strip()
-
-
-def normalize_model_output(raw: dict[str, Any]) -> dict[str, Any]:
-    if not isinstance(raw, dict):
-        raise HTTPException(status_code=502, detail={"code": "model_response_invalid", "message": "Model response must be a JSON object", "details": {}})
-    findings_in = raw.get("findings")
-    if not isinstance(findings_in, list):
-        raise HTTPException(status_code=502, detail={"code": "model_response_invalid", "message": "Model response must include findings array", "details": {}})
-    findings: list[dict[str, Any]] = []
-    seen_titles: set[str] = set()
-    for index, finding in enumerate(findings_in[:50], start=1):
-        if not isinstance(finding, dict):
-            continue
-        severity = str(finding.get("severity") or "info").lower()
-        if severity not in SEVERITIES:
-            severity = "info"
-        area_raw = str(finding.get("area") or "Docs").strip()
-        area = next((candidate for candidate in AREAS if candidate.lower() == area_raw.lower()), "Docs")
-        evidence = str(finding.get("evidence") or "").strip()
-        proposed_change = str(finding.get("proposed_change") or finding.get("proposed change") or "").strip()
-        if not evidence or not proposed_change:
-            continue
-        title = str(finding.get("title") or "").strip()
-        if not title:
-            title = evidence.splitlines()[0][:120] or f"Model finding {index}"
-        title_key = _dedupe_key(title)
-        if title_key in seen_titles:
-            continue
-        seen_titles.add(title_key)
-        confidence = finding.get("confidence")
-        try:
-            confidence_value = float(confidence) if confidence is not None else None
-        except (TypeError, ValueError):
-            confidence_value = None
-        findings.append(
-            {
-                "title": title[:220],
-                "severity": severity,
-                "area": area,
-                "evidence": evidence[:4000],
-                "proposed_change": proposed_change[:4000],
-                "confidence": confidence_value,
-            }
-        )
-    if not findings:
-        raise HTTPException(status_code=502, detail={"code": "model_response_no_findings", "message": "Model response did not include any valid findings", "details": {}})
-    return {
-        "review_title": str(raw.get("review_title") or raw.get("title") or "Gemini model review")[:180],
-        "overall_assessment": str(raw.get("overall_assessment") or raw.get("summary") or "").strip()[:4000],
-        "findings": findings,
-        "summary": str(raw.get("summary") or raw.get("overall_assessment") or "").strip()[:2000],
-    }
-
-
-def model_output_to_markdown(output: dict[str, Any], *, source_agent: str, source_model: str) -> str:
-    lines = [
-        "---",
-        "type: agent_review",
-        f"source_agent: {source_agent}",
-        f"source_model: {source_model}",
-        "evidence_quality: context_limited",
-        "---",
-        "",
-        f"# {output['review_title']}",
-        "",
-    ]
-    if output.get("overall_assessment"):
-        lines.extend(["## Overall Assessment", "", str(output["overall_assessment"]).strip(), ""])
-    for finding in output["findings"]:
-        lines.extend(
-            [
-                "### Finding",
-                "",
-                f"Title: {finding['title']}",
-                f"Severity: {finding['severity']}",
-                f"Area: {finding['area']}",
-                "",
-                "Evidence:",
-                finding["evidence"].strip(),
-                "",
-                "Proposed change:",
-                finding["proposed_change"].strip(),
-                "",
-            ]
-        )
-    if output.get("summary"):
-        lines.extend(["## Summary", "", str(output["summary"]).strip(), ""])
-    return "\n".join(lines).strip() + "\n"
-
-
-async def ensure_model_runner_schema(sqlite_path) -> None:
-    async with aiosqlite.connect(sqlite_path) as connection:
-        await connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS model_review_runs (
-              id TEXT PRIMARY KEY,
-              provider TEXT NOT NULL,
-              model TEXT NOT NULL,
-              prompt_profile TEXT NOT NULL,
-              vault_id TEXT NOT NULL DEFAULT 'local-default',
-              status TEXT NOT NULL,
-              context_summary_json TEXT NOT NULL DEFAULT '{}',
-              request_json TEXT NOT NULL DEFAULT '{}',
-              response_json TEXT NOT NULL DEFAULT '{}',
-              input_tokens INTEGER,
-              output_tokens INTEGER,
-              estimated_cost_usd REAL,
-              review_id TEXT,
-              trace_id TEXT,
-              packet_trace_id TEXT,
-              error_code TEXT,
-              error_message TEXT,
-              created_by TEXT,
-              created_at TEXT NOT NULL,
-              updated_at TEXT NOT NULL
-            )
-            """
-        )
-        await connection.execute("CREATE INDEX IF NOT EXISTS idx_model_review_runs_provider_status ON model_review_runs(provider, status, updated_at)")
-        await connection.execute("CREATE INDEX IF NOT EXISTS idx_model_review_runs_vault_updated ON model_review_runs(vault_id, updated_at)")
-        await connection.execute("CREATE INDEX IF NOT EXISTS idx_model_review_runs_trace ON model_review_runs(trace_id, packet_trace_id)")
-        await connection.commit()
-
-
-async def assert_no_active_run(sqlite_path, provider: str) -> None:
-    row = await fetch_one(
-        sqlite_path,
-        "SELECT id, status FROM model_review_runs WHERE provider = ? AND status IN ('queued', 'running') ORDER BY updated_at DESC LIMIT 1",
-        (provider,),
-    )
-    if row:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "model_run_already_active", "message": "A model run is already queued or running", "details": {"run_id": row["id"], "status": row["status"]}},
-        )
 
 
 def _slim_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -916,11 +774,11 @@ class MiniMaxApiAdapter:
             content = str(final_message.get("content") or "").strip()
         else:
             content = str(first_message.get("content") or "").strip()
-        content = _strip_think_tags(content)
+        content = strip_think_tags(content)
         try:
             return json.loads(content)
         except json.JSONDecodeError as error:
-            extracted = _extract_json_object_text(content)
+            extracted = extract_json_object_text(content)
             if extracted:
                 try:
                     return json.loads(extracted)
@@ -1006,11 +864,11 @@ class KimiApiAdapter:
             content = str(final_message.get("content") or "").strip()
         else:
             content = str(first_message.get("content") or "").strip()
-        content = _strip_think_tags(content)
+        content = strip_think_tags(content)
         try:
             return json.loads(content)
         except json.JSONDecodeError as error:
-            extracted = _extract_json_object_text(content)
+            extracted = extract_json_object_text(content)
             if extracted:
                 try:
                     return json.loads(extracted)
@@ -1098,11 +956,11 @@ class QwenApiAdapter:
             content = str(final_message.get("content") or "").strip()
         else:
             content = str(first_message.get("content") or "").strip()
-        content = _strip_think_tags(content)
+        content = strip_think_tags(content)
         try:
             return json.loads(content)
         except json.JSONDecodeError as error:
-            extracted = _extract_json_object_text(content)
+            extracted = extract_json_object_text(content)
             if extracted:
                 try:
                     return json.loads(extracted)
@@ -1190,11 +1048,11 @@ class GlmApiAdapter:
             content = str(final_message.get("content") or "").strip()
         else:
             content = str(first_message.get("content") or "").strip()
-        content = _strip_think_tags(content)
+        content = strip_think_tags(content)
         try:
             return json.loads(content)
         except json.JSONDecodeError as error:
-            extracted = _extract_json_object_text(content)
+            extracted = extract_json_object_text(content)
             if extracted:
                 try:
                     return json.loads(extracted)
@@ -1256,23 +1114,3 @@ def _extract_openai_compatible_message_content(payload: dict[str, Any], *, provi
     if not isinstance(content, str) or not content.strip():
         raise HTTPException(status_code=502, detail={"code": f"{provider_code}_invalid_response", "message": "Provider returned empty message content", "details": {}})
     return content.strip()
-
-
-def _strip_think_tags(text: str) -> str:
-    return re.sub(r"(?is)<think>.*?</think>", "", text).strip()
-
-
-def _extract_json_object_text(text: str) -> str | None:
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
-    return text[start : end + 1]
-
-
-def sanitize_error_message(message: str | None) -> str | None:
-    if not message:
-        return None
-    sanitized = LOCAL_PATH_RE.sub("[local-path]", message)
-    sanitized = re.sub(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+", r"\1=[redacted]", sanitized)
-    return sanitized[:1000]

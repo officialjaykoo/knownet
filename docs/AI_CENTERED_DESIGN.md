@@ -62,6 +62,6 @@ This document is a judgment guide, not a task list.
 Use the phase task files for implementation:
 
 ```txt
-docs/phases/PHASE_7_TASKS.md  collaboration MVP
-docs/phases/PHASE_8_TASKS.md  AI-centered hardening
+docs/archive/phases/PHASE_7_TASKS.md  collaboration MVP
+docs/archive/phases/PHASE_8_TASKS.md  AI-centered hardening
 ```

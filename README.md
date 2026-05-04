@@ -113,25 +113,16 @@ Python SDK setup and workflow examples live in [SDK client docs](./docs/SDK_CLIE
 
 ## Project Docs
 
-Implementation task lists:
+Current implementation task lists:
 
-- [Phase 1 Tasks](./docs/phases/PHASE_1_TASKS.md)
-- [Phase 2 Tasks](./docs/phases/PHASE_2_TASKS.md)
-- [Phase 3 Tasks](./docs/phases/PHASE_3_TASKS.md)
-- [Phase 4 Tasks](./docs/phases/PHASE_4_TASKS.md)
-- [Phase 5 Tasks](./docs/phases/PHASE_5_TASKS.md)
-- [Phase 6 Tasks](./docs/phases/PHASE_6_TASKS.md)
-- [Phase 7 Tasks](./docs/phases/PHASE_7_TASKS.md)
-- [Phase 8 Tasks](./docs/phases/PHASE_8_TASKS.md)
-- [Phase 9 Tasks](./docs/phases/PHASE_9_TASKS.md)
-- [Phase 10 Tasks](./docs/phases/PHASE_10_TASKS.md)
-- [Phase 11 Tasks](./docs/phases/PHASE_11_TASKS.md)
-- [Phase 12 Tasks](./docs/phases/PHASE_12_TASKS.md)
-- [Phase 13 Tasks](./docs/phases/PHASE_13_TASKS.md)
-- [Phase 14 Tasks](./docs/phases/PHASE_14_TASKS.md)
-- [Phase 15 Tasks](./docs/phases/PHASE_15_TASKS.md)
-- [Phase 16 Tasks](./docs/phases/PHASE_16_TASKS.md)
-- [Phase 17 Tasks](./docs/phases/PHASE_17_TASKS.md)
+- [Current Phase Index](./docs/phases/README.md)
+- [Phase 19 Tasks](./docs/phases/PHASE_19_TASKS.md)
+- [Phase 20 Tasks](./docs/phases/PHASE_20_TASKS.md)
+- [Phase 21 Tasks](./docs/phases/PHASE_21_TASKS.md)
+- [Phase 22 Tasks](./docs/phases/PHASE_22_TASKS.md)
+- [Phase 23 Tasks](./docs/phases/PHASE_23_TASKS.md)
+
+Completed phase history lives in [docs/archive/phases](./docs/archive/phases/).
 
 Operational docs:
 

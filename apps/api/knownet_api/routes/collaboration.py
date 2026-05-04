@@ -25,6 +25,24 @@ from ..security import (
     utc_now,
 )
 from ..routes.operator import build_ai_state_quality, build_provider_matrix
+from .collaboration_review_parser import (
+    EVIDENCE_QUALITIES,
+    finding_dedupe_key as _finding_dedupe_key,
+    normalize_area as _normalize_area,
+    normalize_evidence_quality as _normalize_evidence_quality,
+    parse_review_markdown,
+    review_dry_run_result as _review_dry_run_result,
+    title_from_markdown as _title_from_markdown,
+)
+from .collaboration_task_templates import (
+    implementation_task_template as _implementation_task_template,
+    priority_from_finding as _priority_from_finding,
+    should_auto_create_task as _should_auto_create_task,
+    simple_evidence_template as _simple_evidence_template,
+    task_creation_template as _task_creation_template,
+    task_prompt_from_finding as _task_prompt_from_finding,
+    verification_from_finding as _verification_from_finding,
+)
 from ..services.packet_contract import (
     OUTPUT_MODES,
     PACKET_CONTRACT_VERSION,
@@ -59,21 +77,10 @@ from ..services.project_snapshot import (
 )
 from ..services.rust_core import RustCoreError
 
-try:
-    import frontmatter
-except Exception:  # pragma: no cover - fallback is for minimally installed dev envs.
-    frontmatter = None
-
-
 router = APIRouter(prefix="/api/collaboration", tags=["collaboration"])
 
-SEVERITIES = {"critical", "high", "medium", "low", "info"}
-AREAS = {"API": "API", "UI": "UI", "Rust": "Rust", "Security": "Security", "Data": "Data", "Ops": "Ops", "Docs": "Docs"}
-AREA_NORMALIZE = {key.lower(): value for key, value in AREAS.items()}
-EVIDENCE_QUALITIES = {"direct_access", "context_limited", "inferred", "operator_verified", "unspecified"}
 DECISION_STATUSES = {"accepted", "rejected", "deferred", "needs_more_context"}
 MAX_REVIEW_BYTES = 256 * 1024
-MAX_FINDINGS_PER_REVIEW = 50
 SECRET_ASSIGNMENT_NAMES = ("ADMIN_TOKEN", "OPENAI_API_KEY", "GEMINI_API_KEY", "DEEPSEEK_API_KEY", "API_KEY", "SECRET", "PASSWORD")
 SECRET_JSON_KEYS = ("token", "secret", "password", "key")
 FORBIDDEN_BUNDLE_PATH_NAMES = {"backups", "inbox", "sessions", "users"}
@@ -192,151 +199,6 @@ PACKET_SECTION_PRIORITY = {
 }
 
 
-def _title_from_markdown(markdown: str, fallback: str = "Agent review") -> str:
-    for line in markdown.splitlines():
-        match = re.match(r"^#\s+(.+?)\s*$", line)
-        if match:
-            return match.group(1).strip()[:180]
-    return fallback
-
-
-def _parse_frontmatter(markdown: str) -> tuple[dict, str]:
-    if frontmatter:
-        post = frontmatter.loads(markdown)
-        return dict(post.metadata), post.content
-    if markdown.startswith("---\n"):
-        end = markdown.find("\n---\n", 4)
-        if end != -1:
-            raw = markdown[4:end]
-            meta: dict[str, str] = {}
-            for line in raw.splitlines():
-                if ":" in line:
-                    key, value = line.split(":", 1)
-                    meta[key.strip()] = value.strip().strip("\"'")
-            return meta, markdown[end + 5 :]
-    return {}, markdown
-
-
-def _field(block: str, name: str) -> str | None:
-    match = re.search(rf"(?im)^\s*(?:\*\*)?{re.escape(name)}\s*:\s*(?:\*\*)?\s*(.+?)\s*$", block)
-    return match.group(1).strip() if match else None
-
-
-def _section(block: str, start: str, end: str | None = None) -> str | None:
-    if end:
-        pattern = rf"(?is)^\s*(?:\*\*)?{re.escape(start)}\s*:\s*(?:\*\*)?\s*\n(.*?)(?=^\s*(?:\*\*)?{re.escape(end)}\s*:\s*(?:\*\*)?\s*$|\Z)"
-    else:
-        pattern = rf"(?is)^\s*(?:\*\*)?{re.escape(start)}\s*:\s*(?:\*\*)?\s*\n(.*)\Z"
-    match = re.search(pattern, block, re.MULTILINE)
-    if not match:
-        return None
-    value = match.group(1).strip()
-    return value or None
-
-
-def _normalize_area(value: str | None) -> str:
-    if not value:
-        return "Docs"
-    return AREA_NORMALIZE.get(value.strip().lower(), "Docs")
-
-
-def _normalize_evidence_quality(value: str | None) -> str:
-    if not value:
-        return "unspecified"
-    normalized = re.sub(r"[^a-z0-9]+", "_", value.strip().lower()).strip("_")
-    return normalized if normalized in EVIDENCE_QUALITIES else "unspecified"
-
-
-def _finding_dedupe_key(value: str | None) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", (value or "").strip().lower()).strip()
-
-
-def _extract_json_payload(text: str) -> dict | None:
-    stripped = text.strip()
-    if stripped.startswith("{"):
-        try:
-            parsed = json.loads(stripped)
-            return parsed if isinstance(parsed, dict) else None
-        except json.JSONDecodeError:
-            return None
-    match = re.search(r"(?is)```json\s*(\{.*?\})\s*```", text)
-    if not match:
-        return None
-    try:
-        parsed = json.loads(match.group(1))
-        return parsed if isinstance(parsed, dict) else None
-    except json.JSONDecodeError:
-        return None
-
-
-def _parse_compact_review_json(data: dict, metadata: dict) -> tuple[list[dict], list[str]]:
-    errors: list[str] = []
-    output_mode = str(data.get("output_mode") or metadata.get("output_mode") or "top_findings").strip()
-    if output_mode not in OUTPUT_MODES:
-        errors.append(f"unsupported_output_mode:{output_mode}")
-        output_mode = "top_findings"
-    metadata["output_mode"] = output_mode
-    findings_raw = data.get("findings") or data.get("implementation_candidates") or []
-    if isinstance(findings_raw, dict):
-        findings_raw = [findings_raw]
-    if not isinstance(findings_raw, list):
-        errors.append("compact_findings_not_list")
-        findings_raw = []
-    max_findings = int(OUTPUT_MODES[output_mode]["max_findings"])
-    if output_mode == "decision_only" and findings_raw:
-        errors.append("decision_only_does_not_accept_findings")
-        findings_raw = []
-    if len(findings_raw) > max_findings:
-        errors.append(f"too_many_findings:{len(findings_raw)}>{max_findings}")
-    findings: list[dict] = []
-    for index, item in enumerate(findings_raw[:max_findings]):
-        if not isinstance(item, dict):
-            errors.append(f"compact_finding_not_object:{index + 1}")
-            continue
-        title = str(item.get("title") or item.get("candidate") or f"Finding {index + 1}").strip()[:220]
-        evidence = item.get("evidence") or item.get("why") or item.get("reason")
-        proposed_change = item.get("proposed_change") or item.get("implementation_shape") or item.get("change")
-        if not evidence or not proposed_change:
-            errors.append(f"compact_finding_missing_required_fields:{index + 1}")
-        findings.append(
-            {
-                "severity": str(item.get("severity") or "info").lower() if str(item.get("severity") or "info").lower() in SEVERITIES else "info",
-                "area": _normalize_area(str(item.get("area") or "Docs")),
-                "title": title,
-                "evidence": str(evidence or "Compact response did not include evidence."),
-                "proposed_change": str(proposed_change or "Ask the provider to resend this item with a concrete proposed_change."),
-                "raw_text": None,
-                "evidence_quality": _normalize_evidence_quality(str(item.get("evidence_quality") or metadata.get("evidence_quality"))),
-                "status": "pending",
-            }
-        )
-    unsupported_sections = data.get("unsupported_sections") or data.get("extra_sections") or []
-    if unsupported_sections:
-        errors.append("unsupported_sections_present")
-    if errors:
-        metadata["ai_feedback_prompt"] = (
-            "Revise the response to match the packet output contract. "
-            f"Errors: {', '.join(errors)}. Return only supported compact findings."
-        )
-    return findings, errors
-
-
-def _review_dry_run_result(markdown: str) -> dict:
-    metadata, findings, parser_errors = parse_review_markdown(markdown)
-    feedback = metadata.get("ai_feedback_prompt")
-    import_ready = bool(findings) and not parser_errors
-    return {
-        "metadata": metadata,
-        "finding_count": len(findings),
-        "findings": findings,
-        "parser_errors": parser_errors,
-        "truncated_findings": bool(metadata.get("truncated_findings")),
-        "import_ready": import_ready,
-        "rejection_reason": None if import_ready else "parser_errors" if parser_errors else "no_findings",
-        "ai_feedback_prompt": feedback,
-    }
-
-
 async def _finding_duplicate_groups(sqlite_path: Path, *, vault_id: str, statuses: set[str] | None = None, limit: int = 500) -> list[dict]:
     statuses = statuses or {"pending", "needs_more_context", "accepted", "deferred"}
     placeholders = ",".join("?" for _ in statuses)
@@ -430,147 +292,9 @@ async def ensure_collaboration_schema(sqlite_path: Path) -> None:
     await execute(sqlite_path, "CREATE INDEX IF NOT EXISTS idx_project_snapshot_packets_vault_created ON project_snapshot_packets(vault_id, created_at)", ())
 
 
-def parse_review_markdown(markdown: str) -> tuple[dict, list[dict], list[str]]:
-    metadata, body = _parse_frontmatter(markdown)
-    errors: list[str] = []
-    metadata.setdefault("type", "agent_review")
-    metadata.setdefault("status", "pending_review")
-    metadata.setdefault("source_agent", "unknown")
-    metadata["evidence_quality"] = _normalize_evidence_quality(metadata.get("evidence_quality"))
-    compact_json = _extract_json_payload(body)
-    if compact_json:
-        findings, compact_errors = _parse_compact_review_json(compact_json, metadata)
-        return metadata, findings, compact_errors
-
-    heading_matches = list(re.finditer(r"(?im)^(?:###\s+finding\b.*|\*\*Finding\b.*\*\*)\s*$", body))
-    if not heading_matches:
-        errors.append("no_finding_headings")
-        return metadata, [
-            {
-                "severity": "info",
-                "area": "Docs",
-                "title": _title_from_markdown(markdown, "Unparsed review"),
-                "evidence": None,
-                "proposed_change": None,
-                "raw_text": body.strip() or markdown,
-                "evidence_quality": metadata["evidence_quality"],
-                "status": "needs_more_context",
-            }
-        ], errors
-
-    findings: list[dict] = []
-    if len(heading_matches) > MAX_FINDINGS_PER_REVIEW:
-        metadata["truncated_findings"] = True
-        errors.append("truncated_findings")
-    for index, match in enumerate(heading_matches[:MAX_FINDINGS_PER_REVIEW]):
-        next_start = heading_matches[index + 1].start() if index + 1 < len(heading_matches) else len(body)
-        block = body[match.start() : next_start].strip()
-        title = match.group(0).replace("###", "", 1).strip().strip("*").strip() or f"Finding {index + 1}"
-        severity = (_field(block, "Severity") or "info").lower()
-        if severity not in SEVERITIES:
-            errors.append(f"unknown_severity:{severity}")
-            severity = "info"
-        area = _normalize_area(_field(block, "Area"))
-        explicit_title = _field(block, "Title")
-        evidence = _section(block, "Evidence", "Proposed change")
-        proposed_change = _section(block, "Proposed change")
-        evidence_quality = _normalize_evidence_quality(_field(block, "Evidence quality") or _field(block, "Evidence Quality") or metadata.get("evidence_quality"))
-        status = "pending"
-        raw_text = None
-        if not evidence and not proposed_change:
-            status = "needs_more_context"
-            raw_text = block
-            errors.append(f"malformed_finding:{index + 1}")
-        findings.append(
-            {
-                "severity": severity,
-                "area": area,
-                "title": (explicit_title or title)[:220],
-                "evidence": evidence,
-                "proposed_change": proposed_change,
-                "raw_text": raw_text,
-                "evidence_quality": evidence_quality,
-                "status": status,
-            }
-        )
-    return metadata, findings, errors
-
-
 def _http_from_rust(error: RustCoreError) -> HTTPException:
     status = 404 if error.code.endswith("_not_found") else 409 if "invalid_status" in error.code else 500
     return HTTPException(status_code=status, detail={"code": error.code, "message": error.message, "details": error.details})
-
-
-def _task_prompt_from_finding(row: dict) -> str:
-    parts = [
-        f"Implement accepted KnowNet finding: {row['title']}",
-        f"Finding id: {row['id']}",
-        f"Severity: {row['severity']}",
-        f"Area: {row['area']}",
-        f"Evidence quality: {row.get('evidence_quality') or 'unspecified'}",
-    ]
-    if row.get("evidence"):
-        parts.append(f"Evidence: {row['evidence']}")
-    if row.get("proposed_change"):
-        parts.append(f"Requested change: {row['proposed_change']}")
-    parts.append("Keep the change scoped. Record implementation evidence after verification.")
-    return "\n\n".join(parts)
-
-
-def _verification_from_finding(row: dict) -> str:
-    area = str(row.get("area") or "").lower()
-    if area == "docs":
-        return "Run targeted docs/schema checks or explain why no executable check applies."
-    if area in {"api", "security", "ops", "data"}:
-        return "Run targeted API tests for the changed route/service and verify-index when collaboration state changes."
-    if area == "ui":
-        return "Run the web build and any targeted UI checks for the changed surface."
-    if area == "rust":
-        return "Run the targeted Rust test or cargo test for the affected crate."
-    return "Run the smallest targeted verification that proves the finding is handled."
-
-
-def _priority_from_finding(row: dict) -> str:
-    return "high" if row.get("severity") in {"critical", "high"} else "normal"
-
-
-def _should_auto_create_task(row: dict) -> bool:
-    return row.get("severity") in {"critical", "high"} and row.get("evidence_quality") in {"direct_access", "operator_verified"}
-
-
-def _implementation_task_template(row: dict) -> dict:
-    finding_id = row["finding_id"] if row.get("finding_id") else row["id"]
-    return {
-        "endpoint": f"/api/collaboration/findings/{finding_id}/implementation-evidence",
-        "method": "POST",
-        "body": {
-            "dry_run": True,
-            "changed_files": [],
-            "verification": row.get("expected_verification") or _verification_from_finding(row),
-            "notes": "Targeted implementation evidence.",
-        },
-    }
-
-
-def _simple_evidence_template(finding_id: str) -> dict:
-    return {
-        "endpoint": f"/api/collaboration/findings/{finding_id}/evidence",
-        "method": "POST",
-        "body": {"implemented": True, "commit": None, "note": "Implemented and verified with targeted checks."},
-    }
-
-
-def _task_creation_template(row: dict) -> dict:
-    return {
-        "endpoint": f"/api/collaboration/findings/{row['id']}/task",
-        "method": "POST",
-        "body": {
-            "priority": _priority_from_finding(row),
-            "owner": "codex",
-            "task_prompt": _task_prompt_from_finding(row),
-            "expected_verification": _verification_from_finding(row),
-        },
-    }
 
 
 async def _upsert_finding_task(
