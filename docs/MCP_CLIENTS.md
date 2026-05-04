@@ -156,8 +156,10 @@ Register the connector URL as:
 https://<quick-tunnel-host>/mcp
 ```
 
-`GET /mcp`, `GET /mcp/tools`, and `GET /.well-known/mcp` expose discovery
-metadata only. Real MCP calls use JSON-RPC `POST /mcp`.
+The HTTP bridge accepts real MCP traffic through JSON-RPC `POST /mcp`. GET is
+limited to `/health`; `/mcp`, `/mcp/tools`, and `/.well-known/mcp` return
+`method_not_allowed` so clients do not confuse discovery metadata with resource
+reads.
 
 ## Troubleshooting
 

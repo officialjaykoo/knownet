@@ -12,7 +12,7 @@
   "test_status": "local_http_bridge_template_ready",
   "requires_paid_or_external_setup": true,
   "access_strategy": "single_strong_path_when_connector_available",
-  "path_policy": "Custom MCP connector is the supported path. GET discovery is metadata-only.",
+  "path_policy": "Custom MCP connector is the supported path. Use JSON-RPC POST /mcp; GET is health-only.",
   "keep_separate_free_paid_paths": false,
   "primary_path": "custom_mcp_connector",
   "connection_modes": [

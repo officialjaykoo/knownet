@@ -221,8 +221,6 @@ def validate_packet_header(packet: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     if packet.get("contract_version") != PACKET_CONTRACT_VERSION:
         errors.append(f"unsupported_contract_version:{packet.get('contract_version')}")
-    if packet.get("packet_schema_version") != PACKET_CONTRACT_VERSION:
-        errors.append(f"unsupported_packet_schema_version:{packet.get('packet_schema_version')}")
     if packet.get("protocol_version") != PACKET_PROTOCOL_VERSION:
         errors.append(f"unsupported_protocol_version:{packet.get('protocol_version')}")
     if packet.get("schema_ref") != PACKET_SCHEMA_REF:
@@ -255,7 +253,6 @@ def validate_packet_schema_core(packet: dict[str, Any], schema: dict[str, Any] |
         "id",
         "type",
         "contract_version",
-        "packet_schema_version",
         "protocol_version",
         "schema_ref",
         "generated_at",

@@ -1585,7 +1585,7 @@ async def _project_snapshot_delta(sqlite_path: Path, vault_id: str, since: str |
         "findings": findings,
         "finding_tasks": tasks,
         "model_runs": runs,
-        "delta_summary": {
+        "summary": {
             "changed_nodes": len(pages),
             "new_or_updated_findings": len(findings),
             "changed_tasks": len(tasks),
@@ -1724,7 +1724,7 @@ def _standard_delta(delta: dict | None) -> dict | None:
         return None
     return {
         "since": delta.get("since"),
-        "summary": delta.get("delta_summary", {}),
+        "summary": delta.get("summary", {}),
         "added": {
             "findings": [row for row in delta.get("findings", []) if str(row.get("status") or "") in {"pending", "needs_more_context", "accepted"}],
             "finding_tasks": [row for row in delta.get("finding_tasks", []) if str(row.get("status") or "") in {"open", "todo", "pending"}],
@@ -1998,7 +1998,6 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
                     "output_mode": output_mode,
                     "contract": contract,
                     "contract_shape": contract_shape(contract),
-                    "packet_schema_version": PACKET_CONTRACT_VERSION,
                     "ai_context": ai_context_payload,
                     "next_action_hints": "computed_after_render",
                     "issues": "computed_after_render",
@@ -2124,14 +2123,14 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
         target_id=packet_id,
         metadata={"content_hash": content_hash, "warnings": warnings, "focus": focus, "since": since, "since_packet_id": payload.since_packet_id, "profile": profile, "contract_version": PACKET_CONTRACT_VERSION},
     )
-    read_url = f"/api/collaboration/project-snapshot-packets/{packet_id}"
-    storage_path = f"project-snapshot-packets/{packet_id}.md"
+    self_href = f"/api/collaboration/project-snapshot-packets/{packet_id}"
+    storage_href = f"project-snapshot-packets/{packet_id}.md"
     standard_delta = _standard_delta(delta)
     response_data = {
             "id": packet_id,
             "type": "project_snapshot_packet",
             "generated_at": generated_at,
-            "links": _resource_links(self_href=read_url, content_href=read_url, storage_href=storage_path),
+            "links": _resource_links(self_href=self_href, content_href=self_href, storage_href=storage_href),
             "content": content,
             "content_hash": content_hash,
             "preflight": preflight,
@@ -2142,7 +2141,6 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
             "snapshot_self_test": self_test,
             "contract": contract,
             "contract_shape": contract_shape(contract),
-            "packet_schema_version": PACKET_CONTRACT_VERSION,
             "protocol_version": PACKET_PROTOCOL_VERSION,
             "schema_ref": PACKET_SCHEMA_REF,
             "trace": trace_payload,
@@ -2177,7 +2175,7 @@ async def get_project_snapshot_packet(packet_id: str, request: Request, actor: A
     if not path.exists():
         raise HTTPException(status_code=404, detail={"code": "project_snapshot_packet_not_found", "message": "Project snapshot packet not found", "details": {"packet_id": packet_id}})
     content = path.read_text(encoding="utf-8")
-    read_url = f"/api/collaboration/project-snapshot-packets/{packet_id}"
+    self_href = f"/api/collaboration/project-snapshot-packets/{packet_id}"
     return {
         "ok": True,
         "data": {
@@ -2185,7 +2183,7 @@ async def get_project_snapshot_packet(packet_id: str, request: Request, actor: A
             "type": "project_snapshot_packet",
             "content": content,
             "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
-            "links": _resource_links(self_href=read_url, content_href=read_url, storage_href=f"project-snapshot-packets/{packet_id}.md"),
+            "links": _resource_links(self_href=self_href, content_href=self_href, storage_href=f"project-snapshot-packets/{packet_id}.md"),
             "copy_ready": True,
         },
     }
@@ -2370,19 +2368,18 @@ async def create_experiment_packet(payload: ExperimentPacketRequest, request: Re
         target_id=packet_id,
         metadata={"experiment_name": payload.experiment_name, "node_slugs": slugs, "scenario_count": len(payload.scenarios), "content_hash": content_hash},
     )
-    read_url = f"/api/collaboration/experiment-packets/{packet_id}"
-    storage_path = str(packet_path).replace("\\", "/")
+    self_href = f"/api/collaboration/experiment-packets/{packet_id}"
+    storage_href = str(packet_path).replace("\\", "/")
     response_data = {
             "id": packet_id,
             "type": "experiment_packet",
             "generated_at": generated_at,
-            "links": _resource_links(self_href=read_url, content_href=read_url, storage_href=storage_path),
+            "links": _resource_links(self_href=self_href, content_href=self_href, storage_href=storage_href),
             "content": content,
             "content_hash": content_hash,
             "included_nodes": included_nodes,
             "preflight": preflight,
             "contract_version": PACKET_CONTRACT_VERSION,
-            "packet_schema_version": PACKET_CONTRACT_VERSION,
             "protocol_version": PACKET_PROTOCOL_VERSION,
             "schema_ref": PACKET_SCHEMA_REF,
             "trace": trace_payload,
@@ -2415,7 +2412,12 @@ async def get_experiment_packet(packet_id: str, request: Request, actor: Actor =
         "data": {
             "id": packet["id"],
             "type": "experiment_packet",
-            **packet,
+            "vault_id": packet["vault_id"],
+            "experiment_name": packet["experiment_name"],
+            "target_agent": packet["target_agent"],
+            "content_hash": packet["content_hash"],
+            "created_by": packet["created_by"],
+            "created_at": packet["created_at"],
             "node_slugs": json.loads(packet["node_slugs"] or "[]"),
             "scenarios": json.loads(packet["scenarios"] or "[]"),
             "preflight": json.loads(packet["preflight_json"] or "{}"),

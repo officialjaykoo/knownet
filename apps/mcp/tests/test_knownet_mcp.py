@@ -9,7 +9,7 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import patch
 
-from knownet_mcp.http_bridge import capability_payload
+from knownet_mcp.http_bridge import McpHttpHandler
 from knownet_mcp.server import ALLOWED_PROMPTS, ALLOWED_RESOURCES, ALLOWED_TOOLS, KnowNetMcpServer
 
 
@@ -194,19 +194,27 @@ def test_tool_schemas_are_strict_and_validated_before_http_call():
     assert bad_bool["error"]["code"] == "invalid_tool_input"
 
 
-def test_http_discovery_has_no_extra_fallbacks():
-    server = KnowNetMcpServer(token="kn_agent_test")
-    payload = capability_payload(server)
-    assert payload["fallback_mode"] == "none"
-    assert payload["recommended_flow"] == [
-        "initialize",
-        "resources/list",
-        "resources/read knownet://snapshot/overview",
-        "resources/read knownet://finding/recent",
-        "tools/call knownet.propose_finding",
-    ]
-    assert {tool["name"] for tool in payload["tools"]} == ALLOWED_TOOLS
-    assert {resource["uri"] for resource in payload["resources"]} == ALLOWED_RESOURCES
+def test_http_bridge_rejects_get_discovery():
+    httpd = HTTPServer(("127.0.0.1", 0), McpHttpHandler)
+    httpd.knownet_mcp = KnowNetMcpServer(token="kn_agent_test")  # type: ignore[attr-defined]
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{httpd.server_port}"
+        health = urllib.request.urlopen(base + "/health", timeout=2)
+        assert health.status == 200
+        for path in ("/mcp", "/mcp/tools", "/.well-known/mcp"):
+            try:
+                urllib.request.urlopen(base + path, timeout=2)
+            except urllib.error.HTTPError as exc:
+                assert exc.code == 405
+                payload = json.loads(exc.read().decode("utf-8"))
+                assert payload["error"] == "method_not_allowed"
+            else:
+                raise AssertionError(f"GET {path} should not expose discovery metadata")
+    finally:
+        httpd.shutdown()
+        thread.join(timeout=2)
 
 
 def test_metadata_request_id_token_warning_and_size_warning():

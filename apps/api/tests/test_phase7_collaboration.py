@@ -112,7 +112,6 @@ def test_packet_schema_core_validator_uses_schema_required_fields():
         "id": "packet_test",
         "type": "project_snapshot_packet",
         "contract_version": "p20.v1",
-        "packet_schema_version": "p20.v1",
         "protocol_version": "2026-05-05",
         "schema_ref": "knownet://schemas/packet/p20.v1",
         "generated_at": "2026-05-05T00:00:00Z",
@@ -630,7 +629,7 @@ Add provider retry and alerting.
         assert overview_data["generated_at"]
         assert overview_data["links"]["self"]["href"].startswith("/api/collaboration/project-snapshot-packets/")
         assert "packet_id" not in overview_data
-        assert overview_data["packet_schema_version"] == "p20.v1"
+        assert "packet_schema_version" not in overview_data
         assert overview_data["protocol_version"] == "2026-05-05"
         assert overview_data["schema_ref"] == "knownet://schemas/packet/p20.v1"
         assert overview_data["trace"]["name"] == "knownet.project_snapshot_packet"
@@ -854,7 +853,7 @@ fallback_order: Use inline context first.
         assert "Operator-Supplied Minimum Inline Context" in content
         assert "Critical inline summary: do not guess from node names." in content
         data = response.json()["data"]
-        assert data["packet_schema_version"] == "p20.v1"
+        assert "packet_schema_version" not in data
         assert data["protocol_version"] == "2026-05-05"
         assert data["schema_ref"] == "knownet://schemas/packet/p20.v1"
         assert data["trace"]["name"] == "knownet.experiment_packet"

@@ -375,7 +375,6 @@ async def build_safe_context(settings: Settings, *, vault_id: str, max_pages: in
             "type": "provider_fast_lane_context",
             "generated_at": generated_at,
             "contract_version": PACKET_CONTRACT_VERSION,
-            "packet_schema_version": PACKET_CONTRACT_VERSION,
             "protocol_version": PACKET_PROTOCOL_VERSION,
             "schema_ref": PACKET_SCHEMA_REF,
             "links": {"self": {"href": "/api/model-runs/review-now"}},

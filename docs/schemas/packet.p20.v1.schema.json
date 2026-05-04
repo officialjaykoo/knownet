@@ -7,7 +7,6 @@
     "id",
     "type",
     "contract_version",
-    "packet_schema_version",
     "protocol_version",
     "schema_ref",
     "generated_at",
@@ -25,9 +24,6 @@
       "enum": ["project_snapshot_packet", "experiment_packet", "provider_fast_lane_context"]
     },
     "contract_version": {
-      "const": "p20.v1"
-    },
-    "packet_schema_version": {
       "const": "p20.v1"
     },
     "protocol_version": {

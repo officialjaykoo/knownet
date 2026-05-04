@@ -5,72 +5,7 @@ import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
-from .client_profiles import load_client_profiles
 from .server import KnowNetMcpServer, SERVER_VERSION
-
-
-def capability_payload(mcp: KnowNetMcpServer) -> dict[str, Any]:
-    return {
-        "ok": True,
-        "name": "knownet-mcp-http",
-        "version": SERVER_VERSION,
-        "project": "KnowNet AI collaboration knowledge base",
-        "transport": {
-            "jsonrpc_endpoint": "/mcp",
-            "method": "POST",
-            "content_type": "application/json",
-            "note": "Use JSON-RPC initialize, tools/list, and tools/call. GET only returns safe discovery metadata.",
-        },
-        "transport_profiles": {
-            "local_stdio": {
-                "recommended_for": ["Claude Desktop", "Cursor", "local agent runners"],
-                "command_pattern": "python apps/mcp/knownet_mcp/server.py",
-                "auth_location": "environment variable KNOWNET_AGENT_TOKEN",
-                "note": "Preferred for desktop clients because the MCP host starts a local process and no public tunnel is required.",
-            },
-            "streamable_http_bridge": {
-                "recommended_for": ["ChatGPT custom connector tests", "HTTPS Custom MCP clients", "temporary external reviews"],
-                "endpoint": "/mcp",
-                "methods": ["GET discovery", "POST JSON-RPC"],
-                "auth_location": "bridge-held environment variable KNOWNET_AGENT_TOKEN",
-                "note": "Use only behind a trusted local network or protected HTTPS gateway. Quick tunnels are testing-only.",
-            },
-        },
-        "client_profiles": load_client_profiles(),
-        "auth": {
-            "method": "bridge-held bearer token",
-            "note": "Agent tokens are scoped and never returned in discovery, tool, resource, or event responses.",
-        },
-        "recommended_flow": [
-            "initialize",
-            "resources/list",
-            "resources/read knownet://snapshot/overview",
-            "resources/read knownet://finding/recent",
-            "tools/call knownet.propose_finding",
-        ],
-        "error_catalog": {
-            "invalid_params": {"jsonrpc_code": -32602, "meaning": "Input does not match the tool schema, including maxLength limits."},
-            "parse_error": {"jsonrpc_code": -32700, "meaning": "Request body is not valid JSON."},
-        },
-        "fallback_rule": "No compatibility fallback is exposed. Use MCP resources, tools, and prompts.",
-        "fallback_mode": "none",
-        "release_status": {
-            "release_ready": False,
-            "blockers": [
-                "Quick tunnel access is for testing only; a named tunnel with access controls is required for operational external access.",
-                "External AI review findings are still being triaged and hardened before a release-ready claim.",
-            ],
-        },
-        "infrastructure_notice": {
-            "tunnel_type": "temporary_quick_tunnel",
-            "production_ready": False,
-            "recommended_use": "testing_only",
-            "note": "Use a named tunnel with access controls before treating external connector access as operational.",
-        },
-        "tools": [{"name": item["name"], "description": item["description"], "inputSchema": item["inputSchema"]} for item in mcp.tool_specs()],
-        "resources_get_note": "Resource reads use JSON-RPC resources/read. GET discovery is metadata-only.",
-        "resources": mcp.resource_specs(),
-    }
 
 
 class McpHttpHandler(BaseHTTPRequestHandler):
@@ -90,8 +25,7 @@ class McpHttpHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True, "name": "knownet-mcp-http", "version": SERVER_VERSION})
             return
         if path in {"/mcp", "/mcp/tools", "/.well-known/mcp"}:
-            mcp = self.server.knownet_mcp  # type: ignore[attr-defined]
-            self._send_json(200, capability_payload(mcp))
+            self._send_json(405, {"ok": False, "error": "method_not_allowed", "message": "Use JSON-RPC POST /mcp."})
             return
         self._send_json(404, {"ok": False, "error": "not_found"})
 

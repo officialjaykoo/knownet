@@ -79,7 +79,7 @@ SECURITY_BOUNDARY_POLICY = {
     "raw_tokens": "Raw agent tokens are shown once by the operator dashboard and are never returned by agent read APIs, MCP tools, resource previews, or event APIs.",
     "forbidden_data": ["database files", "backup archives", "session rows", "user rows", "token hashes", "raw tokens", "local filesystem paths"],
     "write_boundary": "External agents submit reviews and findings through scoped APIs. They do not receive raw filesystem write tools or admin maintenance tools.",
-    "get_preview_boundary": "GET previews expose safe onboarding and state-summary context only. Review dry-run and submit remain JSON-RPC POST operations.",
+    "mcp_boundary": "External AI collaboration uses snapshot packets and MCP JSON-RPC resources/tools. GET is not a content-preview transport.",
 }
 
 INFRASTRUCTURE_NOTICE = {
@@ -594,7 +594,7 @@ async def agent_state_summary(request: Request, agent: AgentAuth = Depends(requi
             {
                 "risk": "external_connector_mode_variance",
                 "status": "mitigating",
-                "mitigation": "GET discovery and GET resource previews are available for clients that cannot call JSON-RPC tools.",
+                "mitigation": "Use snapshot packets or MCP JSON-RPC resources/tools; do not add GET preview fallbacks.",
             },
             {
                 "risk": "quick_tunnel_not_production",

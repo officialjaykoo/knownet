@@ -19,7 +19,6 @@ Every outbound packet or provider context should carry:
 ```json
 {
   "contract_version": "p20.v1",
-  "packet_schema_version": "p20.v1",
   "protocol_version": "2026-05-05",
   "schema_ref": "knownet://schemas/packet/p20.v1",
   "trace": {

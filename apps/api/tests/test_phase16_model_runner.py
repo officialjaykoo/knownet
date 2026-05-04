@@ -257,7 +257,7 @@ def test_review_now_uses_live_gemini_when_configured(tmp_path, monkeypatch):
             assert request["request"]["max_findings"] == 15
             assert request["request"]["slim_context"] is True
             assert request["context"]["contract_version"] == "p20.v1"
-            assert request["context"]["packet_schema_version"] == "p20.v1"
+            assert "packet_schema_version" not in request["context"]
             assert request["context"]["protocol_version"] == "2026-05-05"
             assert request["context"]["schema_ref"] == "knownet://schemas/packet/p20.v1"
             assert request["context"]["trace"]["name"] == "knownet.provider_fast_lane_context"
