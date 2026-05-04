@@ -1,10 +1,7 @@
 # MCP Client Setup
 
-KnowNet exposes a local stdio MCP server for scoped AI-agent access.
-
-Use this document when deciding how a new AI client should connect. Keep client
-work on the shared `knownet_*` MCP surface unless a provider only supports
-search/fetch style connectors.
+KnowNet exposes one standard MCP surface for scoped AI-agent access. It does
+not expose compatibility aliases.
 
 The MCP server path is:
 
@@ -24,6 +21,46 @@ KNOWNET_MCP_LOG_FORMAT=json
 
 Use an agent token with only the scopes needed by that client. Rotate tokens
 from the Agent Access panel when a client configuration changes.
+
+## Standard Surface
+
+The standard KnowNet MCP baseline is documented in:
+
+```txt
+docs/MCP_SCOPE.md
+```
+
+Resources:
+
+```txt
+knownet://snapshot/overview
+knownet://snapshot/stability
+knownet://snapshot/performance
+knownet://snapshot/security
+knownet://snapshot/implementation
+knownet://snapshot/provider_review
+knownet://node/{slug_or_page_id}
+knownet://finding/recent
+```
+
+Tools:
+
+```txt
+knownet.propose_finding
+knownet.propose_task
+knownet.submit_implementation_evidence
+```
+
+Prompts:
+
+```txt
+knownet.compact_review
+knownet.implementation_candidate
+knownet.provider_risk_check
+```
+
+Do not use or document `search`, `fetch`, `knownet_*` tool aliases, or
+`knownet://agent/...` resource aliases.
 
 ## Claude Desktop
 
@@ -51,8 +88,8 @@ The same example is checked into:
 apps/mcp/configs/claude_desktop_config.example.json
 ```
 
-Claude Desktop should use this local stdio path first. Do not route Claude
-Desktop through Cloudflare unless testing a remote connector specifically.
+Claude Desktop should use local stdio MCP first. Do not route Claude Desktop
+through Cloudflare unless testing a remote connector specifically.
 
 ## Cursor
 
@@ -78,20 +115,18 @@ apps/api/.venv/Scripts/python.exe apps/mcp/knownet_mcp/server.py
 
 The process speaks JSON-RPC over stdin/stdout. Logs are written to stderr.
 
-The standard KnowNet MCP baseline is documented in:
+Recommended first calls:
 
 ```txt
-docs/MCP_SCOPE.md
+initialize
+resources/list
+resources/read knownet://snapshot/overview
+resources/read knownet://finding/recent
+prompts/get knownet.compact_review
+tools/call knownet.propose_finding
 ```
 
-New clients should prefer the standard resources, tools, and prompts from that
-scope: `knownet://snapshot/...`, `knownet://node/{slug_or_page_id}`,
-`knownet://finding/recent`, `knownet.propose_finding`,
-`knownet.propose_task`, `knownet.submit_implementation_evidence`,
-`knownet.compact_review`, `knownet.implementation_candidate`, and
-`knownet.provider_risk_check`.
-
-To verify that a stdio client can at least initialize and list tools/resources:
+To verify that a stdio client can initialize and list the standard surface:
 
 ```powershell
 $env:KNOWNET_BASE_URL="http://127.0.0.1:8000"
@@ -99,41 +134,13 @@ $env:KNOWNET_AGENT_TOKEN="<token shown once by the operator dashboard>"
 apps/api/.venv/Scripts/python.exe apps/mcp/scripts/mcp_stdio_smoke.py
 ```
 
-This smoke test does not submit reviews. It checks `initialize`,
-`tools/list`, `resources/list`, and `prompts/list`.
+This smoke test does not submit reviews. It checks `initialize`, `tools/list`,
+`resources/list`, and `prompts/list`.
 
-## ChatGPT Quick Tunnel Test
+## HTTP Bridge Test
 
-ChatGPT custom connectors can run in two modes. Full developer-mode connectors
-may expose every `knownet_*` tool. Some connector surfaces only expose
-`search` and `fetch`. KnowNet supports both:
-
-```txt
-search  -> returns onboarding, state summary, and matching page results
-fetch   -> fetches one result by id
-```
-
-If `knownet_*` tools are not visible in the client, do not substitute a GitHub
-repository read for KnowNet state. Use `search` for `KnowNet current state`,
-then `fetch` the returned `agent:onboarding`, `agent:state-summary`, or
-`page:*` ids. If the client supports full tools, prefer this order:
-
-```txt
-knownet_start_here
-knownet_me
-knownet_state_summary
-knownet_ai_state
-knownet_review_dry_run
-```
-
-`knownet_state_summary` and `agent:state-summary` expose the same state through
-different MCP surfaces. Use the tool when the client can call JSON-RPC tools.
-Use the resource or `fetch agent:state-summary` when the client works better
-with resource reads. GET preview clients can only read the safe HTTP preview at
-`/mcp?resource=agent:state-summary`.
-
-For temporary quick-tunnel testing, run the HTTP bridge and tunnel only for the
-test window. Revoke the temporary agent token immediately after the test.
+For temporary HTTP bridge testing, run the bridge and tunnel only for the test
+window. Revoke the temporary agent token immediately after the test.
 
 ```powershell
 $env:KNOWNET_BASE_URL="http://127.0.0.1:8000"
@@ -149,71 +156,8 @@ Register the connector URL as:
 https://<quick-tunnel-host>/mcp
 ```
 
-The HTTP discovery response now includes `transport_profiles` and
-`client_profiles` so connector-capable clients can see whether they are using
-local stdio, HTTP bridge, or GET preview fallback.
-
-Provider profile files live in:
-
-```txt
-apps/mcp/client_profiles/
-```
-
-KnowNet currently ships profiles for ChatGPT, Claude, Gemini, Manus, DeepSeek,
-Qwen, Kimi, MiniMax, and GLM/Z.AI. These profiles do not create separate tool
-families. They map each client to the same `knownet_*` MCP surface and record
-whether the path is locally tested, HTTP-only, or provider-runner-only.
-
-Templates:
-
-```txt
-apps/mcp/configs/http_bridge.env.example
-apps/mcp/configs/chatgpt_custom_connector.example.json
-apps/mcp/configs/claude_desktop_config.example.json
-apps/mcp/configs/gemini_cli_settings.example.json
-apps/mcp/configs/manus_custom_mcp.example.json
-apps/mcp/configs/provider_runner.deepseek.example.json
-apps/mcp/configs/qwen_agent_mcp.example.json
-apps/mcp/configs/kimi_mcp.example.json
-apps/mcp/configs/minimax_agent.example.json
-apps/mcp/configs/glm_coding_mcp.example.json
-```
-
-## Client Compatibility Summary
-
-```txt
-Claude Desktop:
-  Preferred path is local stdio MCP. Do not use Cloudflare for normal local
-  Claude Desktop operation.
-
-Cursor and local agents:
-  Use the same stdio MCP server with scoped tokens in environment variables.
-
-ChatGPT connector:
-  Use HTTPS bridge/tunnel for testing. If full `knownet_*` tools are not
-  visible, use connector-compatible `search` and `fetch`.
-
-Manus:
-  Requires a protected HTTPS Custom MCP or Custom API path. Quick tunnels are
-  testing-only. Start read-only and do not provide `ADMIN_TOKEN`.
-
-Qwen:
-  Prefer Qwen-Agent with the KnowNet MCP server. The current stable support is
-  MCP config plus read/review scopes, not a Qwen-specific API runner.
-
-Kimi, DeepSeek, MiniMax, GLM/Z.AI:
-  Use MCP where the client supports it. Server-side model API runners are
-  tracked in `docs/MODEL_RUNS.md` and surfaced in the Operator Console provider
-  matrix.
-```
-
-## Preferred State Tool
-
-Use `knownet_ai_state` when an AI client needs compact structured project
-context. It returns JSON rows derived from active pages, including summaries,
-sections, links, source references, and content hashes. Use
-`knownet_read_page` only when the agent needs the full narrative source text for
-a specific page.
+`GET /mcp`, `GET /mcp/tools`, and `GET /.well-known/mcp` expose discovery
+metadata only. Real MCP calls use JSON-RPC `POST /mcp`.
 
 ## Troubleshooting
 
@@ -229,7 +173,7 @@ narrower or broader scoped token from the Agent Access panel.
 Rotate the token before running a long review.
 
 `context_too_large`:
-Request fewer pages or read one page at a time.
+Request a narrower snapshot profile or one node resource.
 
 `rate_limited`:
 Wait before retrying. The response may include `retry_after_seconds`.
@@ -238,34 +182,9 @@ Wait before retrying. The response may include `retry_after_seconds`.
 Include this value when reporting a failed MCP call. It is also written to MCP
 stderr logs.
 
-`knownet_* tools are not visible`:
-Confirm the client is using full MCP developer mode. If it is not, use the
-connector-compatible `search` and `fetch` tools. Also check the connector URL,
-`KNOWNET_BASE_URL`, `KNOWNET_AGENT_TOKEN`, token scopes, and the MCP bridge
-stderr log.
-
-`client cannot use the MCP URL`:
-Some web AI products cannot attach arbitrary MCP connectors even when the
-quick-tunnel URL is reachable. In that case, ask the operator for captured
-`search`, `fetch`, or `knownet_*` JSON responses. Mark the review as
-`static-spec fallback` if it relies on repository documents instead of live
-KnowNet state.
-
-`GET /mcp works but tool calls do not`:
-`GET /mcp`, `GET /mcp/tools`, and `GET /.well-known/mcp` expose only safe
-discovery metadata for web clients and reviewers. Real MCP calls still use
-JSON-RPC `POST /mcp`. A successful GET discovery response is not proof that a
-web product can call tools.
-
-For clients that cannot POST JSON-RPC, these read-only previews are available:
-
-```txt
-GET /mcp?resource=agent:onboarding
-GET /mcp?resource=agent:state-summary
-```
-
-These previews are intentionally limited. Review submission and dry-run remain
-JSON-RPC POST operations so review bodies are not placed in URLs or GET logs.
+`unknown_tool`, `unknown_prompt`, or `invalid_resource`:
+Use the standard surface listed above. KnowNet does not provide compatibility
+aliases for older MCP tool, prompt, resource, search, or fetch names.
 
 ## Public Exposure
 

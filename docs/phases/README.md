@@ -11,7 +11,7 @@ completion gate introduced it.
 Latest standardization phase:
 
 ```txt
-PHASE_23_TASKS.md - Real MCP compatibility baseline:
+PHASE_23_TASKS.md - Standard MCP baseline:
   standard KnowNet MCP resource URIs, proposal-only tools, prompt names, and
   tests that keep raw/admin surfaces out.
 ```

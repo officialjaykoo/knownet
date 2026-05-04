@@ -59,9 +59,26 @@ def main() -> int:
         tool_names = {tool["name"] for tool in tools["result"]["tools"]}
         resource_uris = {resource["uri"] for resource in resources["result"]["resources"]}
         prompt_names = {prompt["name"] for prompt in prompts["result"]["prompts"]}
-        required_tools = {"knownet_start_here", "knownet_me", "knownet_state_summary", "knownet_review_dry_run"}
-        required_resources = {"knownet://agent/onboarding", "knownet://agent/state-summary"}
-        required_prompts = {"knownet_prepare_external_review"}
+        required_tools = {
+            "knownet.propose_finding",
+            "knownet.propose_task",
+            "knownet.submit_implementation_evidence",
+        }
+        required_resources = {
+            "knownet://snapshot/overview",
+            "knownet://snapshot/stability",
+            "knownet://snapshot/performance",
+            "knownet://snapshot/security",
+            "knownet://snapshot/implementation",
+            "knownet://snapshot/provider_review",
+            "knownet://node/{slug_or_page_id}",
+            "knownet://finding/recent",
+        }
+        required_prompts = {
+            "knownet.compact_review",
+            "knownet.implementation_candidate",
+            "knownet.provider_risk_check",
+        }
 
         missing = {
             "tools": sorted(required_tools - tool_names),

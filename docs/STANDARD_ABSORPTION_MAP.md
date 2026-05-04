@@ -37,7 +37,7 @@ The concrete schema lives at `docs/schemas/packet.p20.v1.schema.json` and uses
 
 ## Mapping Rules
 
-- Use `protocol_version` for protocol-level compatibility and parser behavior.
+- Use `protocol_version` for protocol-level versioning and parser behavior.
 - Use `schema_ref` for contract/schema identity.
 - Use `trace` for packet/run lineage and later model-run evidence correlation.
 - Store `model_review_runs.trace_id` for the run and

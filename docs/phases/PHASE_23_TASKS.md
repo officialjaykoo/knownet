@@ -1,4 +1,4 @@
-# Phase 23 Tasks: Real MCP Compatibility Baseline
+# Phase 23 Tasks: Standard MCP Baseline
 
 Status: completed in the codebase
 Created: 2026-05-05
@@ -29,10 +29,9 @@ Do:
   server.
 - Prefer `knownet://...` resource URIs.
 - Prefer `knownet.*` tool and prompt names.
-- Keep legacy `knownet_*` tools only as compatibility surfaces for existing
-  local clients.
+- Expose only the standard MCP resource, tool, and prompt names.
 
-## P23-001 Standard Resource Aliases
+## P23-001 Standard Resources
 
 Add these resources to `resources/list` and `resources/read`:
 
@@ -51,11 +50,11 @@ Done when:
 
 - `resources/list` exposes the standard URIs.
 - `resources/read` returns compact JSON for the standard URIs.
-- Existing `knownet://agent/...` resources still pass existing tests.
+- `knownet://agent/...` aliases are not exposed.
 
-Implementation status: completed. The MCP server exposes snapshot resources,
-`knownet://node/{slug_or_page_id}`, and `knownet://finding/recent`; tests cover
-list/read behavior for the standard names.
+Implementation status: completed. The MCP server exposes only snapshot
+resources, `knownet://node/{slug_or_page_id}`, and `knownet://finding/recent`;
+tests cover list/read behavior for the standard names and reject agent aliases.
 
 ## P23-002 Proposal Tools
 

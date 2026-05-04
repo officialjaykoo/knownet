@@ -37,9 +37,8 @@ knownet://node/{slug_or_page_id}
 knownet://finding/recent
 ```
 
-Existing `knownet://agent/...` resources may remain as aliases for older MCP
-client setups, but new packet and prompt contracts should prefer the resource
-names above.
+Do not expose `knownet://agent/...` aliases. The resource list above is the
+public MCP read surface.
 
 ## Required Tools
 
@@ -60,8 +59,8 @@ Tool behavior:
 - `knownet.submit_implementation_evidence` returns an operator-gated evidence
   proposal. It does not mark a finding implemented.
 
-The legacy `knownet_review_dry_run` and `knownet_submit_review` tools can remain
-for established clients, but the standard-facing names above are preferred.
+Do not expose `knownet_*` tool aliases. The tool list above is the public MCP
+tool surface.
 
 ## Required Prompts
 

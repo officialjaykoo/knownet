@@ -2,7 +2,7 @@
   "provider": "deepseek",
   "status": "profile_only_provider_not_implemented",
   "runner_pattern": "openai_compatible_tool_calling",
-  "knownet_surface": "common knownet_* tools through the runner",
+  "knownet_surface": "standard MCP resources, tools, and prompts",
   "base_url": "https://api.deepseek.com",
   "anthropic_base_url": "https://api.deepseek.com/anthropic",
   "api_key_env": "DEEPSEEK_API_KEY",
@@ -24,10 +24,9 @@
     "thinking_env": "DEEPSEEK_THINKING_ENABLED"
   },
   "allowed_actions": [
-    "knownet_start_here",
-    "knownet_state_summary",
-    "knownet_ai_state",
-    "knownet_review_dry_run"
+    "resources/read knownet://snapshot/overview",
+    "resources/read knownet://finding/recent",
+    "tools/call knownet.propose_finding"
   ],
   "forbidden_actions": [
     "maintenance",

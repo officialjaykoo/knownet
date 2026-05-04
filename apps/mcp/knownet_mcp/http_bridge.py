@@ -10,14 +10,6 @@ from .server import KnowNetMcpServer, SERVER_VERSION
 
 
 def capability_payload(mcp: KnowNetMcpServer) -> dict[str, Any]:
-    resources = []
-    for item in mcp.resource_specs():
-        enriched = dict(item)
-        if item["uri"] == "knownet://agent/onboarding":
-            enriched["http_get"] = "/mcp?resource=agent:onboarding"
-        elif item["uri"] == "knownet://agent/state-summary":
-            enriched["http_get"] = "/mcp?resource=agent:state-summary"
-        resources.append(enriched)
     return {
         "ok": True,
         "name": "knownet-mcp-http",
@@ -43,11 +35,6 @@ def capability_payload(mcp: KnowNetMcpServer) -> dict[str, Any]:
                 "auth_location": "bridge-held environment variable KNOWNET_AGENT_TOKEN",
                 "note": "Use only behind a trusted local network or protected HTTPS gateway. Quick tunnels are testing-only.",
             },
-            "get_preview": {
-                "recommended_for": ["web-only AI reviewers that cannot POST JSON-RPC"],
-                "endpoints": ["/mcp?resource=agent:onboarding", "/mcp?resource=agent:state-summary"],
-                "note": "Read-only preview only. It cannot dry-run or submit reviews.",
-            },
         },
         "client_profiles": load_client_profiles(),
         "auth": {
@@ -55,28 +42,18 @@ def capability_payload(mcp: KnowNetMcpServer) -> dict[str, Any]:
             "note": "Agent tokens are scoped and never returned in discovery, tool, resource, or event responses.",
         },
         "recommended_flow": [
-            "search",
-            "fetch agent:onboarding",
-            "fetch agent:state-summary",
-            "knownet_start_here",
-            "knownet_me",
-            "knownet_state_summary",
-            "knownet_ai_state",
-            "knownet_list_findings",
-            "knownet_review_dry_run",
+            "initialize",
+            "resources/list",
+            "resources/read knownet://snapshot/overview",
+            "resources/read knownet://finding/recent",
+            "tools/call knownet.propose_finding",
         ],
-        "fallback_example": {
-            "jsonrpc_search": {"query": "KnowNet current state", "expected_result_ids": ["agent:onboarding", "agent:state-summary", "page:{page_id}"]},
-            "jsonrpc_fetch": {"id": "agent:onboarding", "expected_fields": ["id", "title", "payload", "text"]},
-            "http_get_preview": ["/mcp?resource=agent:onboarding", "/mcp?resource=agent:state-summary"],
-            "note": "GET-only clients can only use http_get_preview. search/fetch require JSON-RPC POST tools/call.",
-        },
         "error_catalog": {
             "invalid_params": {"jsonrpc_code": -32602, "meaning": "Input does not match the tool schema, including maxLength limits."},
             "parse_error": {"jsonrpc_code": -32700, "meaning": "Request body is not valid JSON."},
         },
-        "fallback_rule": "If knownet_* tools are not visible, use search and fetch. Do not substitute unrelated public repositories for KnowNet state.",
-        "fallback_mode": "get_preview_available",
+        "fallback_rule": "No compatibility fallback is exposed. Use MCP resources, tools, and prompts.",
+        "fallback_mode": "none",
         "release_status": {
             "release_ready": False,
             "blockers": [
@@ -91,8 +68,8 @@ def capability_payload(mcp: KnowNetMcpServer) -> dict[str, Any]:
             "note": "Use a named tunnel with access controls before treating external connector access as operational.",
         },
         "tools": [{"name": item["name"], "description": item["description"], "inputSchema": item["inputSchema"]} for item in mcp.tool_specs()],
-        "resources_get_note": "Full resource reads use JSON-RPC resources/read. GET previews expose only onboarding and state-summary for clients that cannot POST. Review dry-run is intentionally POST-only so review bodies are not placed in URLs or GET logs.",
-        "resources": resources,
+        "resources_get_note": "Resource reads use JSON-RPC resources/read. GET discovery is metadata-only.",
+        "resources": mcp.resource_specs(),
     }
 
 
@@ -113,18 +90,7 @@ class McpHttpHandler(BaseHTTPRequestHandler):
             self._send_json(200, {"ok": True, "name": "knownet-mcp-http", "version": SERVER_VERSION})
             return
         if path in {"/mcp", "/mcp/tools", "/.well-known/mcp"}:
-            query = self.path.split("?", 1)[1] if "?" in self.path else ""
-            params = {}
-            if query:
-                from urllib.parse import parse_qs
-
-                params = {key: values[0] for key, values in parse_qs(query).items() if values}
             mcp = self.server.knownet_mcp  # type: ignore[attr-defined]
-            resource = params.get("resource")
-            if resource in {"agent:onboarding", "agent:state-summary"}:
-                fetch_id = "agent:onboarding" if resource == "agent:onboarding" else "agent:state-summary"
-                self._send_json(200, mcp.call_tool("fetch", {"id": fetch_id}))
-                return
             self._send_json(200, capability_payload(mcp))
             return
         self._send_json(404, {"ok": False, "error": "not_found"})

@@ -6,6 +6,6 @@
     "The HTTP bridge holds KNOWNET_AGENT_TOKEN in its environment.",
     "Use a short-lived scoped token for quick-tunnel tests.",
     "Revoke the token immediately after the external review.",
-    "If full knownet_* tools are not visible, use search and fetch first."
+    "Use standard MCP resources, tools, and prompts only."
   ]
 }

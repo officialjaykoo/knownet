@@ -17,36 +17,12 @@ PROTOCOL_VERSION = "2024-11-05"
 SERVER_VERSION = "14.0"
 
 ALLOWED_TOOLS = {
-    "search",
-    "fetch",
-    "knownet_ping",
-    "knownet_start_here",
-    "knownet_me",
-    "knownet_state_summary",
-    "knownet_ai_state",
-    "knownet_list_pages",
-    "knownet_read_page",
-    "knownet_list_reviews",
-    "knownet_list_findings",
-    "knownet_graph_summary",
-    "knownet_list_citations",
-    "knownet_review_dry_run",
-    "knownet_submit_review",
     "knownet.propose_finding",
     "knownet.propose_task",
     "knownet.submit_implementation_evidence",
 }
 
 ALLOWED_RESOURCES = {
-    "knownet://agent/onboarding",
-    "knownet://agent/me",
-    "knownet://agent/state-summary",
-    "knownet://agent/ai-state",
-    "knownet://agent/pages",
-    "knownet://agent/reviews",
-    "knownet://agent/findings",
-    "knownet://agent/graph",
-    "knownet://agent/citations",
     "knownet://snapshot/overview",
     "knownet://snapshot/stability",
     "knownet://snapshot/performance",
@@ -58,72 +34,16 @@ ALLOWED_RESOURCES = {
 }
 
 ALLOWED_PROMPTS = {
-    "knownet_review_page",
-    "knownet_review_findings",
-    "knownet_prepare_external_review",
     "knownet.compact_review",
     "knownet.implementation_candidate",
     "knownet.provider_risk_check",
 }
-
-FINDING_FORMAT = """### Finding
-
-Severity: critical | high | medium | low | info
-Area: API | UI | Rust | Security | Data | Ops | Docs
-
-Evidence:
-...
-
-Proposed change:
-...
-"""
-
 
 def object_schema(properties: dict[str, Any], required: list[str] | None = None) -> dict[str, Any]:
     return {"type": "object", "properties": properties, "required": required or [], "additionalProperties": False}
 
 
 TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
-    "search": object_schema({"query": {"type": "string", "minLength": 1, "maxLength": 240}}, ["query"]),
-    "fetch": object_schema({"id": {"type": "string", "minLength": 1, "maxLength": 220}}, ["id"]),
-    "knownet_ping": object_schema({}),
-    "knownet_start_here": object_schema({}),
-    "knownet_me": object_schema({}),
-    "knownet_state_summary": object_schema({}),
-    "knownet_ai_state": object_schema({
-        "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
-        "offset": {"type": "integer", "default": 0, "minimum": 0},
-    }),
-    "knownet_list_pages": object_schema({
-        "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 200},
-        "offset": {"type": "integer", "default": 0, "minimum": 0},
-    }),
-    "knownet_read_page": object_schema({"page_id": {"type": "string", "minLength": 1, "maxLength": 160}}, ["page_id"]),
-    "knownet_list_reviews": object_schema({
-        "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 200},
-        "offset": {"type": "integer", "default": 0, "minimum": 0},
-    }),
-    "knownet_list_findings": object_schema({
-        "limit": {"type": "integer", "default": 100, "minimum": 1, "maximum": 200},
-        "offset": {"type": "integer", "default": 0, "minimum": 0},
-        "status": {"type": "string", "enum": ["accepted", "rejected", "deferred", "needs_more_context"]},
-    }),
-    "knownet_graph_summary": object_schema({"limit": {"type": "integer", "default": 200, "minimum": 1, "maximum": 1000}}),
-    "knownet_list_citations": object_schema({
-        "limit": {"type": "integer", "default": 100, "minimum": 1, "maximum": 200},
-        "offset": {"type": "integer", "default": 0, "minimum": 0},
-        "status": {"type": "string", "minLength": 1, "maxLength": 80},
-    }),
-    "knownet_review_dry_run": object_schema({
-        "markdown": {"type": "string", "minLength": 1, "maxLength": 262144},
-        "source_agent": {"type": "string", "maxLength": 120},
-        "source_model": {"type": "string", "maxLength": 120},
-    }, ["markdown"]),
-    "knownet_submit_review": object_schema({
-        "markdown": {"type": "string", "minLength": 1, "maxLength": 262144},
-        "source_agent": {"type": "string", "maxLength": 120},
-        "source_model": {"type": "string", "maxLength": 120},
-    }, ["markdown"]),
     "knownet.propose_finding": object_schema({
         "title": {"type": "string", "minLength": 1, "maxLength": 220},
         "severity": {"type": "string", "enum": ["critical", "high", "medium", "low", "info"]},
@@ -148,12 +68,6 @@ TOOL_SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 PROMPT_ARGUMENTS: dict[str, dict[str, Any]] = {
-    "knownet_review_page": object_schema({"page_id": {"type": "string", "minLength": 1, "maxLength": 160}}, ["page_id"]),
-    "knownet_review_findings": object_schema({"status": {"type": "string", "enum": ["accepted", "rejected", "deferred", "needs_more_context"]}}),
-    "knownet_prepare_external_review": object_schema({
-        "focus": {"type": "string", "maxLength": 240},
-        "max_pages": {"type": "integer", "default": 5, "minimum": 1, "maximum": 20},
-    }),
     "knownet.compact_review": object_schema({"focus": {"type": "string", "maxLength": 240}}),
     "knownet.implementation_candidate": object_schema({"finding_id": {"type": "string", "maxLength": 120}}),
     "knownet.provider_risk_check": object_schema({"provider": {"type": "string", "maxLength": 80}}),
@@ -199,25 +113,6 @@ class KnowNetMcpServer:
 
     def tool_specs(self) -> list[dict[str, Any]]:
         return [
-            {"name": "search", "description": "Search KnowNet state for ChatGPT connector compatibility.", "inputSchema": TOOL_SCHEMAS["search"]},
-            {"name": "fetch", "description": "Fetch one KnowNet search result or state resource by id.", "inputSchema": TOOL_SCHEMAS["fetch"]},
-            {"name": "knownet_ping", "description": "Check whether KnowNet agent API is reachable.", "inputSchema": TOOL_SCHEMAS["knownet_ping"]},
-            {"name": "knownet_start_here", "description": "Read first-contact onboarding guidance for external AI agents.", "inputSchema": TOOL_SCHEMAS["knownet_start_here"]},
-            {"name": "knownet_me", "description": "Inspect the current agent's scoped permissions and role. Raw token values are never returned.", "inputSchema": TOOL_SCHEMAS["knownet_me"]},
-            {"name": "knownet_state_summary", "description": "Read scoped KnowNet state counts.", "inputSchema": TOOL_SCHEMAS["knownet_state_summary"]},
-            {
-                "name": "knownet_ai_state",
-                "description": "Read paginated structured JSON state derived from KnowNet pages. Check meta.has_more/meta.truncated and use offset to continue.",
-                "inputSchema": TOOL_SCHEMAS["knownet_ai_state"],
-            },
-            {"name": "knownet_list_pages", "description": "List scoped pages.", "inputSchema": TOOL_SCHEMAS["knownet_list_pages"]},
-            {"name": "knownet_read_page", "description": "Read one scoped page.", "inputSchema": TOOL_SCHEMAS["knownet_read_page"]},
-            {"name": "knownet_list_reviews", "description": "List scoped collaboration reviews.", "inputSchema": TOOL_SCHEMAS["knownet_list_reviews"]},
-            {"name": "knownet_list_findings", "description": "List scoped findings.", "inputSchema": TOOL_SCHEMAS["knownet_list_findings"]},
-            {"name": "knownet_graph_summary", "description": "Read scoped graph summary.", "inputSchema": TOOL_SCHEMAS["knownet_graph_summary"]},
-            {"name": "knownet_list_citations", "description": "List scoped citation audits.", "inputSchema": TOOL_SCHEMAS["knownet_list_citations"]},
-            {"name": "knownet_review_dry_run", "description": "Parse a review without creating records.", "inputSchema": TOOL_SCHEMAS["knownet_review_dry_run"]},
-            {"name": "knownet_submit_review", "description": "Submit a structured agent review.", "inputSchema": TOOL_SCHEMAS["knownet_submit_review"]},
             {"name": "knownet.propose_finding", "description": "Draft and dry-run one parser-ready finding. Does not create records.", "inputSchema": TOOL_SCHEMAS["knownet.propose_finding"]},
             {"name": "knownet.propose_task", "description": "Return an operator-gated task proposal. Does not create or assign a task.", "inputSchema": TOOL_SCHEMAS["knownet.propose_task"]},
             {"name": "knownet.submit_implementation_evidence", "description": "Return an operator-gated implementation evidence proposal. Does not mark a finding implemented.", "inputSchema": TOOL_SCHEMAS["knownet.submit_implementation_evidence"]},
@@ -225,16 +120,6 @@ class KnowNetMcpServer:
 
     def resource_specs(self) -> list[dict[str, Any]]:
         return [
-            {"uri": "knownet://agent/onboarding", "name": "Agent onboarding", "mimeType": "application/json"},
-            {"uri": "knownet://agent/me", "name": "Current agent", "mimeType": "application/json"},
-            {"uri": "knownet://agent/state-summary", "name": "KnowNet state summary", "mimeType": "application/json"},
-            {"uri": "knownet://agent/ai-state", "name": "Structured AI state", "mimeType": "application/json"},
-            {"uri": "knownet://agent/pages", "name": "Scoped pages", "mimeType": "application/json"},
-            {"uri": "knownet://agent/pages/{page_id}", "name": "One scoped page", "mimeType": "application/json"},
-            {"uri": "knownet://agent/reviews", "name": "Collaboration reviews", "mimeType": "application/json"},
-            {"uri": "knownet://agent/findings", "name": "Collaboration findings", "mimeType": "application/json"},
-            {"uri": "knownet://agent/graph", "name": "Graph summary", "mimeType": "application/json"},
-            {"uri": "knownet://agent/citations", "name": "Citation audits", "mimeType": "application/json"},
             {"uri": "knownet://snapshot/overview", "name": "Snapshot overview", "mimeType": "application/json"},
             {"uri": "knownet://snapshot/stability", "name": "Snapshot stability", "mimeType": "application/json"},
             {"uri": "knownet://snapshot/performance", "name": "Snapshot performance", "mimeType": "application/json"},
@@ -247,24 +132,6 @@ class KnowNetMcpServer:
 
     def prompt_specs(self) -> list[dict[str, Any]]:
         return [
-            {
-                "name": "knownet_review_page",
-                "description": "Review one page and return findings in the fixed format.",
-                "arguments": [{"name": "page_id", "required": True, "description": "Page id to review."}],
-            },
-            {
-                "name": "knownet_review_findings",
-                "description": "Review existing findings and suggest decisions.",
-                "arguments": [{"name": "status", "required": False, "description": "Optional finding status filter."}],
-            },
-            {
-                "name": "knownet_prepare_external_review",
-                "description": "Guide an external AI through bounded context discovery and review submission.",
-                "arguments": [
-                    {"name": "focus", "required": False, "description": "Review focus."},
-                    {"name": "max_pages", "required": False, "description": "Maximum pages to inspect."},
-                ],
-            },
             {
                 "name": "knownet.compact_review",
                 "description": "Prepare a compact review using standard KnowNet MCP resources and proposal tools.",
@@ -375,115 +242,13 @@ class KnowNetMcpServer:
 
     def _call_validated_tool(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         table: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
-            "search": self._connector_search,
-            "fetch": self._connector_fetch,
-            "knownet_ping": lambda _: self._request("GET", "/api/agent/ping", auth=False),
-            "knownet_start_here": lambda _: self._request("GET", "/api/agent/onboarding"),
-            "knownet_me": lambda _: self._request("GET", "/api/agent/me"),
-            "knownet_state_summary": lambda _: self._request("GET", "/api/agent/state-summary"),
-            "knownet_ai_state": lambda a: self._request("GET", "/api/agent/ai-state", query={"limit": a["limit"], "offset": a["offset"]}),
-            "knownet_list_pages": lambda a: self._request("GET", "/api/agent/pages", query={"limit": a["limit"], "offset": a["offset"]}),
-            "knownet_read_page": lambda a: self._request("GET", f"/api/agent/pages/{urllib.parse.quote(a['page_id'])}"),
-            "knownet_list_reviews": lambda a: self._request("GET", "/api/agent/reviews", query={"limit": a["limit"], "offset": a["offset"]}),
-            "knownet_list_findings": lambda a: self._request("GET", "/api/agent/findings", query={"limit": a["limit"], "offset": a["offset"], "status": a.get("status")}),
-            "knownet_graph_summary": lambda a: self._request("GET", "/api/agent/graph", query={"limit": a["limit"]}),
-            "knownet_list_citations": lambda a: self._request("GET", "/api/agent/citations", query={"limit": a["limit"], "offset": a["offset"], "status": a.get("status")}),
-            "knownet_review_dry_run": lambda a: self._review(a, dry_run=True),
-            "knownet_submit_review": lambda a: self._review(a, dry_run=False),
             "knownet.propose_finding": self._propose_finding,
             "knownet.propose_task": self._propose_task,
             "knownet.submit_implementation_evidence": self._submit_implementation_evidence,
         }
         return table[name](args)
 
-    def _connector_search(self, args: dict[str, Any]) -> dict[str, Any]:
-        query = str(args["query"]).strip().lower()
-        onboarding = self._request("GET", "/api/agent/onboarding")
-        summary = self._request("GET", "/api/agent/state-summary")
-        pages = self._request("GET", "/api/agent/pages", query={"limit": 30, "offset": 0})
-        results: list[dict[str, Any]] = [
-            {
-                "id": "agent:onboarding",
-                "title": "KnowNet Agent Onboarding",
-                "url": "knownet://agent/onboarding",
-                "text": "Start here for external AI agents: workflow contract, allowed actions, forbidden actions, and review format.",
-            },
-            {
-                "id": "agent:state-summary",
-                "title": "KnowNet State Summary",
-                "url": "knownet://agent/state-summary",
-                "text": json.dumps(summary.get("data", {}), ensure_ascii=False)[:900],
-            },
-        ]
-        for page in pages.get("data", {}).get("pages", []):
-            haystack = f"{page.get('title', '')} {page.get('slug', '')}".lower()
-            if query in haystack or any(part and part in haystack for part in query.split()):
-                results.append(
-                    {
-                        "id": f"page:{page['id']}",
-                        "title": page.get("title") or page.get("slug") or page["id"],
-                        "url": f"knownet://agent/pages/{page['id']}",
-                        "text": f"Page slug={page.get('slug')} updated_at={page.get('updated_at')}",
-                    }
-                )
-        if not results[2:]:
-            for item in onboarding.get("data", {}).get("recommended_start_pages", [])[:5]:
-                if item.get("page_id"):
-                    results.append(
-                        {
-                            "id": f"page:{item['page_id']}",
-                            "title": item.get("title") or item["slug"],
-                            "url": f"knownet://agent/pages/{item['page_id']}",
-                            "text": item.get("reason") or "Recommended start page for external AI agents.",
-                        }
-                    )
-        return {"ok": True, "data": {"results": results[:10]}}
-
-    def _connector_fetch(self, args: dict[str, Any]) -> dict[str, Any]:
-        item_id = str(args["id"]).strip()
-        if item_id == "agent:onboarding":
-            payload = self._request("GET", "/api/agent/onboarding")
-            data = payload.get("data", {})
-            return {"ok": True, "data": {"id": item_id, "title": "KnowNet Agent Onboarding", "payload": data, "text": json.dumps(data, ensure_ascii=False)}}
-        if item_id == "agent:state-summary":
-            payload = self._request("GET", "/api/agent/state-summary")
-            data = payload.get("data", {})
-            return {"ok": True, "data": {"id": item_id, "title": "KnowNet State Summary", "payload": data, "text": json.dumps(data, ensure_ascii=False)}}
-        if item_id == "agent:ai-state":
-            payload = self._request("GET", "/api/agent/ai-state", query={"limit": 20, "offset": 0})
-            data = payload.get("data", {})
-            return {"ok": True, "data": {"id": item_id, "title": "KnowNet Structured AI State", "payload": data, "text": json.dumps(data, ensure_ascii=False)}}
-        if item_id.startswith("page:"):
-            page_id = item_id.removeprefix("page:")
-            payload = self._request("GET", f"/api/agent/pages/{urllib.parse.quote(page_id)}")
-            page = payload.get("data", {}).get("page", {})
-            return {"ok": True, "data": {"id": item_id, "title": page.get("title") or page_id, "text": page.get("content", ""), "url": f"knownet://agent/pages/{page_id}"}}
-        raise McpInputError(f"Unknown fetch id: {item_id}")
-
     def _read_resource(self, uri: str) -> dict[str, Any]:
-        if uri == "knownet://agent/onboarding":
-            return self._request("GET", "/api/agent/onboarding")
-        if uri == "knownet://agent/me":
-            return self._request("GET", "/api/agent/me")
-        if uri == "knownet://agent/state-summary":
-            return self._request("GET", "/api/agent/state-summary")
-        if uri == "knownet://agent/ai-state":
-            return self._with_next_offset(self._request("GET", "/api/agent/ai-state", query={"limit": 20, "offset": 0}), {"offset": 0})
-        if uri == "knownet://agent/pages":
-            return self._with_next_offset(self._request("GET", "/api/agent/pages", query={"limit": 20, "offset": 0}), {"offset": 0})
-        if uri.startswith("knownet://agent/pages/"):
-            page_id = uri.removeprefix("knownet://agent/pages/")
-            if not page_id:
-                raise McpInputError("page_id is required.")
-            return self._request("GET", f"/api/agent/pages/{urllib.parse.quote(page_id)}")
-        if uri == "knownet://agent/reviews":
-            return self._with_next_offset(self._request("GET", "/api/agent/reviews", query={"limit": 50, "offset": 0}), {"offset": 0})
-        if uri == "knownet://agent/findings":
-            return self._with_next_offset(self._request("GET", "/api/agent/findings", query={"limit": 100, "offset": 0}), {"offset": 0})
-        if uri == "knownet://agent/graph":
-            return self._request("GET", "/api/agent/graph", query={"limit": 200})
-        if uri == "knownet://agent/citations":
-            return self._with_next_offset(self._request("GET", "/api/agent/citations", query={"limit": 100, "offset": 0}), {"offset": 0})
         if uri.startswith("knownet://snapshot/"):
             profile = uri.removeprefix("knownet://snapshot/")
             return self._snapshot_resource(profile)
@@ -679,22 +444,6 @@ class KnowNetMcpServer:
         return {"code": detail.get("code", "knownet_error"), "message": detail.get("message", "KnowNet request failed.")}
 
     def _prompt_text(self, name: str, args: dict[str, Any]) -> str:
-        safety = (
-            "Use only scoped KnowNet MCP tools and resources. Do not request database files, local paths, "
-            "operator-only controls, raw tokens, sessions, users, backup archives, or secret-bearing data. Use bounded "
-            "list/read calls. Start with knownet_start_here. Run knownet_review_dry_run before knownet_submit_review."
-        )
-        if name == "knownet_review_page":
-            return (
-                f"{safety}\n\nReview page_id={args['page_id']}. Read that page through knownet_read_page, then produce findings in this exact format:\n\n"
-                + FINDING_FORMAT
-            )
-        if name == "knownet_review_findings":
-            status = args.get("status") or "any"
-            return (
-                f"{safety}\n\nReview existing findings with status={status}. Suggest accept, reject, defer, or needs_more_context decisions. "
-                "Ground every decision in scoped evidence returned by KnowNet."
-            )
         if name == "knownet.compact_review":
             focus = args.get("focus") or "highest-impact implementation and reliability risks"
             return (
@@ -720,13 +469,7 @@ class KnowNetMcpServer:
                 "Do not call providers live, request API keys, or run release_check.\n\n"
                 f"Provider target: {provider}"
             )
-        max_pages = args.get("max_pages", 5)
-        focus = args.get("focus") or "overall implementation quality"
-        return (
-            f"{safety}\n\nPrepare an external review focused on {focus}. Start with knownet_start_here, knownet_me, and knownet_state_summary, "
-            f"then inspect at most {max_pages} pages via bounded list/read calls. Draft findings in this format and dry-run them before final submission:\n\n"
-            + FINDING_FORMAT
-        )
+        raise McpInputError(f"Unknown prompt: {name}")
 
     def handle_jsonrpc(self, message: dict[str, Any]) -> dict[str, Any] | None:
         if not isinstance(message, dict) or message.get("jsonrpc") != "2.0" or not isinstance(message.get("method"), str):

@@ -12,5 +12,5 @@
       }
     }
   },
-  "recommended_first_prompt": "Use KnowNet MCP. Call knownet_start_here, knownet_me, knownet_state_summary, then dry-run any review before submission."
+  "recommended_first_prompt": "Use KnowNet MCP. Read knownet://snapshot/overview and knownet://finding/recent, then use knownet.propose_finding for any draft finding."
 }

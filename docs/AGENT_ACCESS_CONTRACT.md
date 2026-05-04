@@ -313,75 +313,45 @@ KNOWNET_AGENT_TOKEN=<token shown once by the operator dashboard>
 KNOWNET_MCP_TIMEOUT_SECONDS=30
 ```
 
-The MCP server exposes only these tools:
+The MCP server exposes only these standard proposal tools:
 
 ```txt
-search
-fetch
-knownet_ping
-knownet_start_here
-knownet_me
-knownet_state_summary
-knownet_ai_state
-knownet_list_pages
-knownet_read_page
-knownet_list_reviews
-knownet_list_findings
-knownet_graph_summary
-knownet_list_citations
-knownet_review_dry_run
-knownet_submit_review
+knownet.propose_finding
+knownet.propose_task
+knownet.submit_implementation_evidence
 ```
 
-`search` and `fetch` exist for ChatGPT connector compatibility. Full MCP
-clients should prefer the explicit `knownet_*` tools. Connector surfaces that do
-not show `knownet_*` tools should use `search` first, then `fetch` returned ids
-such as `agent:onboarding`, `agent:state-summary`, or `page:{page_id}`.
-
-State summary is intentionally available as both a tool and a resource:
-
-```txt
-knownet_state_summary
-knownet://agent/state-summary
-```
-
-They expose the same state through different MCP surfaces. Tool-capable clients
-should call `knownet_state_summary`. Resource-oriented clients should read the
-resource or use `fetch agent:state-summary`. GET-only clients can only use the
-safe HTTP preview exposed by the MCP HTTP bridge.
-
-No maintenance or admin tools are exposed.
+No maintenance, admin, raw database, shell, filesystem, backup, token, user,
+session, release-check, search, fetch, or `knownet_*` tool aliases are exposed.
 
 During MCP `initialize`, the server returns diagnostics for API reachability,
 agent token validity, token scopes, and token expiry. Treat diagnostics warnings
 as operator action items before starting long reviews.
 
-Phase 11 also exposes safe read-only resources:
+The MCP server exposes these standard resources:
 
 ```txt
-knownet://agent/me
-knownet://agent/onboarding
-knownet://agent/state-summary
-knownet://agent/ai-state
-knownet://agent/pages
-knownet://agent/pages/{page_id}
-knownet://agent/reviews
-knownet://agent/findings
-knownet://agent/graph
-knownet://agent/citations
+knownet://snapshot/overview
+knownet://snapshot/stability
+knownet://snapshot/performance
+knownet://snapshot/security
+knownet://snapshot/implementation
+knownet://snapshot/provider_review
+knownet://node/{slug_or_page_id}
+knownet://finding/recent
 ```
 
-And reusable prompts:
+The MCP server exposes these reusable prompts:
 
 ```txt
-knownet_review_page
-knownet_review_findings
-knownet_prepare_external_review
+knownet.compact_review
+knownet.implementation_candidate
+knownet.provider_risk_check
 ```
 
-Prompts instruct agents to use bounded reads and dry-run review submission
-before final import. They do not include token values, database paths, or
-maintenance controls.
+Prompts instruct agents to use bounded resources and operator-gated proposal
+tools. They do not include token values, database paths, or maintenance
+controls.
 
 ## Python SDK
 
