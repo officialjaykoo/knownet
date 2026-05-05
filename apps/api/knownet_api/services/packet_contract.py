@@ -18,6 +18,7 @@ PACKET_CONTRACT_SECTIONS = [
     "relevant_state",
     "hard_limits",
     "stale_context_suppression",
+    "node_card_contract",
     "output_contract",
     "import_contract",
     "task_template_contract",
@@ -151,6 +152,25 @@ MCP_PROMPT_CATALOG: list[dict[str, Any]] = [
 ]
 
 MCP_REFUSED_ACCESS = ["raw_db", "shell", "filesystem", "secrets", "backups", "sessions", "users", "tokens"]
+
+NODE_CARD_CONTRACT: dict[str, Any] = {
+    "purpose": "Give AI compact graph context without sending full page bodies.",
+    "read_rules": [
+        "Read short_summary first and treat it as the primary context.",
+        "Use detail_url only when the operator or MCP resource fetch provides scoped details.",
+        "Treat excerpt as optional supporting context; do not infer missing facts from absent excerpts.",
+    ],
+    "required_fields": ["id", "title", "type", "short_summary", "link", "detail_url", "provenance"],
+    "example": {
+        "id": "page_123",
+        "title": "Access Fallback Protocol",
+        "type": "protocol",
+        "short_summary": "Fallback steps for access-limited external AI review.",
+        "link": "/pages/access-fallback-protocol",
+        "detail_url": "/api/pages/access-fallback-protocol",
+        "provenance": {"source_type": "node_card", "source_id": "page_123"},
+    },
+}
 
 
 def mcp_contract_surface() -> dict[str, Any]:
@@ -327,6 +347,11 @@ def validate_packet_contract(contract: dict[str, Any]) -> list[str]:
             errors.append("stale_context_suppression_true_missing_fields")
     else:
         errors.append("stale_context_suppression_invalid_active")
+    node_card_contract = contract.get("node_card_contract")
+    if not isinstance(node_card_contract, dict):
+        errors.append("node_card_contract_missing")
+    elif not isinstance(node_card_contract.get("read_rules"), list) or not node_card_contract.get("read_rules"):
+        errors.append("node_card_contract_read_rules_missing")
     return errors
 
 
@@ -383,6 +408,7 @@ def build_packet_contract(
         "profile_hard_limits": profile_limits,
         "target_agent_overrides": target_agent_overrides or {},
         "stale_context_suppression": stale_context_suppression or explicit_stale_context_suppression(),
+        "node_card_contract": NODE_CARD_CONTRACT,
         "output_contract": output_contract(output_mode, mostly_context_limited=mostly_context_limited),
         "import_contract": {
             "dry_run_first": True,
@@ -420,6 +446,9 @@ def packet_contract_markdown(contract: dict[str, Any]) -> list[str]:
     if contract["stale_context_suppression"].get("active"):
         lines.append(f"- suppressed_before: {contract['stale_context_suppression'].get('suppressed_before')}")
         lines.append(f"- reason: {contract['stale_context_suppression'].get('reason')}")
+    lines.extend(["", "### Node Card Contract", ""])
+    for item in contract["node_card_contract"]["read_rules"]:
+        lines.append(f"- {item}")
     lines.extend(["", "### Output Contract", ""])
     lines.append(f"- max_findings: {contract['output_contract']['max_findings']}")
     lines.append(f"- description: {contract['output_contract']['description']}")

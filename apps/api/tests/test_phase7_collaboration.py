@@ -484,6 +484,8 @@ Add provider retry and alerting.
         assert overview_data["next_action_hints"]
         assert overview_data["issues"]
         assert overview_data["issues"][0]["action_template"]
+        assert overview_data["issues"][0]["action_input_schema"]["type"] == "object"
+        assert overview_data["issues"][0]["action_input_schema"]["additionalProperties"] is False
         assert overview_data["packet_summary"]["accepted_findings"][0]["detail_url"] == f"/api/collaboration/findings/{finding_id}"
         assert overview_data["packet_summary"]["finding_tasks"][0]["detail_url"].startswith("/api/collaboration/finding-tasks/")
         assert overview_data["node_cards"]
@@ -495,6 +497,8 @@ Add provider retry and alerting.
         assert "system_state_assertion" in boundaries["escalate_on"]
         assert len(boundaries["narrative"]) <= 3
         assert overview_data["contract"]["stale_context_suppression"] == {"active": False}
+        assert "short_summary first" in overview_data["contract"]["node_card_contract"]["read_rules"][0]
+        assert overview_data["contract"]["node_card_contract"]["example"]["detail_url"].startswith("/api/pages/")
         assert overview_data["contract"]["hard_limits"]["char_budget"] == 12000
         assert overview_data["contract_shape"]["valid"] is True
         assert "role_and_access_boundaries" in overview_data["contract_shape"]["sections"]

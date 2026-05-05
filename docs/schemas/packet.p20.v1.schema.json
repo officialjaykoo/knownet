@@ -198,6 +198,7 @@
         "capabilities",
         "role_and_access_boundaries",
         "stale_context_suppression",
+        "node_card_contract",
         "output_contract",
         "import_contract"
       ],
@@ -238,6 +239,9 @@
         },
         "stale_context_suppression": {
           "$ref": "#/$defs/stale_context_suppression"
+        },
+        "node_card_contract": {
+          "$ref": "#/$defs/node_card_contract"
         },
         "output_contract": {
           "type": "object"
@@ -454,9 +458,35 @@
         }
       ]
     },
+    "node_card_contract": {
+      "type": "object",
+      "required": ["purpose", "read_rules", "required_fields", "example"],
+      "properties": {
+        "purpose": {
+          "type": "string"
+        },
+        "read_rules": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "required_fields": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "example": {
+          "$ref": "#/$defs/node_card"
+        }
+      },
+      "additionalProperties": true
+    },
     "issue": {
       "type": "object",
-      "required": ["code", "action_template", "action_params"],
+      "required": ["code", "action_template", "action_params", "action_input_schema"],
       "properties": {
         "code": {
           "type": "string"
@@ -469,6 +499,31 @@
         },
         "action_params": {
           "type": "object"
+        },
+        "action_input_schema": {
+          "$ref": "#/$defs/action_input_schema"
+        }
+      },
+      "additionalProperties": true
+    },
+    "action_input_schema": {
+      "type": "object",
+      "required": ["type", "properties", "required", "additionalProperties"],
+      "properties": {
+        "type": {
+          "const": "object"
+        },
+        "properties": {
+          "type": "object"
+        },
+        "required": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": {
+          "const": false
         }
       },
       "additionalProperties": true

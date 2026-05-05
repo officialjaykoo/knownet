@@ -200,8 +200,42 @@ def packet_summary(
 def packet_issues(*, warnings: list[str], health: dict | None, quality: dict, preflight: dict, high_open_findings: int, provider_matrix: dict) -> list[dict[str, Any]]:
     issues: list[dict[str, Any]] = []
 
+    def param_schema(params: dict[str, Any]) -> dict[str, Any]:
+        properties: dict[str, Any] = {}
+        for key, value in params.items():
+            if isinstance(value, bool):
+                value_type = "boolean"
+            elif isinstance(value, int) and not isinstance(value, bool):
+                value_type = "integer"
+            elif isinstance(value, float):
+                value_type = "number"
+            elif isinstance(value, list):
+                value_type = "array"
+            elif isinstance(value, dict):
+                value_type = "object"
+            elif value is None:
+                value_type = "null"
+            else:
+                value_type = "string"
+            properties[key] = {"type": value_type}
+        return {
+            "type": "object",
+            "properties": properties,
+            "required": sorted(properties),
+            "additionalProperties": False,
+        }
+
     def add(code: str, action_template: str, action_params: dict[str, Any] | None = None, severity: str = "medium") -> None:
-        issues.append({"code": code, "severity": severity, "action_template": action_template, "action_params": action_params or {}})
+        params = action_params or {}
+        issues.append(
+            {
+                "code": code,
+                "severity": severity,
+                "action_template": action_template,
+                "action_params": params,
+                "action_input_schema": param_schema(params),
+            }
+        )
 
     if health and health.get("overall_status") not in {"ok", "expected_degraded"}:
         add("health.degraded", "inspect_health_issue", {"status": health.get("overall_status")})

@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     auth_lockout_seconds: int = 900
     data_dir: Path = REPO_ROOT / "data"
     sqlite_path: Path = REPO_ROOT / "data" / "knownet.db"
-    rust_core_path: Path = REPO_ROOT / "apps" / "core" / "target" / "debug" / "knownet-core.exe"
+    rust_core_path: Path = REPO_ROOT / ".local" / "cargo-target" / "debug" / "knownet-core.exe"
     sqlite_busy_timeout_ms: int = 5000
     sse_event_retention_hours: int = 24
     job_stale_after_seconds: int = 300

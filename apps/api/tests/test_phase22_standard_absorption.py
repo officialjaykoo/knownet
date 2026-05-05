@@ -93,6 +93,9 @@ def test_mcp_contract_uses_standard_method_uri_and_tool_names():
     assert any(item["name"] == "knownet.compact_review" for item in mcp["prompts"])
     assert "raw_db" in mcp["refused"]
     assert "mcp_style_boundary" not in contract
+    assert contract["node_card_contract"]["required_fields"]
+    assert "detail_url" in contract["node_card_contract"]["required_fields"]
+    assert "short_summary first" in contract["node_card_contract"]["read_rules"][0]
 
 
 def test_compact_provenance_and_node_cards_stay_safe():
