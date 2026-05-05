@@ -370,6 +370,7 @@ export default function HomePage() {
   const [releaseReadiness, setReleaseReadiness] = useState<ReleaseReadiness | null>(null);
   const [operatorBusyAction, setOperatorBusyAction] = useState<string | null>(null);
   const [projectSnapshotPacket, setProjectSnapshotPacket] = useState<ProjectSnapshotPacket | null>(null);
+  const [projectSnapshotTargetAgent, setProjectSnapshotTargetAgent] = useState("all");
   const [projectSnapshotProfile, setProjectSnapshotProfile] = useState("overview");
   const [projectSnapshotOutputMode, setProjectSnapshotOutputMode] = useState("top_findings");
   const [projectSnapshotFocus, setProjectSnapshotFocus] = useState("packet/snapshot standardization review");
@@ -932,7 +933,7 @@ export default function HomePage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             vault_id: vaultId,
-            target_agent: "codex",
+            target_agent: projectSnapshotTargetAgent === "all" ? "multi_ai" : projectSnapshotTargetAgent,
             profile: projectSnapshotProfile,
             output_mode: projectSnapshotOutputMode,
             since_packet_id: projectSnapshotSincePacketId.trim() || undefined,
@@ -954,6 +955,7 @@ export default function HomePage() {
   }
 
   function applyProjectSnapshotStandardizationPreset() {
+    setProjectSnapshotTargetAgent("all");
     setProjectSnapshotProfile("overview");
     setProjectSnapshotOutputMode("top_findings");
     setProjectSnapshotSincePacketId("");
@@ -970,6 +972,47 @@ export default function HomePage() {
       setStatus(`Copied project snapshot: ${projectSnapshotPacket.id}`);
     } catch {
       setStatus("Clipboard unavailable");
+    }
+  }
+
+  async function copyProjectSnapshotMultiAiPrompt() {
+    if (!projectSnapshotPacket) {
+      return;
+    }
+    const targetLabel = projectSnapshotTargetAgent === "all" ? "DeepSeek, Qwen, Kimi, MiniMax, GLM, Claude, or Codex" : projectSnapshotTargetAgent;
+    const targetRule =
+      projectSnapshotTargetAgent === "all"
+        ? "This prompt is intended to be pasted unchanged into multiple AI systems. Do not adapt the packet per model."
+        : `This prompt is intended for ${projectSnapshotTargetAgent}. Keep the answer tailored to that model's strengths but do not change the requested output shape.`;
+    const prompt = [
+      "You are reviewing KnowNet packet and snapshot standardization.",
+      `Target: ${targetLabel}.`,
+      targetRule,
+      "",
+      "Use the same packet below. Evaluate only from the supplied packet. Do not ask for raw DB, filesystem, shell, secrets, backups, sessions, users, or tokens.",
+      "",
+      "Return exactly:",
+      "1. Score out of 100",
+      "2. Is it enough for now, insufficient, or overbuilt?",
+      "3. Top 5 concrete changes only",
+      "4. What should NOT be changed next",
+      "5. Any standard/open-source pattern we should absorb instead of inventing",
+      "",
+      "Rules:",
+      "- Prefer lightweight standard shapes: JSON Schema, OpenAPI-style params, MCP terminology, W3C trace context.",
+      "- Focus on making external AI read faster, ask shorter questions, produce importable findings/tasks, and help Codex implement faster.",
+      "- Remove anything overbuilt for a small local-first project.",
+      "",
+      "KnowNet packet:",
+      "```text",
+      projectSnapshotPacket.content,
+      "```",
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setStatus("Copied multi-AI prompt");
+    } catch {
+      setStatus("Copy failed");
     }
   }
 
@@ -1551,6 +1594,7 @@ export default function HomePage() {
             canOperate={canOperate}
             operatorBusyAction={operatorBusyAction}
             projectSnapshotPacket={projectSnapshotPacket}
+            projectSnapshotTargetAgent={projectSnapshotTargetAgent}
             projectSnapshotProfile={projectSnapshotProfile}
             projectSnapshotOutputMode={projectSnapshotOutputMode}
             projectSnapshotFocus={projectSnapshotFocus}
@@ -1565,6 +1609,8 @@ export default function HomePage() {
             experimentImportedReviewId={experimentImportedReviewId}
             onGenerateProjectSnapshotPacket={generateProjectSnapshotPacket}
             onCopyProjectSnapshotPacket={copyProjectSnapshotPacket}
+            onCopyProjectSnapshotMultiAiPrompt={copyProjectSnapshotMultiAiPrompt}
+            onProjectSnapshotTargetAgentChange={setProjectSnapshotTargetAgent}
             onProjectSnapshotProfileChange={setProjectSnapshotProfile}
             onProjectSnapshotOutputModeChange={setProjectSnapshotOutputMode}
             onProjectSnapshotFocusChange={setProjectSnapshotFocus}

@@ -6,6 +6,7 @@ type AIPacketsWorkspaceProps = {
   canOperate: boolean;
   operatorBusyAction: string | null;
   projectSnapshotPacket: any;
+  projectSnapshotTargetAgent: string;
   projectSnapshotProfile: string;
   projectSnapshotOutputMode: string;
   projectSnapshotFocus: string;
@@ -20,6 +21,8 @@ type AIPacketsWorkspaceProps = {
   experimentImportedReviewId: string | null;
   onGenerateProjectSnapshotPacket: () => void;
   onCopyProjectSnapshotPacket: () => void;
+  onCopyProjectSnapshotMultiAiPrompt: () => void;
+  onProjectSnapshotTargetAgentChange: (value: string) => void;
   onProjectSnapshotProfileChange: (value: string) => void;
   onProjectSnapshotOutputModeChange: (value: string) => void;
   onProjectSnapshotFocusChange: (value: string) => void;
@@ -40,6 +43,7 @@ export function AIPacketsWorkspace({
   canOperate,
   operatorBusyAction,
   projectSnapshotPacket,
+  projectSnapshotTargetAgent,
   projectSnapshotProfile,
   projectSnapshotOutputMode,
   projectSnapshotFocus,
@@ -54,6 +58,8 @@ export function AIPacketsWorkspace({
   experimentImportedReviewId,
   onGenerateProjectSnapshotPacket,
   onCopyProjectSnapshotPacket,
+  onCopyProjectSnapshotMultiAiPrompt,
+  onProjectSnapshotTargetAgentChange,
   onProjectSnapshotProfileChange,
   onProjectSnapshotOutputModeChange,
   onProjectSnapshotFocusChange,
@@ -95,6 +101,10 @@ export function AIPacketsWorkspace({
                 <Clipboard aria-hidden size={15} />
                 Copy
               </button>
+              <button onClick={onCopyProjectSnapshotMultiAiPrompt} type="button">
+                <Clipboard aria-hidden size={15} />
+                Copy multi-AI prompt
+              </button>
             </div>
           </div>
           <div className="experiment-packet-preview">
@@ -125,6 +135,19 @@ export function AIPacketsWorkspace({
           </div>
         </div>
         <div className="experiment-packet-form">
+          <label>
+            <span>Target</span>
+            <select onChange={(event) => onProjectSnapshotTargetAgentChange(event.target.value)} value={projectSnapshotTargetAgent}>
+              <option value="all">all</option>
+              <option value="deepseek">deepseek</option>
+              <option value="qwen">qwen</option>
+              <option value="kimi">kimi</option>
+              <option value="minimax">minimax</option>
+              <option value="glm">glm</option>
+              <option value="claude">claude</option>
+              <option value="codex">codex</option>
+            </select>
+          </label>
           <label>
             <span>Profile</span>
             <select onChange={(event) => onProjectSnapshotProfileChange(event.target.value)} value={projectSnapshotProfile}>
