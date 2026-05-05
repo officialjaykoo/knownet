@@ -29,7 +29,9 @@ function Remove-GeneratedPath($RelativePath) {
 $targets = @(
   ".pytest_cache",
   "apps/api/.pytest_cache",
+  "apps/api/knownet_api.egg-info",
   "packages/knownet-agent-py/.pytest_cache",
+  "packages/knownet-agent-py/knownet_agent.egg-info",
   "apps/web/.next",
   "data/experiment-packets",
   "data/project-snapshot-packets"
