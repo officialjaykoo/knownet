@@ -372,6 +372,7 @@ export default function HomePage() {
   const [projectSnapshotPacket, setProjectSnapshotPacket] = useState<ProjectSnapshotPacket | null>(null);
   const [projectSnapshotProfile, setProjectSnapshotProfile] = useState("overview");
   const [projectSnapshotOutputMode, setProjectSnapshotOutputMode] = useState("top_findings");
+  const [projectSnapshotFocus, setProjectSnapshotFocus] = useState("packet/snapshot standardization review");
   const [projectSnapshotSincePacketId, setProjectSnapshotSincePacketId] = useState("");
   const [projectSnapshotQualityAcknowledged, setProjectSnapshotQualityAcknowledged] = useState(false);
   const [experimentPacket, setExperimentPacket] = useState<ExperimentPacket | null>(null);
@@ -937,7 +938,7 @@ export default function HomePage() {
             since_packet_id: projectSnapshotSincePacketId.trim() || undefined,
             allow_since_packet_fallback: false,
             quality_acknowledged: projectSnapshotQualityAcknowledged,
-            focus: "Read this KnowNet project state, identify the highest-leverage next action, and avoid release_check unless release verification is explicitly requested.",
+            focus: projectSnapshotFocus.trim() || "Read this KnowNet project state, identify the highest-leverage next action, and avoid release_check unless release verification is explicitly requested.",
           }),
         },
         sessionToken,
@@ -1544,6 +1545,7 @@ export default function HomePage() {
             projectSnapshotPacket={projectSnapshotPacket}
             projectSnapshotProfile={projectSnapshotProfile}
             projectSnapshotOutputMode={projectSnapshotOutputMode}
+            projectSnapshotFocus={projectSnapshotFocus}
             projectSnapshotSincePacketId={projectSnapshotSincePacketId}
             projectSnapshotQualityAcknowledged={projectSnapshotQualityAcknowledged}
             experimentPacket={experimentPacket}
@@ -1557,6 +1559,7 @@ export default function HomePage() {
             onCopyProjectSnapshotPacket={copyProjectSnapshotPacket}
             onProjectSnapshotProfileChange={setProjectSnapshotProfile}
             onProjectSnapshotOutputModeChange={setProjectSnapshotOutputMode}
+            onProjectSnapshotFocusChange={setProjectSnapshotFocus}
             onProjectSnapshotSincePacketIdChange={setProjectSnapshotSincePacketId}
             onProjectSnapshotQualityAcknowledgedChange={setProjectSnapshotQualityAcknowledged}
             onGenerateExperimentPacket={generateExperimentPacket}

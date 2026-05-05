@@ -8,6 +8,7 @@ type AIPacketsWorkspaceProps = {
   projectSnapshotPacket: any;
   projectSnapshotProfile: string;
   projectSnapshotOutputMode: string;
+  projectSnapshotFocus: string;
   projectSnapshotSincePacketId: string;
   projectSnapshotQualityAcknowledged: boolean;
   experimentPacket: any;
@@ -21,6 +22,7 @@ type AIPacketsWorkspaceProps = {
   onCopyProjectSnapshotPacket: () => void;
   onProjectSnapshotProfileChange: (value: string) => void;
   onProjectSnapshotOutputModeChange: (value: string) => void;
+  onProjectSnapshotFocusChange: (value: string) => void;
   onProjectSnapshotSincePacketIdChange: (value: string) => void;
   onProjectSnapshotQualityAcknowledgedChange: (value: boolean) => void;
   onGenerateExperimentPacket: () => void;
@@ -39,6 +41,7 @@ export function AIPacketsWorkspace({
   projectSnapshotPacket,
   projectSnapshotProfile,
   projectSnapshotOutputMode,
+  projectSnapshotFocus,
   projectSnapshotSincePacketId,
   projectSnapshotQualityAcknowledged,
   experimentPacket,
@@ -52,6 +55,7 @@ export function AIPacketsWorkspace({
   onCopyProjectSnapshotPacket,
   onProjectSnapshotProfileChange,
   onProjectSnapshotOutputModeChange,
+  onProjectSnapshotFocusChange,
   onProjectSnapshotSincePacketIdChange,
   onProjectSnapshotQualityAcknowledgedChange,
   onGenerateExperimentPacket,
@@ -139,6 +143,13 @@ export function AIPacketsWorkspace({
               <option value="provider_risk_check">provider_risk_check</option>
             </select>
           </label>
+          <label>
+            <span>Focus</span>
+            <textarea onChange={(event) => onProjectSnapshotFocusChange(event.target.value)} rows={2} value={projectSnapshotFocus} />
+          </label>
+          <button onClick={() => onProjectSnapshotFocusChange("packet/snapshot standardization review")} type="button">
+            Standardization focus
+          </button>
           <label>
             <span>Since packet</span>
             <input onChange={(event) => onProjectSnapshotSincePacketIdChange(event.target.value)} placeholder="snapshot_..." value={projectSnapshotSincePacketId} />
