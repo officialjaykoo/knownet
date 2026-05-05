@@ -5,7 +5,7 @@ This runbook covers the local-first MVP operations path.
 ## First Install And Run
 
 1. Build the Rust daemon from `apps/core` with `cargo build`.
-2. Install API dependencies in `apps/api/.venv`.
+2. Install API dependencies in `.local/venvs/api`.
 3. Install web dependencies in `apps/web` with `npm install`.
 4. Start API on `127.0.0.1:8000`.
 5. Start web on `127.0.0.1:3000`.

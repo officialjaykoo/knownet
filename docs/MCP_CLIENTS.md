@@ -70,7 +70,7 @@ Example stdio configuration:
 {
   "mcpServers": {
     "knownet": {
-      "command": "C:\\knownet\\apps\\api\\.venv\\Scripts\\python.exe",
+      "command": "C:\\knownet\\.local\\venvs\\api\\Scripts\\python.exe",
       "args": ["C:\\knownet\\apps\\mcp\\knownet_mcp\\server.py"],
       "env": {
         "KNOWNET_BASE_URL": "http://127.0.0.1:8000",
@@ -110,7 +110,7 @@ For a local stdio agent runner, start:
 ```powershell
 $env:KNOWNET_BASE_URL="http://127.0.0.1:8000"
 $env:KNOWNET_AGENT_TOKEN="<token shown once by the operator dashboard>"
-apps/api/.venv/Scripts/python.exe apps/mcp/knownet_mcp/server.py
+.local/venvs/api/Scripts/python.exe apps/mcp/knownet_mcp/server.py
 ```
 
 The process speaks JSON-RPC over stdin/stdout. Logs are written to stderr.
@@ -131,7 +131,7 @@ To verify that a stdio client can initialize and list the standard surface:
 ```powershell
 $env:KNOWNET_BASE_URL="http://127.0.0.1:8000"
 $env:KNOWNET_AGENT_TOKEN="<token shown once by the operator dashboard>"
-apps/api/.venv/Scripts/python.exe apps/mcp/scripts/mcp_stdio_smoke.py
+.local/venvs/api/Scripts/python.exe apps/mcp/scripts/mcp_stdio_smoke.py
 ```
 
 This smoke test does not submit reviews. It checks `initialize`, `tools/list`,
@@ -146,7 +146,7 @@ window. Revoke the temporary agent token immediately after the test.
 $env:KNOWNET_BASE_URL="http://127.0.0.1:8000"
 $env:KNOWNET_AGENT_TOKEN="<short-lived token>"
 $env:KNOWNET_MCP_HTTP_PORT="8010"
-apps/api/.venv/Scripts/python.exe -m knownet_mcp.http_bridge
+.local/venvs/api/Scripts/python.exe -m knownet_mcp.http_bridge
 cloudflared tunnel --url http://127.0.0.1:8010
 ```
 

@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "knownet": {
-      "command": "C:\\knownet\\apps\\api\\.venv\\Scripts\\python.exe",
+      "command": "C:\\knownet\\.local\\venvs\\api\\Scripts\\python.exe",
       "args": [
         "C:\\knownet\\apps\\mcp\\knownet_mcp\\server.py"
       ],

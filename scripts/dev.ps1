@@ -5,11 +5,12 @@ param(
 )
 $ErrorActionPreference = "Stop"
 
-$Root = Split-Path -Parent $PSScriptRoot
-$ApiDir = Join-Path $Root "apps/api"
-$CoreDir = Join-Path $Root "apps/core"
-$WebDir = Join-Path $Root "apps/web"
-$VenvPython = Join-Path $ApiDir ".venv/Scripts/python.exe"
+. (Join-Path $PSScriptRoot "local_paths.ps1")
+$Root = $KnownetRoot
+$ApiDir = $KnownetApiDir
+$CoreDir = $KnownetCoreDir
+$WebDir = $KnownetWebDir
+$VenvPython = $KnownetApiVenvPython
 $RunDir = Join-Path $Root "data/tmp/dev"
 $LogDir = Join-Path $Root "data/logs/dev"
 
@@ -129,9 +130,8 @@ Pop-Location
 
 Step "Preparing API virtual environment"
 if (-not (Test-Path $VenvPython)) {
-  Push-Location $ApiDir
-  python -m venv .venv
-  Pop-Location
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $KnownetApiVenvDir) | Out-Null
+  python -m venv $KnownetApiVenvDir
 }
 
 Push-Location $ApiDir

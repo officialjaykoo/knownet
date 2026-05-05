@@ -31,7 +31,7 @@ Start the local development stack:
 .\scripts\dev.ps1
 ```
 
-This builds the Rust daemon, creates `apps/api/.venv` when needed, installs API
+This builds the Rust daemon, creates `.local/venvs/api` when needed, installs API
 and web dependencies, then starts:
 
 - API: `http://127.0.0.1:8000`
@@ -57,6 +57,12 @@ The fast loop runs the default API pytest selection with `--lf -q`, so it skips
 slow restore/import flows and smoke tests during normal coding.
 `release_check.ps1` still runs fast API tests, slow operational tests, smoke
 tests, Rust tests, npm audit, and the web build before a push or release.
+
+Local generated files live outside source folders where practical. The API
+virtualenv is under `.local/venvs/api`; Cargo build output is under
+`.local/cargo-target`; Next and npm generated folders remain tool-standard
+ignored directories and can be removed with
+`.\scripts\clean_generated.ps1`. See [Local Layout](./docs/LOCAL_LAYOUT.md).
 
 If Rust rebuild fails with `access denied`, stop running API/Rust processes and
 run the command again. `knownet-core.exe` cannot be replaced while it is running.

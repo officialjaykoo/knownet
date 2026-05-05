@@ -1,10 +1,11 @@
 $ErrorActionPreference = "Stop"
 
-$Root = Split-Path -Parent $PSScriptRoot
-$ApiDir = Join-Path $Root "apps/api"
-$CoreDir = Join-Path $Root "apps/core"
-$WebDir = Join-Path $Root "apps/web"
-$VenvPython = Join-Path $ApiDir ".venv/Scripts/python.exe"
+. (Join-Path $PSScriptRoot "local_paths.ps1")
+$Root = $KnownetRoot
+$ApiDir = $KnownetApiDir
+$CoreDir = $KnownetCoreDir
+$WebDir = $KnownetWebDir
+$VenvPython = $KnownetApiVenvPython
 $EvidencePath = Join-Path $Root "docs/RELEASE_EVIDENCE.md"
 
 function Step($Message) {
@@ -53,7 +54,7 @@ Pop-Location
 
 Step "API tests"
 if (-not (Test-Path $VenvPython)) {
-  throw "API virtualenv not found at apps/api/.venv. Run scripts/dev.ps1 first."
+  throw "API virtualenv not found at .local/venvs/api. Run scripts/dev.ps1 first."
 }
 Push-Location $ApiDir
 & $VenvPython -m pytest -m "not slow and not smoke"
