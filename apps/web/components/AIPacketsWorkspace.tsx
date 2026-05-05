@@ -23,6 +23,7 @@ type AIPacketsWorkspaceProps = {
   onProjectSnapshotProfileChange: (value: string) => void;
   onProjectSnapshotOutputModeChange: (value: string) => void;
   onProjectSnapshotFocusChange: (value: string) => void;
+  onApplyProjectSnapshotStandardizationPreset: () => void;
   onProjectSnapshotSincePacketIdChange: (value: string) => void;
   onProjectSnapshotQualityAcknowledgedChange: (value: boolean) => void;
   onGenerateExperimentPacket: () => void;
@@ -56,6 +57,7 @@ export function AIPacketsWorkspace({
   onProjectSnapshotProfileChange,
   onProjectSnapshotOutputModeChange,
   onProjectSnapshotFocusChange,
+  onApplyProjectSnapshotStandardizationPreset,
   onProjectSnapshotSincePacketIdChange,
   onProjectSnapshotQualityAcknowledgedChange,
   onGenerateExperimentPacket,
@@ -147,7 +149,7 @@ export function AIPacketsWorkspace({
             <span>Focus</span>
             <textarea onChange={(event) => onProjectSnapshotFocusChange(event.target.value)} rows={2} value={projectSnapshotFocus} />
           </label>
-          <button onClick={() => onProjectSnapshotFocusChange("packet/snapshot standardization review")} type="button">
+          <button onClick={onApplyProjectSnapshotStandardizationPreset} type="button">
             Standardization focus
           </button>
           <label>

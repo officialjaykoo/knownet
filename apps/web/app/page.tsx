@@ -953,6 +953,14 @@ export default function HomePage() {
     }
   }
 
+  function applyProjectSnapshotStandardizationPreset() {
+    setProjectSnapshotProfile("overview");
+    setProjectSnapshotOutputMode("top_findings");
+    setProjectSnapshotSincePacketId("");
+    setProjectSnapshotFocus("Review packet/snapshot standardization. Score sufficiency, list only top 5 concrete changes, and avoid overbuilt platform work.");
+    setStatus("Project packet preset applied");
+  }
+
   async function copyProjectSnapshotPacket() {
     if (!projectSnapshotPacket) {
       return;
@@ -1560,6 +1568,7 @@ export default function HomePage() {
             onProjectSnapshotProfileChange={setProjectSnapshotProfile}
             onProjectSnapshotOutputModeChange={setProjectSnapshotOutputMode}
             onProjectSnapshotFocusChange={setProjectSnapshotFocus}
+            onApplyProjectSnapshotStandardizationPreset={applyProjectSnapshotStandardizationPreset}
             onProjectSnapshotSincePacketIdChange={setProjectSnapshotSincePacketId}
             onProjectSnapshotQualityAcknowledgedChange={setProjectSnapshotQualityAcknowledged}
             onGenerateExperimentPacket={generateExperimentPacket}
