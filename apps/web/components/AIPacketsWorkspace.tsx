@@ -75,6 +75,12 @@ export function AIPacketsWorkspace({
   onDryRunExperimentResponse,
   onImportExperimentResponse,
 }: AIPacketsWorkspaceProps) {
+  const projectPacketDisabledReason = !canOperate
+    ? "Owner/admin login required"
+    : operatorBusyAction === "project-snapshot"
+      ? "Project packet generation is already running"
+      : "";
+
   return (
     <section className="ai-packets-workspace" aria-label="AI Packets">
       <div className="workspace-dashboard-head">
@@ -83,12 +89,22 @@ export function AIPacketsWorkspace({
           <h2>External AI Handoff</h2>
         </div>
         <div className="operator-actions">
-          <button disabled={!canOperate || operatorBusyAction === "project-snapshot"} onClick={onGenerateProjectSnapshotPacket} type="button">
+          <button
+            disabled={Boolean(projectPacketDisabledReason)}
+            onClick={onGenerateProjectSnapshotPacket}
+            title={projectPacketDisabledReason || "Generate a standard project snapshot packet"}
+            type="button"
+          >
             <FileText aria-hidden size={15} />
             {operatorBusyAction === "project-snapshot" ? "Snapshotting" : "Project packet"}
           </button>
         </div>
       </div>
+      {projectPacketDisabledReason && operatorBusyAction !== "project-snapshot" ? (
+        <div className="model-run-stats warning-stats">
+          <span>{projectPacketDisabledReason}</span>
+        </div>
+      ) : null}
       {projectSnapshotPacket ? (
         <section className="experiment-packet-panel">
           <div className="operator-panel-head">

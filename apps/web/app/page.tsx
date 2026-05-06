@@ -741,8 +741,8 @@ export default function HomePage() {
   }, [activeJobId]);
 
   const canWrite = !actor || ["owner", "admin", "editor"].includes(actor.role);
-  const canOperate = !actor || ["owner", "admin"].includes(actor.role);
-  const canManageAgents = !actor || ["owner", "admin"].includes(actor.role);
+  const canOperate = Boolean(actor && ["owner", "admin"].includes(actor.role));
+  const canManageAgents = Boolean(actor && ["owner", "admin"].includes(actor.role));
 
   async function rebuildGraph() {
     if (!canOperate) {
