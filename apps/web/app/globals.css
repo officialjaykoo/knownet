@@ -947,12 +947,13 @@ h1 {
   position: sticky;
   top: 0;
   z-index: 30;
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 3px;
   max-width: 1120px;
   margin: -8px 0 20px;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: rgba(246, 247, 251, 0.94);
@@ -966,8 +967,11 @@ h1 {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-height: 36px;
-  min-width: 0;
+  flex: 0 0 172px;
+  width: 172px;
+  min-height: 40px;
+  max-height: 40px;
+  min-width: 172px;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -977,6 +981,9 @@ h1 {
   font-weight: 850;
   padding: 8px 11px;
   box-shadow: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .workspace-tabs button.active {
@@ -2158,10 +2165,6 @@ h1 {
   .workspace-tabs {
     position: static;
     margin-top: 0;
-  }
-
-  .workspace-tabs {
-    grid-template-columns: 1fr 1fr;
   }
 
   .ai-reviews-grid {
