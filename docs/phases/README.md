@@ -17,4 +17,7 @@ PHASE_22_TASKS.md - standard absorption
 PHASE_23_TASKS.md - Standard MCP baseline:
   standard KnowNet MCP resource URIs, proposal-only tools, prompt names, and
   tests that keep raw/admin surfaces out.
+PHASE_24_TASKS.md - lightweight SQLite FTS5 page search:
+  page-level `pages_fts`, rebuild endpoint, FTS-first keyword search, and
+  compact health/packet search status without adding a search server.
 ```
