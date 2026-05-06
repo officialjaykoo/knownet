@@ -170,7 +170,12 @@ export function AIPacketsWorkspace({
           </label>
           <label>
             <span>Focus</span>
-            <textarea onChange={(event) => onProjectSnapshotFocusChange(event.target.value)} rows={2} value={projectSnapshotFocus} />
+            <textarea
+              onChange={(event) => onProjectSnapshotFocusChange(event.target.value)}
+              placeholder="Optional. Leave empty to use the profile default."
+              rows={2}
+              value={projectSnapshotFocus}
+            />
           </label>
           <button onClick={onApplyProjectSnapshotStandardizationPreset} type="button">
             Standardization focus

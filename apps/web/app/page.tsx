@@ -373,7 +373,7 @@ export default function HomePage() {
   const [projectSnapshotTargetAgent, setProjectSnapshotTargetAgent] = useState("all");
   const [projectSnapshotProfile, setProjectSnapshotProfile] = useState("overview");
   const [projectSnapshotOutputMode, setProjectSnapshotOutputMode] = useState("top_findings");
-  const [projectSnapshotFocus, setProjectSnapshotFocus] = useState("packet/snapshot standardization review");
+  const [projectSnapshotFocus, setProjectSnapshotFocus] = useState("");
   const [projectSnapshotSincePacketId, setProjectSnapshotSincePacketId] = useState("");
   const [projectSnapshotQualityAcknowledged, setProjectSnapshotQualityAcknowledged] = useState(false);
   const [experimentPacket, setExperimentPacket] = useState<ExperimentPacket | null>(null);
