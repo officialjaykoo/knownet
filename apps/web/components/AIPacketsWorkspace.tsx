@@ -130,13 +130,13 @@ export function AIPacketsWorkspace({
       <section className="experiment-packet-panel">
         <div className="operator-panel-head">
           <div>
-            <h3>Project Snapshot Profile</h3>
-            <small>Profile-specific packet context and P19 contract controls</small>
+            <h3>Snapshot Packet Builder</h3>
+            <small>Choose how the standard AI packet is shaped before copying it to external models</small>
           </div>
         </div>
         <div className="experiment-packet-form">
           <label>
-            <span>Target</span>
+            <span>AI Target</span>
             <select onChange={(event) => onProjectSnapshotTargetAgentChange(event.target.value)} value={projectSnapshotTargetAgent}>
               <option value="all">all</option>
               <option value="deepseek">deepseek</option>
@@ -149,7 +149,7 @@ export function AIPacketsWorkspace({
             </select>
           </label>
           <label>
-            <span>Profile</span>
+            <span>Snapshot Profile</span>
             <select onChange={(event) => onProjectSnapshotProfileChange(event.target.value)} value={projectSnapshotProfile}>
               <option value="overview">overview</option>
               <option value="stability">stability</option>
@@ -160,7 +160,7 @@ export function AIPacketsWorkspace({
             </select>
           </label>
           <label>
-            <span>Output mode</span>
+            <span>Response Format</span>
             <select onChange={(event) => onProjectSnapshotOutputModeChange(event.target.value)} value={projectSnapshotOutputMode}>
               <option value="top_findings">top_findings</option>
               <option value="decision_only">decision_only</option>
@@ -169,7 +169,7 @@ export function AIPacketsWorkspace({
             </select>
           </label>
           <label>
-            <span>Focus</span>
+            <span>Review Question</span>
             <textarea
               onChange={(event) => onProjectSnapshotFocusChange(event.target.value)}
               placeholder="Optional. Leave empty to use the profile default."
@@ -181,7 +181,7 @@ export function AIPacketsWorkspace({
             Standardization focus
           </button>
           <label>
-            <span>Since packet</span>
+            <span>Delta From Packet</span>
             <input onChange={(event) => onProjectSnapshotSincePacketIdChange(event.target.value)} placeholder="snapshot_..." value={projectSnapshotSincePacketId} />
           </label>
           <label className="inline-toggle">
