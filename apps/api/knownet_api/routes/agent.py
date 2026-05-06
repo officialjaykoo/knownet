@@ -237,15 +237,41 @@ async def _start_here_status(request: Request, agent: AgentAuth) -> dict:
 async def _onboarding_payload(request: Request, agent: AgentAuth) -> dict:
     status = await _start_here_status(request, agent)
     allowed_actions, unavailable_actions = _action_hints(agent)
+    recommended_pages = await _recommended_start_pages(request, agent.vault_id)
+    contract_sources = [
+        {
+            "page_id": page.get("page_id"),
+            "slug": page.get("slug"),
+            "title": page.get("title"),
+            "content_hash": page.get("content_hash"),
+            "updated_at": page.get("updated_at"),
+            "snapshot_id": None,
+        }
+        for page in recommended_pages[:20]
+    ]
     return {
         "purpose": "/api/agent/onboarding is the external-agent workflow contract. /api/agent/me is only the current token status snapshot.",
+        "agent_contract": {
+            "contract_version": "knownet.agent.v1",
+            "access_mode": "snapshot",
+            "agent": {"name": agent.agent_name, "model": agent.agent_model},
+            "limits": {"max_pages": agent.max_pages_per_request, "max_chars": agent.max_chars_per_request},
+            "sources": contract_sources,
+            "entrypoints": {
+                "mcp_resource": "knownet://snapshot/overview",
+                "mcp_prompt": "knownet.compact_review",
+                "mcp_tool": "knownet.propose_finding",
+            },
+            "forbidden": ONBOARDING_FORBIDDEN_ACTIONS,
+            "evidence_quality_default": "context_limited",
+        },
         "start_here_hint": status["hint"],
         "start_here_hint_legend": {
             "recommended": "The token has not recently called onboarding. Read the start pages first.",
             "available": "The token recently called onboarding. Start pages remain available as reference.",
         },
         "start_here_status": status,
-        "recommended_start_pages": await _recommended_start_pages(request, agent.vault_id),
+        "recommended_start_pages": recommended_pages,
         "allowed_actions": allowed_actions,
         "unavailable_actions": unavailable_actions,
         "forbidden_actions": ONBOARDING_FORBIDDEN_ACTIONS,

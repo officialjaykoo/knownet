@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import re
 from typing import Any
 
-
-FORBIDDEN_PROVENANCE_RE = re.compile(
-    r"(?i)([A-Z]:[\\/]|\.env|\.db|backups[\\/]|sessions?[\\/]|users?[\\/]|token|secret|password|api[_-]?key)"
-)
+from .ignore_policy import forbidden_text_reason
 
 
 def compact_provenance(
@@ -38,7 +34,6 @@ def compact_provenance(
 def validate_provenance_safe(provenance: dict[str, Any]) -> list[str]:
     errors: list[str] = []
     for key, value in provenance.items():
-        if isinstance(value, str) and FORBIDDEN_PROVENANCE_RE.search(value):
+        if isinstance(value, str) and forbidden_text_reason(value):
             errors.append(f"provenance_forbidden_value:{key}")
     return errors
-

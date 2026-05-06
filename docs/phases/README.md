@@ -20,4 +20,8 @@ PHASE_23_TASKS.md - Standard MCP baseline:
 PHASE_24_TASKS.md - lightweight SQLite FTS5 page search:
   page-level `pages_fts`, rebuild endpoint, FTS-first keyword search, and
   compact health/packet search status without adding a search server.
+PHASE_25_TASKS.md - verification, ignore policy, and agent contract:
+  verify FTS, centralize forbidden path/secret policy, expose
+  `knownet.agent.v1`, align packet source manifests, and add snapshot integrity
+  smoke checks without redesigning the DB.
 ```

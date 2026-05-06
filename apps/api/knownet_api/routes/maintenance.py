@@ -20,7 +20,7 @@ from ..config import REPO_ROOT
 from ..db.sqlite import execute, fetch_all, fetch_one
 from ..paths import PAGE_DIR_NAME, page_storage_dir
 from ..security import Actor, require_admin_access, utc_now
-from ..services.search_index import rebuild_pages_fts, search_index_status
+from ..services.search_index import rebuild_pages_fts, search_index_status, verify_pages_fts
 from ..status import operation_failure_status
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
@@ -267,6 +267,12 @@ async def rebuild_fts(request: Request, actor: Actor = Depends(require_admin_acc
     return {"ok": True, "data": result}
 
 
+@router.get("/search/verify-fts")
+async def verify_fts(request: Request, actor: Actor = Depends(require_admin_access)):
+    result = await verify_pages_fts(request.app.state.settings.sqlite_path)
+    return {"ok": True, "data": result}
+
+
 @router.get("/snapshots")
 async def list_snapshots(request: Request, actor: Actor = Depends(require_admin_access)):
     backup_dir = request.app.state.settings.data_dir / "backups"
@@ -399,6 +405,69 @@ def _inspect_snapshot(snapshot_path: Path) -> dict[str, Any]:
     }
 
 
+def _verify_snapshot_archive(snapshot_path: Path, tmp_dir: Path) -> dict[str, Any]:
+    issues: list[dict[str, Any]] = []
+    verify_dir = tmp_dir / f"snapshot-verify-{uuid4().hex[:12]}"
+    verify_dir.mkdir(parents=True, exist_ok=True)
+    manifest: dict[str, Any] = {}
+    try:
+        with tarfile.open(snapshot_path, "r:gz") as archive:
+            members = archive.getmembers()
+            member_names = {member.name.replace("\\", "/") for member in members if member.isfile()}
+            for member in members:
+                try:
+                    _validate_tar_member(member)
+                except HTTPException:
+                    issues.append({"code": "snapshot_unsafe_member", "path": member.name})
+            if issues:
+                return {"status": "invalid", "issues": issues}
+            manifest_member = archive.extractfile("knownet-snapshot.json")
+            if not manifest_member:
+                issues.append({"code": "snapshot_manifest_missing"})
+                return {"status": "invalid", "issues": issues}
+            manifest = json.loads(manifest_member.read().decode("utf-8"))
+            if manifest.get("kind") != "knownet.snapshot" or manifest.get("schema_version") != 1:
+                issues.append({"code": "snapshot_manifest_unsupported"})
+            archive.extractall(verify_dir)
+            for arcname, expected_hash in (manifest.get("sha256") or {}).items():
+                path = verify_dir / Path(arcname)
+                if arcname not in member_names or not path.exists():
+                    issues.append({"code": "snapshot_file_missing", "path": arcname})
+                    continue
+                if _sha256_bytes(path.read_bytes()) != expected_hash:
+                    issues.append({"code": "snapshot_hash_mismatch", "path": arcname})
+            db_path = verify_dir / "data" / "knownet.db"
+            if not db_path.exists():
+                issues.append({"code": "snapshot_db_missing"})
+            else:
+                connection = sqlite3.connect(db_path)
+                try:
+                    result = connection.execute("PRAGMA integrity_check").fetchone()
+                    if not result or result[0] != "ok":
+                        issues.append({"code": "snapshot_db_integrity_failed", "result": result[0] if result else None})
+                finally:
+                    connection.close()
+            manifest_page_count = len([name for name in (manifest.get("sha256") or {}) if name.startswith("data/pages/") and name.endswith(".md")])
+            archive_page_count = len([name for name in member_names if name.startswith("data/pages/") and name.endswith(".md")])
+            if manifest_page_count != archive_page_count:
+                issues.append({"code": "snapshot_page_count_mismatch", "manifest_pages": manifest_page_count, "archive_pages": archive_page_count})
+    except Exception as error:
+        issues.append({"code": "snapshot_verify_failed", "error": str(error)})
+    finally:
+        if verify_dir.exists():
+            rmtree(verify_dir, ignore_errors=True)
+    return {
+        "status": "valid" if not issues else "invalid",
+        "issues": issues,
+        "manifest": {
+            "kind": manifest.get("kind"),
+            "schema_version": manifest.get("schema_version"),
+            "created_at": manifest.get("created_at"),
+            "included_files": manifest.get("included_files"),
+        },
+    }
+
+
 def _move_current_data_to_backup(data_dir: Path, sqlite_path: Path, backup_dir: Path) -> dict[str, Any]:
     backup_dir.mkdir(parents=True, exist_ok=True)
     moved: list[str] = []
@@ -523,6 +592,14 @@ async def restore_plan(snapshot_name: str, request: Request, actor: Actor = Depe
         "Do not restore while another maintenance lock is active.",
     ]
     return {"ok": True, "data": plan}
+
+
+@router.get("/snapshots/{snapshot_name}/verify")
+async def verify_snapshot(snapshot_name: str, request: Request, actor: Actor = Depends(require_admin_access)):
+    settings = request.app.state.settings
+    snapshot_path = _safe_snapshot_path(settings.data_dir / "backups", snapshot_name)
+    result = _verify_snapshot_archive(snapshot_path, settings.data_dir / "tmp")
+    return {"ok": True, "data": result}
 
 
 @router.post("/embedding/prefetch-plan")
@@ -866,6 +943,9 @@ async def verify_index(request: Request, actor: Actor = Depends(require_admin_ac
                 issues.append({"code": "agent_token_invalid_scope_json", "token_id": row["id"]})
             if row["expires_at"] and row["expires_at"] <= now and not row["revoked_at"]:
                 issues.append({"code": "agent_token_expired_cleanup_candidate", "token_id": row["id"]})
+
+    fts_result = await verify_pages_fts(settings.sqlite_path)
+    issues.extend(fts_result.get("issues") or [])
 
     stale_patterns = ("Markdown" + "-first",)
     scan_paths = [

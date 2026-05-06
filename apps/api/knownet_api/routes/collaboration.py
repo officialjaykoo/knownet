@@ -84,6 +84,7 @@ from ..services.project_snapshot import (
     packet_issues,
     packet_summary,
     profile_hard_limits,
+    source_manifest,
     project_snapshot_focus,
     snapshot_diff_summary,
     snapshot_self_test,
@@ -1255,14 +1256,18 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
         placeholders = ",".join("?" for _ in delta_page_ids)
         node_rows = await fetch_all(
             settings.sqlite_path,
-            f"SELECT p.id, p.slug, p.title, sp.kind AS system_kind FROM pages p LEFT JOIN system_pages sp ON sp.page_id = p.id WHERE p.vault_id = ? AND p.id IN ({placeholders})",
+            f"SELECT p.id, p.slug, p.title, p.updated_at, a.content_hash, sp.kind AS system_kind "
+            f"FROM pages p LEFT JOIN system_pages sp ON sp.page_id = p.id "
+            f"LEFT JOIN ai_state_pages a ON a.page_id = p.id "
+            f"WHERE p.vault_id = ? AND p.id IN ({placeholders})",
             (payload.vault_id, *delta_page_ids),
         )
     else:
         node_rows = await fetch_all(
             settings.sqlite_path,
-            "SELECT p.id, p.slug, p.title, sp.kind AS system_kind "
+            "SELECT p.id, p.slug, p.title, p.updated_at, a.content_hash, sp.kind AS system_kind "
             "FROM pages p LEFT JOIN system_pages sp ON sp.page_id = p.id "
+            "LEFT JOIN ai_state_pages a ON a.page_id = p.id "
             "WHERE p.vault_id = ? AND p.status = 'active' "
             "ORDER BY p.updated_at DESC LIMIT 5",
             (payload.vault_id,),
@@ -1280,6 +1285,7 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
     pre_hints = next_action_hints(important, pre_issues)
     packet_id = f"snapshot_{uuid4().hex[:12]}"
     generated_at = utc_now()
+    packet_source_manifest = source_manifest(snapshot_node_cards, generated_at=generated_at)
     trace_payload = packet_trace(
         trace_id=packet_id,
         name="knownet.project_snapshot_packet",
@@ -1355,6 +1361,10 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
     sections.extend(["", "## Node Cards", ""])
     sections.append("```json")
     sections.append(json.dumps(snapshot_node_cards, ensure_ascii=False, indent=2))
+    sections.append("```")
+    sections.extend(["", "## Source Manifest", ""])
+    sections.append("```json")
+    sections.append(json.dumps(packet_source_manifest, ensure_ascii=False, indent=2))
     sections.append("```")
     sections.extend(["", "## Snapshot Diff Summary", ""])
     for item in diff_summary:
@@ -1475,6 +1485,7 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
                     "finding_tasks": task_rows,
                     "model_runs": run_rows,
                     "node_cards": snapshot_node_cards,
+                    "source_manifest": packet_source_manifest,
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -1602,6 +1613,7 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
             "issues": issues,
             "packet_summary": summary_payload,
             "node_cards": snapshot_node_cards,
+            "source_manifest": packet_source_manifest,
             "profile": profile,
             "output_mode": output_mode,
             "effective_focus": focus,

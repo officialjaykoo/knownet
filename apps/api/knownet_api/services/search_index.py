@@ -150,6 +150,32 @@ async def rebuild_pages_fts(sqlite_path: Path, data_dir: Path) -> dict[str, Any]
     }
 
 
+async def verify_pages_fts(sqlite_path: Path) -> dict[str, Any]:
+    status = await search_index_status(sqlite_path)
+    if status.get("fts") == "unavailable":
+        return {"ok": False, "status": status, "issues": [{"code": "fts_unavailable", "reason": status.get("reason")}], "summary": {"missing": 0, "orphaned": 0}}
+    missing = await fetch_all(
+        sqlite_path,
+        "SELECT p.id, p.slug FROM pages p LEFT JOIN pages_fts f ON f.page_id = p.id "
+        "WHERE p.status = 'active' AND f.page_id IS NULL ORDER BY p.slug LIMIT 100",
+        (),
+    )
+    orphaned = await fetch_all(
+        sqlite_path,
+        "SELECT f.page_id, f.slug FROM pages_fts f LEFT JOIN pages p ON p.id = f.page_id "
+        "WHERE p.id IS NULL OR p.status != 'active' ORDER BY f.slug LIMIT 100",
+        (),
+    )
+    issues = [{"code": "fts_page_missing", "page_id": row["id"], "slug": row["slug"]} for row in missing]
+    issues.extend({"code": "fts_page_orphaned", "page_id": row["page_id"], "slug": row["slug"]} for row in orphaned)
+    return {
+        "ok": not issues,
+        "status": status,
+        "issues": issues,
+        "summary": {"missing": len(missing), "orphaned": len(orphaned), "indexed_pages": status.get("indexed_pages", 0)},
+    }
+
+
 async def sync_page_fts(
     sqlite_path: Path,
     *,

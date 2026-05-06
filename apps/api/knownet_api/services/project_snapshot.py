@@ -303,11 +303,29 @@ def node_card(row: dict[str, Any], *, short_summary: str | None = None) -> dict[
         "type": row.get("system_kind") or "page",
         "slug": row.get("slug"),
         "short_summary": (short_summary or row.get("short_summary") or "").strip()[:280],
+        "content_hash": row.get("content_hash"),
         "link": f"/pages/{row.get('slug')}" if row.get("slug") else None,
         "detail_url": detail_url("page", row.get("slug")),
         "provenance": provenance,
         "provenance_warnings": errors,
     }
+
+
+def source_manifest(node_cards: list[dict[str, Any]], *, generated_at: str) -> dict[str, Any]:
+    sources = []
+    for card in node_cards:
+        sources.append(
+            {
+                "id": card.get("id"),
+                "type": card.get("type") or "page",
+                "slug": card.get("slug"),
+                "title": card.get("title"),
+                "content_hash": card.get("content_hash"),
+                "updated_at": (card.get("provenance") or {}).get("updated_at"),
+                "links": {"detail": {"href": card.get("detail_url")}},
+            }
+        )
+    return {"id": f"manifest:{generated_at}", "type": "source_manifest", "generated_at": generated_at, "sources": sources}
 
 
 def action_route(row: dict[str, Any]) -> str:

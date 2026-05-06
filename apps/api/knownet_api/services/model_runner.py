@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Protocol
@@ -14,21 +13,8 @@ from ..db.sqlite import fetch_all, fetch_one
 from .model_output import _dedupe_key
 from .packet_contract import PACKET_CONTRACT_VERSION, PACKET_PROTOCOL_VERSION, PACKET_SCHEMA_REF, build_packet_contract, contract_shape, explicit_stale_context_suppression, packet_trace, validate_packet_contract, validate_packet_schema_core
 from .project_snapshot import finding_summary, node_card
+from .ignore_policy import assert_safe_json_keys, assert_safe_text
 from ..security import utc_now
-
-
-SECRET_ASSIGNMENT_RE = re.compile(r"^\s*(ADMIN_TOKEN|OPENAI_API_KEY|GEMINI_API_KEY|DEEPSEEK_API_KEY|MINIMAX_API_KEY|KIMI_API_KEY|MOONSHOT_API_KEY|GLM_API_KEY|ZAI_API_KEY|Z_AI_API_KEY|API_KEY|SECRET|PASSWORD)\s*=", re.IGNORECASE)
-LOCAL_PATH_RE = re.compile(r"(?i)\b[A-Z]:[\\/][^\s\"']+")
-FORBIDDEN_TEXT_MARKERS = (
-    "token_hash",
-    "raw_token",
-    ".env",
-    ".db",
-    "backups/",
-    "backups\\",
-    "inbox/",
-    "inbox\\",
-)
 
 
 class ModelProviderAdapter(Protocol):
@@ -55,31 +41,7 @@ def _json_dumps(value: Any) -> str:
 
 
 def _reject_forbidden_text(text: str, *, label: str) -> None:
-    for line_number, line in enumerate(text.splitlines(), start=1):
-        stripped = line.lstrip()
-        if stripped.startswith("#"):
-            continue
-        if SECRET_ASSIGNMENT_RE.match(line):
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "model_context_secret_detected",
-                    "message": "Secret assignment detected in model context",
-                    "details": {"label": label, "line": line_number},
-                },
-            )
-    lowered = text.lower()
-    for marker in FORBIDDEN_TEXT_MARKERS:
-        if marker in lowered:
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "model_context_secret_detected", "message": "Forbidden marker detected in model context", "details": {"label": label, "marker": marker}},
-            )
-    if LOCAL_PATH_RE.search(text):
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "model_context_path_detected", "message": "Local filesystem path detected in model context", "details": {"label": label}},
-        )
+    assert_safe_text(text, code="model_context_secret_detected", message="Forbidden marker detected in model context", label=label)
 
 
 def sanitize_for_model(value: Any, *, label: str = "context") -> Any:
@@ -89,11 +51,7 @@ def sanitize_for_model(value: Any, *, label: str = "context") -> Any:
             key_text = str(key).lower()
             if key_text in {"source_path", "path", "token_hash", "raw_token", "password_hash", "session_meta", "ip_hash", "user_agent_hash"}:
                 continue
-            if any(part in key_text for part in ("secret", "password", "token", "api_key")):
-                raise HTTPException(
-                    status_code=422,
-                    detail={"code": "model_context_secret_detected", "message": "Forbidden JSON key detected in model context", "details": {"label": f"{label}.{key}"}},
-                )
+            assert_safe_json_keys({key: None}, code="model_context_secret_detected", message="Forbidden JSON key detected in model context", label=label)
             sanitized[str(key)] = sanitize_for_model(child, label=f"{label}.{key}")
         return sanitized
     if isinstance(value, list):
