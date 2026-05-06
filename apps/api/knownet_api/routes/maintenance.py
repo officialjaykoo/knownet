@@ -20,6 +20,7 @@ from ..config import REPO_ROOT
 from ..db.sqlite import execute, fetch_all, fetch_one
 from ..paths import PAGE_DIR_NAME, page_storage_dir
 from ..security import Actor, require_admin_access, utc_now
+from ..services.search_index import rebuild_pages_fts, search_index_status
 from ..status import operation_failure_status
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
@@ -244,6 +245,26 @@ async def _column_exists(sqlite_path: Path, table: str, column: str) -> bool:
 @router.get("/embedding/status")
 async def embedding_status(request: Request):
     return {"ok": True, "data": request.app.state.embedding_service.health()}
+
+
+@router.get("/search/fts-status")
+async def fts_status(request: Request):
+    return {"ok": True, "data": await search_index_status(request.app.state.settings.sqlite_path)}
+
+
+@router.post("/search/rebuild-fts")
+async def rebuild_fts(request: Request, actor: Actor = Depends(require_admin_access)):
+    settings = request.app.state.settings
+    result = await rebuild_pages_fts(settings.sqlite_path, settings.data_dir)
+    await write_audit_event(
+        settings.sqlite_path,
+        action="maintenance.search.rebuild_fts",
+        actor=actor,
+        target_type="search_index",
+        target_id="pages_fts",
+        metadata=result,
+    )
+    return {"ok": True, "data": result}
 
 
 @router.get("/snapshots")

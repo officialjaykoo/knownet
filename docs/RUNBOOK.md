@@ -213,6 +213,19 @@ Use `snapshot_diff_summary` to understand why the delta matters, and
 intentionally deferred work. `snapshot_self_test` should be `pass` before a
 packet is trusted for a model comparison experiment.
 
+Search uses SQLite FTS5 when `search.fts` is `ready`; otherwise KnowNet falls
+back to indexed LIKE plus Markdown scan. Rebuild the lightweight page index with:
+
+```txt
+POST /api/maintenance/search/rebuild-fts
+```
+
+Check compact search status with:
+
+```txt
+GET /api/maintenance/search/fts-status
+```
+
 Use the Operator Console's External AI Packet panel to generate a copy-ready
 Claude/Codex prompt. The packet keeps KnowNet nodes as source material while
 embedding only the selected core context into the outbound prompt.

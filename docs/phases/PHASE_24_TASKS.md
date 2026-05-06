@@ -1,7 +1,8 @@
 # Phase 24 Tasks: Lightweight SQLite FTS5 Search
 
-Status: planned
+Status: implemented in the codebase on 2026-05-06
 Created: 2026-05-06
+Implemented: 2026-05-06
 
 Phase 24 adds a small SQLite FTS5 index for page-level keyword search. This is
 not a new search product and not a vector-search phase. It exists to remove the
@@ -22,6 +23,24 @@ Reference patterns absorbed:
 - Use `MATCH` and `bm25()` for ranked page search.
 - Keep a rebuild path so the index can be recreated from canonical pages.
 - Keep deterministic fallback behavior when FTS is unavailable.
+
+Implemented surface:
+
+```txt
+1. `pages_fts` and `search_index_meta` are created for new databases.
+2. `knownet_api.services.search_index` owns FTS5 availability checks, schema
+   creation, rebuild, status, and best-effort page sync.
+3. `POST /api/maintenance/search/rebuild-fts` rebuilds page-level FTS from
+   active Markdown pages.
+4. `GET /api/maintenance/search/fts-status`, `/health`, and `/health/summary`
+   expose compact FTS status.
+5. `/api/search` tries FTS first, then indexed LIKE plus Markdown fallback.
+6. Page create, suggestion apply, revision restore, tombstone, and recover paths
+   best-effort sync `pages_fts`.
+7. Performance snapshot packets include compact `search_index_status`.
+8. Tests cover rebuild, FTS search, fallback, tombstone removal, health status,
+   semantic fallback, and existing packet/model/MCP behavior.
+```
 
 ## Fixed Rules
 
@@ -87,6 +106,10 @@ Done when:
 - Startup or health can detect whether FTS5 is available.
 - Tests cover the unavailable path without throwing 500s.
 
+Implementation status: completed. Startup creates the schema through
+`ensure_search_schema`, health exposes FTS status, and tests verify graceful
+fallback behavior.
+
 ## P24-002 Rebuild FTS Index
 
 Problem:
@@ -121,6 +144,10 @@ Done when:
 - Missing Markdown files are skipped with a warning count, not a crash.
 - The endpoint is admin-only.
 
+Implementation status: completed. The admin-only rebuild endpoint clears and
+rebuilds `pages_fts` from active pages and returns indexed/skipped/failed
+counts plus compact search status.
+
 ## P24-003 Page Write Path Sync
 
 Problem:
@@ -148,6 +175,10 @@ Done when:
 - Updating a page updates FTS results without a manual rebuild.
 - Deactivating/removing a page removes it from FTS results.
 - Tests cover create/update/remove sync.
+
+Implementation status: completed. The normal page create/apply/restore/recover
+paths sync FTS best-effort, and tombstone paths remove pages from FTS. FTS
+errors are returned as status metadata instead of blocking canonical writes.
 
 ## P24-004 FTS-First Keyword Search
 
@@ -191,6 +222,10 @@ Done when:
 - Bad FTS syntax falls back gracefully.
 - Existing integration tests continue to pass.
 
+Implementation status: completed. `/api/search` reports `search_source`,
+`fallback`, and `fallback_reason`; invalid or empty FTS queries fall back
+without 500s.
+
 ## P24-005 Health, Snapshot, And Packet Signals
 
 Problem:
@@ -227,6 +262,9 @@ Done when:
 - Performance profile packets can tell an external AI whether FTS is ready.
 - Health explains degraded search without requiring a full release check.
 
+Implementation status: completed. Health and project snapshot packets include
+compact search status without per-page dumps.
+
 ## P24-006 Tests And Acceptance
 
 Targeted tests:
@@ -252,6 +290,8 @@ Acceptance:
 5. Rebuild is admin-only and bounded.
 6. Search status is visible to health/snapshots without bloating packets.
 ```
+
+Implementation status: completed. Targeted API and MCP tests pass.
 
 ## Later, Not Phase 24
 

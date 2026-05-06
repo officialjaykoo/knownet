@@ -1413,6 +1413,7 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
         sections.extend(["", "## Performance Signals", ""])
         sections.append(f"- provider_matrix: {_json_line(matrix.get('summary', {}))}")
         sections.append(f"- sampled_model_runs: {len(run_rows)}")
+        sections.append(f"- search_index_status: {_json_line((health or {}).get('search') or {})}")
     if _profile_allows(profile, "security_signals"):
         sections.extend(["", "## Security Signals", ""])
         sections.append(f"- public_mode: {settings.public_mode}")
@@ -1459,6 +1460,7 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
                     "ai_state_quality": {"overall_status": quality.get("overall_status"), "summary": quality.get("summary", {})},
                     "release_summary": release_summary,
                     "provider_matrix": matrix.get("summary", {}),
+                    "search_index_status": (health or {}).get("search"),
                     "preflight": preflight,
                     "delta": _standard_delta(delta),
                     "since_packet": dict(since_packet) if since_packet else None,

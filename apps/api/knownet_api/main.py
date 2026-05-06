@@ -33,6 +33,7 @@ from .services.citation_titles import backfill_citation_display_titles
 from .services.job_processor import JobProcessor
 from .services.model_runner_store import ensure_model_runner_schema
 from .services.rust_core import RustCoreClient
+from .services.search_index import ensure_search_schema, search_index_status
 from .services.source_selector import SourceSelector
 from .services.system_pages import ensure_system_pages_schema, register_managed_seed_pages, register_onboarding_pages
 
@@ -46,12 +47,12 @@ HEALTH_ISSUE_DEFINITIONS = {
     "sqlite.unavailable": {
         "severity": "action_required",
         "description": "SQLite initialization did not complete successfully.",
-        "action": "Check API startup logs and run the migration endpoint after fixing the database path.",
+        "action": "Check API startup logs, restore a snapshot, or reset/rebuild the local database after fixing the path.",
     },
     "sqlite.missing": {
         "severity": "action_required",
         "description": "The configured SQLite database file is missing.",
-        "action": "Restore from a snapshot, run migration, or rebuild from Markdown if no snapshot exists.",
+        "action": "Restore from a snapshot or rebuild from Markdown if no snapshot exists.",
     },
     "security.public_without_admin_token": {
         "severity": "action_required",
@@ -87,6 +88,11 @@ HEALTH_ISSUE_DEFINITIONS = {
         "severity": "expected_degraded",
         "description": "Local embeddings are not loaded; keyword search and deterministic fallbacks still work.",
         "action": "Load embeddings only if semantic search is needed.",
+    },
+    "search.fts_unavailable": {
+        "severity": "expected_degraded",
+        "description": "SQLite FTS5 is unavailable; keyword search falls back to indexed LIKE and Markdown scan.",
+        "action": "Use the rebuild-fts endpoint after confirming the SQLite runtime supports FTS5.",
     },
     "graph.stale": {
         "severity": "warning",
@@ -144,6 +150,7 @@ async def lifespan(app: FastAPI):
         await ensure_system_pages_schema(settings.sqlite_path)
         await ensure_collaboration_schema(settings.sqlite_path)
         await ensure_model_runner_schema(settings.sqlite_path)
+        await ensure_search_schema(settings.sqlite_path)
         await register_onboarding_pages(settings.sqlite_path)
         await register_managed_seed_pages(settings.sqlite_path)
         app.state.sqlite_status = "ok"
@@ -300,6 +307,9 @@ async def _health_payload() -> dict:
     embedding_health = embedding.health() if embedding else {"status": "unknown"}
     if embedding_health.get("status") != "ready":
         issues.append("embedding.unavailable")
+    search_status = await search_index_status(settings.sqlite_path) if settings.sqlite_path.exists() else {"fts": "unavailable", "indexed_pages": 0, "fallback": "like_markdown_scan", "reason": "sqlite_missing"}
+    if search_status.get("fts") == "unavailable":
+        issues.append("search.fts_unavailable")
     graph_stale = bool(getattr(app.state, "graph_rebuilds", set()))
     if graph_stale:
         issues.append("graph.stale")
@@ -329,6 +339,7 @@ async def _health_payload() -> dict:
             "latest_snapshot_age_hours": latest_age,
         },
         "embedding": embedding_health,
+        "search": search_status,
         "maintenance": {"active_lock": lock},
         "overall_status": overall,
         "issues": issues,
@@ -348,4 +359,4 @@ async def health():
 @app.get("/health/summary")
 async def health_summary():
     data = await _health_payload()
-    return {"ok": True, "data": {"overall_status": data["overall_status"], "issues": data["issues"], "issue_details": data["issue_details"], "checked_at": data["checked_at"]}}
+    return {"ok": True, "data": {"overall_status": data["overall_status"], "issues": data["issues"], "issue_details": data["issue_details"], "search": data["search"], "checked_at": data["checked_at"]}}

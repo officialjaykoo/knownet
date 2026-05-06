@@ -13,6 +13,7 @@ from ..paths import page_storage_dir
 from ..security import Actor, enforce_write_rate_limit, ensure_length, require_admin_access, require_write_access
 from ..services.citation_titles import backfill_citation_display_titles
 from ..services.rust_core import RustCoreError
+from ..services.search_index import remove_page_fts, sync_page_fts
 from ..services.system_pages import raise_if_system_page_locked, system_fields
 from ..status import operation_failure_status
 
@@ -331,6 +332,16 @@ async def create_page(
         vault_id=actor.vault_id,
         now=now,
     )
+    markdown = Path(page_path).read_text(encoding="utf-8") if Path(page_path).exists() else ""
+    fts_status = await sync_page_fts(
+        settings.sqlite_path,
+        page_id=page_id,
+        vault_id=actor.vault_id,
+        title=title,
+        slug=slug,
+        body=markdown,
+        active=True,
+    )
     await write_audit_event(
         settings.sqlite_path,
         action="page.created",
@@ -338,7 +349,7 @@ async def create_page(
         target_type="page",
         target_id=page_id,
         after_revision_id=revision_id,
-        metadata={"slug": slug, "path": page_path, "index_status": index_status, "graph_rebuild": graph_rebuild},
+        metadata={"slug": slug, "path": page_path, "index_status": index_status, "graph_rebuild": graph_rebuild, "fts_status": fts_status},
     )
     return {
         "ok": True,
@@ -349,6 +360,7 @@ async def create_page(
             "revision_id": created["revision_id"],
             "index_status": index_status,
             "graph_rebuild": graph_rebuild,
+            "fts_status": fts_status,
         },
     }
 
@@ -429,6 +441,7 @@ async def tombstone_page(
             target_id=_page_id_from_slug(slug),
             metadata={"slug": slug, "path": tombstone_path, "orphan_file": True},
         )
+        await remove_page_fts(settings.sqlite_path, _page_id_from_slug(slug))
         return {"ok": True, "data": {"slug": slug, "status": "tombstone", "path": tombstone_path, "orphan_file": True}}
     try:
         result = await request.app.state.rust_core.request(
@@ -451,6 +464,7 @@ async def tombstone_page(
         target_id=page_row["id"],
         metadata={"slug": slug, "path": result["path"]},
     )
+    result["fts_status"] = await remove_page_fts(settings.sqlite_path, page_row["id"])
     await request.app.state.rust_core.request(
         "rebuild_graph_for_page",
         {
@@ -495,6 +509,17 @@ async def recover_page(
         target_id=page_row["id"],
         metadata={"slug": slug, "path": result["path"]},
     )
+    recovered_row = await fetch_one(settings.sqlite_path, "SELECT id, vault_id, title, slug, path, status FROM pages WHERE slug = ?", (slug,))
+    if recovered_row and Path(result["path"]).exists():
+        result["fts_status"] = await sync_page_fts(
+            settings.sqlite_path,
+            page_id=recovered_row["id"],
+            vault_id=recovered_row.get("vault_id") or actor.vault_id,
+            title=recovered_row["title"],
+            slug=recovered_row["slug"],
+            body=Path(result["path"]).read_text(encoding="utf-8"),
+            active=recovered_row["status"] == "active",
+        )
     return {"ok": True, "data": result}
 
 
@@ -553,6 +578,17 @@ async def restore_revision(
             },
         )
         await backfill_citation_display_titles(settings.sqlite_path)
+        restored_row = await fetch_one(settings.sqlite_path, "SELECT id, vault_id, title, slug, status FROM pages WHERE slug = ?", (slug,))
+        if restored_row and Path(result["path"]).exists():
+            result["fts_status"] = await sync_page_fts(
+                settings.sqlite_path,
+                page_id=restored_row["id"],
+                vault_id=restored_row.get("vault_id") or actor.vault_id,
+                title=restored_row["title"],
+                slug=restored_row["slug"],
+                body=Path(result["path"]).read_text(encoding="utf-8"),
+                active=restored_row["status"] == "active",
+            )
         await rust.request(
             "rebuild_graph_for_page",
             {

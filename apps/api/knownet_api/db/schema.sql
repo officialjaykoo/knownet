@@ -485,6 +485,21 @@ CREATE TABLE IF NOT EXISTS system_pages (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS search_index_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
+  page_id UNINDEXED,
+  vault_id UNINDEXED,
+  title,
+  slug,
+  body,
+  tokenize = 'unicode61'
+);
+
 CREATE INDEX IF NOT EXISTS idx_system_pages_kind
   ON system_pages(kind, tier, locked);
 

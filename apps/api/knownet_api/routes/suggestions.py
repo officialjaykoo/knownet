@@ -18,6 +18,7 @@ from ..security import (
 )
 from ..services.rust_core import RustCoreError
 from ..services.citation_titles import backfill_citation_display_titles
+from ..services.search_index import sync_page_fts
 from ..services.system_pages import raise_if_system_page_locked
 
 router = APIRouter(prefix="/api/suggestions", tags=["suggestions"])
@@ -192,6 +193,16 @@ async def apply_suggestion(
         await backfill_citation_display_titles(settings.sqlite_path)
         page_id = _page_id_from_slug(result["slug"])
         markdown = Path(result["path"]).read_text(encoding="utf-8")
+        page_row = await fetch_one(settings.sqlite_path, "SELECT id, vault_id, title, slug, status FROM pages WHERE id = ?", (page_id,))
+        result["fts_status"] = await sync_page_fts(
+            settings.sqlite_path,
+            page_id=page_id,
+            vault_id=(page_row or {}).get("vault_id") or actor.vault_id,
+            title=(page_row or {}).get("title") or row["title"],
+            slug=result["slug"],
+            body=markdown,
+            active=(page_row or {}).get("status", "active") == "active",
+        )
         result["citation_verification"] = await request.app.state.citation_verifier.verify_page(
             page_id=page_id,
             revision_id=result["revision_id"],
@@ -240,6 +251,7 @@ async def apply_suggestion(
                 "suggestion_id": suggestion_id,
                 "slug": result["slug"],
                 "path": result["path"],
+                "fts_status": result.get("fts_status"),
                 "embedding": result.get("embedding"),
                 "citation_verification": result.get("citation_verification"),
                 "citation_audit": result.get("citation_audit"),
