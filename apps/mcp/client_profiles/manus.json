@@ -7,7 +7,7 @@
     "https://github.com/kyopark2014/mcp-manus"
   ],
   "best_paid_path": "Manus Custom MCP Server or Custom API over protected HTTPS gateway.",
-  "realistic_free_path": "GET preview only unless Custom MCP/API setup is available.",
+  "realistic_free_path": "Copy-ready packet only unless Custom MCP/API setup is available.",
   "implemented_surface": "apps/mcp/configs/manus_custom_mcp.example.json",
   "test_status": "custom_mcp_config_ready_unverified",
   "requires_paid_or_external_setup": true,

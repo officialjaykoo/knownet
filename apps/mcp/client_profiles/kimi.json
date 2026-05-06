@@ -5,7 +5,7 @@
     "https://github.com/MoonshotAI/kimi-cli"
   ],
   "best_paid_path": "Kimi API runner for reviews, or Kimi Code CLI with KnowNet MCP over stdio or HTTP.",
-  "realistic_free_path": "Kimi web chat GET preview; Kimi CLI if installed.",
+  "realistic_free_path": "Kimi web chat with a copy-ready project snapshot packet; Kimi CLI if installed.",
   "implemented_surface": "POST /api/model-runs/kimi/reviews and apps/mcp/configs/kimi_mcp.example.json",
   "test_status": "api_runner_mock_ready_mcp_config_template_ready_unverified",
   "requires_paid_or_external_setup": true,

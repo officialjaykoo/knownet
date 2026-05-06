@@ -258,8 +258,9 @@ async def _onboarding_payload(request: Request, agent: AgentAuth) -> dict:
         "infrastructure_notice": INFRASTRUCTURE_NOTICE,
         "entrypoints": {
             "api": "/api/agent/onboarding",
-            "mcp_tool": "knownet_start_here",
-            "mcp_resource": "knownet://agent/onboarding",
+            "mcp_resource": "knownet://snapshot/overview",
+            "mcp_prompt": "knownet.compact_review",
+            "mcp_tool": "knownet.propose_finding",
             "sdk_method": "client.start_here()",
         },
         "setup_docs": {

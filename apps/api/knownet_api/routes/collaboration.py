@@ -282,7 +282,7 @@ async def ensure_collaboration_schema(sqlite_path: Path) -> None:
         "id TEXT PRIMARY KEY, vault_id TEXT NOT NULL DEFAULT 'local-default', target_agent TEXT NOT NULL, "
         "profile TEXT NOT NULL DEFAULT 'overview', output_mode TEXT NOT NULL DEFAULT 'top_findings', focus TEXT NOT NULL, "
         "content_hash TEXT NOT NULL, content_path TEXT NOT NULL, warnings_json TEXT NOT NULL DEFAULT '[]', "
-        "snapshot_quality_json TEXT NOT NULL DEFAULT '{}', contract_version TEXT NOT NULL DEFAULT 'p19.v1', "
+        "snapshot_quality_json TEXT NOT NULL DEFAULT '{}', contract_version TEXT NOT NULL DEFAULT 'p20.v1', "
         "created_by TEXT, created_at TEXT NOT NULL)",
         (),
     )

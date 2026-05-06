@@ -6,12 +6,12 @@
     "https://github.com/QwenLM/qwen-code"
   ],
   "best_paid_path": "Qwen-Agent with MCP or OpenAI-compatible function calling.",
-  "realistic_free_path": "Qwen web chat GET preview; local/open Qwen-Agent if operator installs it.",
+  "realistic_free_path": "Qwen web chat with a copy-ready project snapshot packet; local/open Qwen-Agent if operator installs it.",
   "implemented_surface": "apps/mcp/configs/qwen_agent_mcp.example.json",
   "test_status": "qwen_agent_mcp_config_ready_unverified",
   "requires_paid_or_external_setup": true,
-  "access_strategy": "split_free_preview_agent_path",
-  "path_policy": "Free web uses GET preview or pack; Alibaba Cloud/DashScope or Qwen-Agent/MCP remains the stronger keyed path.",
+  "access_strategy": "split_free_packet_agent_path",
+  "path_policy": "Free web uses copied packets; Alibaba Cloud/DashScope or Qwen-Agent/MCP remains the stronger keyed path.",
   "keep_separate_free_paid_paths": true,
   "primary_path": "qwen_agent_mcp_or_future_api_runner",
   "connection_modes": [

@@ -449,7 +449,7 @@ CREATE TABLE IF NOT EXISTS project_snapshot_packets (
   content_path TEXT NOT NULL,
   warnings_json TEXT NOT NULL DEFAULT '[]',
   snapshot_quality_json TEXT NOT NULL DEFAULT '{}',
-  contract_version TEXT NOT NULL DEFAULT 'p19.v1',
+  contract_version TEXT NOT NULL DEFAULT 'p20.v1',
   created_by TEXT,
   created_at TEXT NOT NULL
 );

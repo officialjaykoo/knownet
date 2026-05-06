@@ -100,7 +100,4 @@ def test_message_to_suggestion_to_page(tmp_path, monkeypatch):
         assert verify.status_code == 200
         assert "issues" in verify.json()["data"]
 
-        migrate = client.post("/api/maintenance/migrate")
-        assert migrate.status_code == 200
-        assert migrate.json()["data"]["status"] == "noop"
     get_settings.cache_clear()

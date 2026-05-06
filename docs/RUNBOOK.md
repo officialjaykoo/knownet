@@ -201,7 +201,7 @@ implementation    next Codex task selection
 provider_review   Gemini/DeepSeek/Qwen/Kimi/GLM runner review
 ```
 
-Packets use `contract_version: p19.v1` across copy-paste and API-key provider
+Packets use `contract_version: p20.v1` across copy-paste and API-key provider
 flows. If `snapshot_quality.warnings` is not empty, acknowledge the warning in
 the UI before sending or copying the packet; this does not block API generation
 but prevents warning blindness.
@@ -335,15 +335,15 @@ KnowNet returns `409 page_revision_conflict` if the page changed after the AI or
 operator inspected it. Manual no-body restores still work, but automation should
 use the optimistic lock.
 
-## Phase Migration
+## Phase Transition
 
-Before moving from Phase N to Phase N+1, create a snapshot, run migrate, then
-run verify-index. Migration should be safe to run twice.
+Before moving from Phase N to Phase N+1, create a snapshot, run targeted checks,
+then run verify-index.
 
 ## Recovery Without Backups
 
-If no snapshot exists but Markdown files remain, recreate `knownet.db`, run
-migrate, re-index pages, rebuild citation audits, and rebuild the graph.
+If no snapshot exists but Markdown files remain, recreate `knownet.db`, re-index
+pages, rebuild citation audits, and rebuild the graph.
 
 ## Agent Token Rotation
 

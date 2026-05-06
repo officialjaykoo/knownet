@@ -33,8 +33,8 @@ PROFILES = {
 }
 
 
-def _tool_call(url: str, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-    return post_json_rpc(url, "tools/call", {"name": name, "arguments": arguments or {}})
+def _resource_read(url: str, uri: str) -> dict[str, Any]:
+    return post_json_rpc(url, "resources/read", {"uri": uri})
 
 
 def _decode_tool_payload(response: dict[str, Any]) -> Any:
@@ -58,7 +58,7 @@ def _section(title: str, value: Any) -> str:
     return f"## {title}\n\n```json\n{_dump_json(value)}\n```\n"
 
 
-def build_pack(provider: str, url: str, *, ai_state_limit: int) -> str:
+def build_pack(provider: str, url: str) -> str:
     profile = PROFILES[provider]
     generated_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     initialize = post_json_rpc(
@@ -71,11 +71,11 @@ def build_pack(provider: str, url: str, *, ai_state_limit: int) -> str:
         },
     )
     calls = {
-        "knownet_start_here": _decode_tool_payload(_tool_call(url, "knownet_start_here")),
-        "knownet_me": _decode_tool_payload(_tool_call(url, "knownet_me")),
-        "knownet_state_summary": _decode_tool_payload(_tool_call(url, "knownet_state_summary")),
+        "snapshot_overview": _decode_tool_payload(_resource_read(url, "knownet://snapshot/overview")),
+        "snapshot_stability": _decode_tool_payload(_resource_read(url, "knownet://snapshot/stability")),
+        "recent_findings": _decode_tool_payload(_resource_read(url, "knownet://finding/recent")),
         "tools_list": post_json_rpc(url, "tools/list", {}),
-        "knownet_ai_state": _decode_tool_payload(_tool_call(url, "knownet_ai_state", {"limit": ai_state_limit})),
+        "prompts_list": post_json_rpc(url, "prompts/list", {}),
     }
 
     prompt = f"""You are reviewing KnowNet as a first-time external AI contributor.
@@ -109,7 +109,6 @@ Proposed change:
         f"generated_at: {generated_at}",
         f"provider: {provider}",
         f"mcp_url: {url}",
-        f"ai_state_limit: {ai_state_limit}",
         "",
         f"## Prompt For {label}",
         "",
@@ -132,8 +131,8 @@ def copy_to_clipboard(text: str) -> None:
         raise SystemExit("Failed to copy review pack to clipboard")
 
 
-def write_pack(provider: str, url: str, output: str | None, ai_state_limit: int, copy: bool) -> Path:
-    text = build_pack(provider, url, ai_state_limit=max(1, min(ai_state_limit, 50)))
+def write_pack(provider: str, url: str, output: str | None, copy: bool) -> Path:
+    text = build_pack(provider, url)
     path = Path(output) if output else PROFILES[provider]["output"]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -149,11 +148,10 @@ def main() -> int:
     parser.add_argument("--provider", choices=sorted(PROFILES), default="qwen")
     parser.add_argument("--url", default=os.getenv("KNOWNET_MCP_URL", DEFAULT_URL), help="KnowNet MCP HTTP URL.")
     parser.add_argument("--output", help="Markdown output path.")
-    parser.add_argument("--ai-state-limit", type=int, default=10, help="Number of ai_state rows to include.")
     parser.add_argument("--copy", action="store_true", help="Copy the generated Markdown to the Windows clipboard.")
     args = parser.parse_args()
 
-    path = write_pack(args.provider, args.url, args.output, args.ai_state_limit, args.copy)
+    path = write_pack(args.provider, args.url, args.output, args.copy)
     print(f"Wrote {PROFILES[args.provider]['label']} review pack: {path}")
     if args.copy:
         print("Copied review pack to clipboard.")

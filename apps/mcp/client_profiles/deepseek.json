@@ -7,12 +7,12 @@
     "https://github.com/grll/mcpadapt"
   ],
   "best_paid_path": "DeepSeek API function/tool calling through a KnowNet-controlled runner.",
-  "realistic_free_path": "DeepSeek web chat GET preview or copied JSON; no direct MCP POST.",
+  "realistic_free_path": "DeepSeek web chat with a copy-ready project snapshot packet; no direct MCP POST.",
   "implemented_surface": "apps/mcp/configs/provider_runner.deepseek.example.json",
   "test_status": "profile_only_provider_not_implemented",
   "requires_paid_or_external_setup": true,
-  "access_strategy": "split_free_preview_paid_runner",
-  "path_policy": "Free web/desktop uses GET preview; API runner remains the stronger path when balance is available.",
+  "access_strategy": "split_free_packet_paid_runner",
+  "path_policy": "Free web/desktop uses copied packets; API runner remains the stronger path when balance is available.",
   "keep_separate_free_paid_paths": true,
   "primary_path": "api_runner_when_funded",
   "connection_modes": [

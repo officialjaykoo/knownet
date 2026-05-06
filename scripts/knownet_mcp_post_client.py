@@ -72,15 +72,11 @@ def preset_to_request(preset: str) -> tuple[str, dict[str, Any]]:
     if preset == "resources":
         return ("resources/list", {})
     if preset == "start-here":
-        return ("tools/call", {"name": "knownet_start_here", "arguments": {}})
-    if preset == "me":
-        return ("tools/call", {"name": "knownet_me", "arguments": {}})
-    if preset == "state-summary":
-        return ("tools/call", {"name": "knownet_state_summary", "arguments": {}})
-    if preset == "ai-state":
-        return ("tools/call", {"name": "knownet_ai_state", "arguments": {"limit": 10}})
-    if preset == "search":
-        return ("tools/call", {"name": "search", "arguments": {"query": "KnowNet current state"}})
+        return ("resources/read", {"uri": "knownet://snapshot/overview"})
+    if preset == "compact-review":
+        return ("prompts/get", {"name": "knownet.compact_review", "arguments": {"focus": "overview"}})
+    if preset == "recent-findings":
+        return ("resources/read", {"uri": "knownet://finding/recent"})
     raise SystemExit(f"Unknown preset: {preset}")
 
 
@@ -91,12 +87,12 @@ def main() -> int:
     parser.add_argument("--url", default=os.getenv("KNOWNET_MCP_URL", DEFAULT_URL), help="KnowNet MCP HTTP URL.")
     parser.add_argument(
         "--preset",
-        choices=["initialize", "tools", "resources", "start-here", "me", "state-summary", "ai-state", "search"],
+        choices=["initialize", "tools", "resources", "start-here", "compact-review", "recent-findings"],
         help="Run a common KnowNet MCP call.",
     )
     parser.add_argument("--method", help="Raw JSON-RPC method, for example tools/list or tools/call.")
     parser.add_argument("--params-json", help="Raw JSON-RPC params object.")
-    parser.add_argument("--tool", help="Tool name for tools/call, for example knownet_start_here.")
+    parser.add_argument("--tool", help="Tool name for tools/call, for example knownet.propose_finding.")
     parser.add_argument("--args-json", help="Tool arguments object for --tool.")
     args = parser.parse_args()
 

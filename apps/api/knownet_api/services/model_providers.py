@@ -290,16 +290,16 @@ MINIMAX_KNOWNET_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "knownet_state_summary",
-            "description": "Read the sanitized KnowNet state summary already prepared for this model run.",
+            "name": "knownet_read_snapshot",
+            "description": "Read the sanitized KnowNet snapshot already prepared for this model run.",
             "parameters": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
     {
         "type": "function",
         "function": {
-            "name": "knownet_ai_state",
-            "description": "Read sampled sanitized ai_state pages from the prepared model-run context.",
+            "name": "knownet_read_node_cards",
+            "description": "Read sampled sanitized node cards from the prepared model-run context.",
             "parameters": {
                 "type": "object",
                 "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10}},
@@ -310,7 +310,7 @@ MINIMAX_KNOWNET_TOOLS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
-            "name": "knownet_list_findings",
+            "name": "knownet_read_recent_findings",
             "description": "Read open findings from the prepared model-run context.",
             "parameters": {
                 "type": "object",
@@ -333,12 +333,12 @@ def _execute_knownet_context_tool(context: dict[str, Any], name: str, arguments_
         raise HTTPException(status_code=502, detail={"code": f"{provider_code}_invalid_tool_args", "message": f"{provider_name} returned invalid tool arguments", "details": {"tool": name}})
     if not isinstance(arguments, dict):
         raise HTTPException(status_code=502, detail={"code": f"{provider_code}_invalid_tool_args", "message": f"{provider_name} tool arguments must be a JSON object", "details": {"tool": name}})
-    if name == "knownet_state_summary":
+    if name == "knownet_read_snapshot":
         return {"summary": context.get("summary") or {}, "rules": context.get("rules") or {}}
-    if name == "knownet_ai_state":
+    if name == "knownet_read_node_cards":
         limit = min(max(int(arguments.get("limit") or 10), 1), 20)
         return {"pages": (context.get("pages") or [])[:limit], "returned_count": len((context.get("pages") or [])[:limit])}
-    if name == "knownet_list_findings":
+    if name == "knownet_read_recent_findings":
         limit = min(max(int(arguments.get("limit") or 20), 1), 50)
         findings = context.get("open_findings") or []
         return {"findings": findings[:limit], "returned_count": len(findings[:limit])}

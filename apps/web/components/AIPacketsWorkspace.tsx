@@ -111,7 +111,7 @@ export function AIPacketsWorkspace({
             <div className="model-run-stats">
               <span>{projectSnapshotPacket.profile ?? "overview"}</span>
               <span>{projectSnapshotPacket.output_mode ?? "top_findings"}</span>
-              <span>{projectSnapshotPacket.contract_version ?? "p19.v1"}</span>
+              <span>{projectSnapshotPacket.contract_version ?? "p20.v1"}</span>
               {projectSnapshotPacket.snapshot_quality ? <span>quality {projectSnapshotPacket.snapshot_quality.score}</span> : null}
               <span>{projectSnapshotPacket.links.storage?.href ?? "no storage link"}</span>
               <span>{projectSnapshotPacket.links.self.href}</span>
