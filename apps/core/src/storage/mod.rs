@@ -69,7 +69,6 @@ pub fn init_db(sqlite_path: &str) -> Result<InitDbResult, CoreError> {
     connection
         .busy_timeout(std::time::Duration::from_millis(5000))
         .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
-    ensure_model_review_run_columns(&connection)?;
     connection
         .execute_batch(SCHEMA_SQL)
         .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
@@ -86,37 +85,4 @@ pub fn init_db(sqlite_path: &str) -> Result<InitDbResult, CoreError> {
         sqlite_path: sqlite_path.to_string(),
         journal_mode,
     })
-}
-
-fn ensure_model_review_run_columns(connection: &Connection) -> Result<(), CoreError> {
-    let table_exists: i64 = connection
-        .query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'model_review_runs'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
-    if table_exists == 0 {
-        return Ok(());
-    }
-
-    let mut statement = connection
-        .prepare("PRAGMA table_info(model_review_runs)")
-        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
-    let mut existing = std::collections::HashSet::new();
-    for column in columns {
-        existing.insert(column.map_err(|err| CoreError::new("sqlite_error", err.to_string()))?);
-    }
-
-    for column in ["trace_id", "packet_trace_id", "error_code", "error_message"] {
-        if !existing.contains(column) {
-            connection
-                .execute(&format!("ALTER TABLE model_review_runs ADD COLUMN {column} TEXT"), [])
-                .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
-        }
-    }
-    Ok(())
 }
