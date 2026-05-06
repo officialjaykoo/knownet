@@ -338,6 +338,8 @@ export default function HomePage() {
   const [authMode, setAuthMode] = useState<"login" | "bootstrap">("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authFeedback, setAuthFeedback] = useState("");
   const [submissions, setSubmissions] = useState<Submission[]>([]);
   const [vaults, setVaults] = useState<Vault[]>([]);
   const [vaultId, setVaultId] = useState("local-default");
@@ -1168,19 +1170,33 @@ export default function HomePage() {
 
   async function submitAuth(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (!username.trim() || !password) {
+      const message = "Enter username and password";
+      setAuthFeedback(message);
+      setStatus(message);
+      return;
+    }
     const path = authMode === "bootstrap" ? "/api/auth/bootstrap" : "/api/auth/login";
+    setAuthBusy(true);
+    setAuthFeedback(authMode === "bootstrap" ? "Creating owner account..." : "Signing in...");
+    setStatus(authMode === "bootstrap" ? "Creating owner account" : "Signing in");
     try {
       const data = await fetchJson<{ session_id: string; role: string; username: string }>(path, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username: username.trim(), password }),
       });
       window.localStorage.setItem(sessionStorageKey, data.session_id);
       setSessionToken(data.session_id);
       setPassword("");
+      setAuthFeedback("");
       setStatus(`${data.username} signed in`);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Sign in failed");
+      const message = error instanceof Error ? error.message : "Sign in failed";
+      setAuthFeedback(message);
+      setStatus(message);
+    } finally {
+      setAuthBusy(false);
     }
   }
 
@@ -1193,6 +1209,7 @@ export default function HomePage() {
     window.localStorage.removeItem(sessionStorageKey);
     setSessionToken(null);
     setActor(null);
+    setAuthFeedback("");
     setStatus("Signed out");
   }
 
@@ -1436,29 +1453,32 @@ export default function HomePage() {
           </div>
           {!sessionToken ? (
             <form className="auth-form" onSubmit={submitAuth}>
+              <label className="auth-mode-label">Sign-in mode</label>
               <div className="auth-tabs">
-                <button className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")} type="button">
+                <button className={authMode === "login" ? "active" : ""} onClick={() => { setAuthMode("login"); setAuthFeedback(""); }} type="button">
                   <LogIn aria-hidden size={15} />
-                  Login
+                  Existing user
                 </button>
-                <button className={authMode === "bootstrap" ? "active" : ""} onClick={() => setAuthMode("bootstrap")} type="button">
+                <button className={authMode === "bootstrap" ? "active" : ""} onClick={() => { setAuthMode("bootstrap"); setAuthFeedback(""); }} type="button">
                   <KeyRound aria-hidden size={15} />
-                  Bootstrap
+                  Create owner
                 </button>
               </div>
-              <input aria-label="Username" placeholder="Username" value={username} onChange={(event) => setUsername(event.target.value)} />
+              <input aria-label="Username" placeholder="Username" required value={username} onChange={(event) => setUsername(event.target.value)} />
               <input
                 aria-label="Password"
                 minLength={authMode === "bootstrap" ? 8 : 1}
                 placeholder="Password"
+                required
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
               />
               {authMode === "bootstrap" ? <small>Owner password must be at least 8 characters.</small> : null}
-              <button type="submit">
+              {authFeedback ? <div className={authBusy ? "auth-feedback pending" : "auth-feedback"}>{authFeedback}</div> : null}
+              <button disabled={authBusy} type="submit">
                 {authMode === "bootstrap" ? <ShieldCheck aria-hidden size={15} /> : <LogIn aria-hidden size={15} />}
-                {authMode === "bootstrap" ? "Create owner" : "Login"}
+                {authBusy ? "Working..." : authMode === "bootstrap" ? "Create owner account" : "Sign in"}
               </button>
             </form>
           ) : null}
