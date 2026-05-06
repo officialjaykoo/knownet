@@ -38,6 +38,11 @@ async def ensure_model_runner_schema(sqlite_path) -> None:
             )
             """
         )
+        cursor = await connection.execute("PRAGMA table_info(model_review_runs)")
+        columns = {row[1] for row in await cursor.fetchall()}
+        for column in ("trace_id", "packet_trace_id", "error_code", "error_message"):
+            if column not in columns:
+                await connection.execute(f"ALTER TABLE model_review_runs ADD COLUMN {column} TEXT")
         await connection.execute("CREATE INDEX IF NOT EXISTS idx_model_review_runs_provider_status ON model_review_runs(provider, status, updated_at)")
         await connection.execute("CREATE INDEX IF NOT EXISTS idx_model_review_runs_vault_updated ON model_review_runs(vault_id, updated_at)")
         await connection.execute("CREATE INDEX IF NOT EXISTS idx_model_review_runs_trace ON model_review_runs(trace_id, packet_trace_id)")
