@@ -7,8 +7,8 @@
   --muted: #697586;
   --line: #d9e0ea;
   --line-strong: #c2ccd9;
-  --accent: #0f766e;
-  --accent-strong: #0b514c;
+  --accent: #315fa8;
+  --accent-strong: #1d4f91;
   --blue: #315fa8;
   --blue-strong: #1d4f91;
   --sky: #e7f5ff;
@@ -2146,6 +2146,50 @@ h1 {
 
 .empty {
   color: var(--muted);
+}
+
+select {
+  border-color: var(--sky-strong) !important;
+  background-color: #f8fbff !important;
+  color: var(--blue-strong) !important;
+}
+
+.sidebar-head button,
+.sidebar-toggle,
+.actor-row button,
+.auth-form > button,
+.vault-select button,
+.review-item button:last-child,
+.collab-import button,
+.bundle-button,
+.agent-create button,
+.ops-grid button,
+.inbox button,
+.workspace-dashboard-head button,
+.operator-actions button,
+.model-run-detail button,
+.experiment-response-panel button,
+.suggestion-actions button:not(:first-child),
+.finding-card footer button.accepted-action,
+.graph-actions button:last-child,
+.graph-detail button,
+.markdown-toggle {
+  border-color: var(--blue-strong);
+  background: var(--blue);
+  color: white;
+}
+
+.workspace-dashboard-head h2,
+.operator-head h2,
+.operator-panel h3,
+.model-run-detail h3,
+.experiment-packet-panel h3,
+.graph-head h2,
+.collaboration-detail h2,
+.page-header h2,
+.suggestion h3,
+.agent-panel h3 {
+  color: var(--blue-strong);
 }
 
 @media (max-width: 820px) {
