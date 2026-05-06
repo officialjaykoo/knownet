@@ -14,6 +14,16 @@
   --sky: #e7f5ff;
   --sky-strong: #b8def8;
   --sky-text: #1b5f96;
+  --control-bg: #f8fbff;
+  --control-border: #b8def8;
+  --control-ring: rgba(49, 95, 168, 0.2);
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --control-height: 36px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
   --amber: #a86913;
   --red: #b13a32;
   --shadow: 0 16px 40px rgba(25, 37, 60, 0.08);
@@ -45,6 +55,30 @@ textarea {
 
 button svg {
   flex: 0 0 auto;
+}
+
+button,
+select,
+input,
+textarea {
+  border-radius: var(--radius-md);
+}
+
+button {
+  cursor: pointer;
+}
+
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid var(--control-ring);
+  outline-offset: 2px;
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 .shell {
@@ -2148,15 +2182,52 @@ h1 {
   color: var(--muted);
 }
 
-select {
-  border-color: var(--sky-strong) !important;
-  background-color: #f8fbff !important;
-  color: var(--blue-strong) !important;
+/* Design primitives adapted from Radix/shadcn conventions:
+   one token set, explicit variants, segmented selections, and predictable controls. */
+select,
+input,
+textarea,
+.auth-form input,
+.vault-select select,
+.vault-select input,
+.agent-create input,
+.agent-create select,
+.agent-filters input,
+.agent-filters select,
+.experiment-packet-form input,
+.experiment-packet-form select,
+.experiment-packet-form textarea,
+.experiment-packet-preview textarea,
+.experiment-response-panel textarea,
+.graph-actions select,
+.ops-restore-confirm input {
+  border-color: var(--control-border);
+  background: var(--control-bg);
+  color: var(--blue-strong);
 }
 
+.workspace-tabs,
+.auth-tabs,
+.workspace-switch {
+  border-color: var(--control-border);
+  background: #f1f8ff;
+}
+
+.workspace-tabs button.active,
+.auth-tabs button.active,
+.workspace-switch button.active,
+.model-run-list button.active,
+.agent-token-list button.selected,
+.review-open.active {
+  border-color: var(--sky-strong);
+  background: var(--sky);
+  color: var(--blue-strong);
+  box-shadow: inset 0 0 0 1px var(--sky-strong);
+}
+
+.btn-primary,
 .sidebar-head button,
 .sidebar-toggle,
-.actor-row button,
 .auth-form > button,
 .vault-select button,
 .review-item button:last-child,
@@ -2174,9 +2245,32 @@ select {
 .graph-actions button:last-child,
 .graph-detail button,
 .markdown-toggle {
+  min-height: var(--control-height);
   border-color: var(--blue-strong);
   background: var(--blue);
   color: white;
+  box-shadow: var(--shadow-soft);
+}
+
+.btn-secondary,
+.actor-row button,
+.review-item button:not(:last-child),
+.review-open,
+.agent-panel button,
+.raw-token button,
+.agent-detail-actions button,
+.agent-error button,
+.suggestion-actions button:first-child,
+.finding-card footer button:not(.accepted-action),
+.graph-actions button:not(:last-child),
+.graph-list button,
+.link-chips button,
+.link-chips span,
+.page-list-tools button {
+  min-height: var(--control-height);
+  border-color: var(--control-border);
+  background: var(--control-bg);
+  color: var(--blue-strong);
 }
 
 .workspace-dashboard-head h2,
@@ -2190,6 +2284,10 @@ select {
 .suggestion h3,
 .agent-panel h3 {
   color: var(--blue-strong);
+}
+
+.eyebrow {
+  color: var(--sky-text);
 }
 
 @media (max-width: 820px) {
