@@ -311,16 +311,122 @@ packet, but what the copy-paste handoff format should be:
 - compact Markdown with JSON references
 - MCP resources/tools as the primary path, with copy-paste as fallback
 
+## 2026-05-07 Qwen Review
+
+Reviewer: Qwen  
+Focus: packet/snapshot standardization review  
+Score: 72/100  
+Verdict: enough for now, but trim for speed
+
+### Summary
+
+Qwen gave the most positive review so far. It judged the packet's structural
+bones as sound for AI consumption, especially contracts, boundaries, and trace
+context. Its criticism is still about speed: 20 KB packet size against a 12 KB
+budget, nested duplication, and optional schema details that should be stripped
+from a compact profile.
+
+### Top 5 Recommended Changes
+
+1. Deduplicate metadata.
+
+   Keep packet identity fields in one top-level location only:
+
+   ```txt
+   contract_version
+   protocol_version
+   schema_ref
+   ```
+
+   Remove repeated copies inside `contract.packet_metadata` and
+   `contract_shape`.
+
+2. Consolidate limits.
+
+   Merge these objects into one `limits` object keyed by `profile` and
+   `target_agent`:
+
+   ```txt
+   hard_limits
+   profile_hard_limits
+   target_agent_overrides
+   target_agent_policy
+   ```
+
+3. Make MCP schemas profile-conditional.
+
+   For the `overview` profile, include only MCP method names. Move full
+   resource/tool/prompt `inputSchema` definitions to a separate `/schemas`
+   endpoint referenced by URI.
+
+4. Remove dual-format duplication.
+
+   When `output_mode=top_findings`, drop the human-readable Markdown header and
+   keep only machine-readable JSON, or reduce the header to a 3-line summary
+   that references the JSON payload.
+
+5. Simplify `issues` for overview.
+
+   Keep only:
+
+   ```txt
+   code
+   severity
+   one-line description
+   ```
+
+   Move `action_input_schema` to a referenced schema document such as:
+
+   ```txt
+   knownet://schemas/actions/v1
+   ```
+
+### Do Not Change
+
+- Keep W3C trace context structure: `traceparent`, `trace_id`, `span_id`.
+- Keep role boundaries: `allowed`, `refused`, `escalate_on`, and narrative.
+- Keep output contract `max_findings` and `forbidden_sections` guardrails.
+- Keep `Do Not Suggest` content and placement.
+- Keep `evidence_quality` enum values and `auto_import_requires` logic.
+- Keep node card `read_rules`: short summary first, scoped `detail_url`, and
+  optional excerpt.
+
+### Open Source / Standard Patterns To Absorb
+
+Qwen recommended several standards:
+
+- CloudEvents: align packet envelope fields such as `id`, `type`, `source`,
+  `time`, and `datacontenttype`.
+- RFC 7807 Problem Details: use `type`, `title`, `status`, `detail`, and
+  `instance` for issue/problem shapes.
+- OpenAPI 3.1 Schema Object with `$defs`: reference shared schema definitions
+  for tool `inputSchema`.
+- JSON Merge Patch (RFC 7396): use a standard diff format for
+  `snapshot_diff_summary`.
+- MCP Schema Registry pattern: register `knownet://schemas/*` with the MCP
+  schema catalog rather than maintaining an isolated custom URI convention.
+
+### Codex Notes
+
+Qwen shifts the score upward, but not the direction. Its message is: the packet
+is structurally good enough, but the default external handoff should be compact.
+It also gives the clearest envelope recommendation so far: CloudEvents for
+packet identity and event-style interoperability.
+
+Qwen strongly supports keeping trace context and guardrails, aligning with
+Claude and DeepSeek against Gemini on telemetry removal.
+
 ## Cross-Review Synthesis
 
-Common findings from Claude, Gemini, and DeepSeek:
+Common findings from Claude, Gemini, DeepSeek, and Qwen:
 
 1. The packet is too large and overbuilt.
 2. Markdown/JSON or contract duplication should be reduced or eliminated.
 3. `snapshot_self_test` should not be in AI-facing packet text.
 4. Inline action/tool schemas are too heavy for external review.
 5. Health should be compact and abnormal-detail-only.
-6. Guardrails should remain explicit.
+6. Limits and metadata should have one source of truth.
+7. Guardrails should remain explicit.
 
 Likely next implementation direction:
 
@@ -333,6 +439,7 @@ Create a compact external-AI packet mode:
 - no duplicated provider_matrix
 - compact health summary only
 - unified max_findings
+- unified metadata and limits object
 - schema/tool references instead of schema bodies
 - role/access/output guardrails preserved
 ```
@@ -349,4 +456,12 @@ Second open question:
 ```txt
 Should the external handoff format be compact JSON only, or compact Markdown
 with JSON references for human copy-paste ergonomics?
+```
+
+Third open question:
+
+```txt
+Should the packet envelope adopt CloudEvents fields (`id`, `type`, `source`,
+`time`, `datacontenttype`) while keeping existing KnowNet trace metadata in
+stored packet records?
 ```
