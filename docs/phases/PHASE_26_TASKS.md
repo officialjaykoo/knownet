@@ -495,6 +495,232 @@ Done when:
   install with data loss.
 - The resulting packet remains accurate first and compact second.
 
+## P26-009 Golden Packet Fixtures
+
+Problem:
+
+The current review loop mostly evaluates one live packet. If that packet is
+empty or unusually small, external AI may overfit its feedback to that one
+state. KnowNet needs a small fixture set that represents common packet states.
+
+Implementation shape:
+
+Create stable packet fixtures such as:
+
+```txt
+empty-project-overview
+healthy-project-overview
+provider-failure-review
+security-warning-review
+implementation-candidates
+```
+
+Each fixture should include:
+
+```txt
+packet JSON
+expected size band
+expected signals
+expected required_context behavior
+expected output_mode
+```
+
+Rules:
+
+- Keep fixtures small and hand-readable.
+- Do not snapshot real secrets, real tokens, raw DB paths, or machine-specific
+  local paths.
+- Prefer synthetic minimal state over copying production-like dumps.
+- Use fixtures to test accuracy and actionability, not only size.
+
+Done when:
+
+- At least three representative compact packet fixtures exist.
+- Tests verify they stay within expected size bands.
+- Tests verify required signals and required_context are present.
+
+## P26-010 AI Review Comparator
+
+Problem:
+
+KnowNet currently relies on the operator/Codex manually reading several AI
+reviews and extracting common findings. This works, but it is slow and easy to
+bias toward the last review.
+
+Implementation shape:
+
+Add a lightweight comparator that accepts multiple review texts and produces:
+
+```txt
+common recommendations
+model-specific recommendations
+conflicts
+do-not-change consensus
+candidate implementation list
+```
+
+Rules:
+
+- Start as an operator-side helper or API utility; no complex ML clustering.
+- Use deterministic keyword/section parsing first.
+- Keep source attribution per model.
+- Do not auto-implement comparator output.
+
+Done when:
+
+- The comparator can ingest at least three AI packet reviews.
+- It returns shared recommendations with reviewer attribution.
+- It separates consensus from one-off suggestions.
+
+## P26-011 Ask-Operator Output Mode
+
+Problem:
+
+External AI should not be forced to invent findings when the packet does not
+contain enough context. Sometimes the right answer is one or two short operator
+questions.
+
+Implementation shape:
+
+Add an output mode such as:
+
+```txt
+context_questions
+```
+
+Expected response shape:
+
+```json
+{
+  "output_mode": "context_questions",
+  "questions": [
+    {
+      "question": "Is this a fresh install, or should pages already exist?",
+      "missing": ["fresh_install_confirmation"],
+      "reason": "The packet has zero pages and zero AI-state pages."
+    }
+  ]
+}
+```
+
+Rules:
+
+- Questions should derive from `signals[].required_context`.
+- Keep max questions low, usually 3.
+- Do not treat questions as findings.
+- Let the operator answer questions and regenerate or upgrade the packet.
+
+Done when:
+
+- Packet contract documents `context_questions`.
+- Parser can distinguish context questions from findings.
+- UI or API can display the questions without importing them as findings.
+
+## P26-012 Evidence Upgrade Path
+
+Problem:
+
+`context_limited` findings are useful but should not silently become release
+blockers or implementation tasks. The packet should make the upgrade path
+explicit when missing context is known.
+
+Implementation shape:
+
+Add a compact upgrade hint where appropriate:
+
+```json
+{
+  "evidence_upgrade_path": {
+    "from": "context_limited",
+    "to": "operator_verified",
+    "requires": ["operator confirms fresh_install"]
+  }
+}
+```
+
+Rules:
+
+- Keep it tied to signals or findings, not as a large global explanation.
+- Do not invent `direct_access` when only operator confirmation is available.
+- Do not auto-upgrade evidence quality without an explicit operator action.
+
+Done when:
+
+- Context-limited signals can describe what would upgrade confidence.
+- Import/task logic still blocks automatic release blockers from
+  context-limited evidence.
+- Operator verification remains explicit and auditable.
+
+## P26-013 Packet Fitness Score
+
+Problem:
+
+Character count alone does not measure whether a packet is good. A packet can be
+small but too thin, or larger but much more accurate.
+
+Implementation shape:
+
+Add an advisory score outside or alongside `packet_integrity`:
+
+```json
+{
+  "packet_fitness": {
+    "score": 86,
+    "size": "excellent",
+    "evidence": "weak",
+    "actionability": "good",
+    "empty_state_clarity": "needs_operator_confirmation"
+  }
+}
+```
+
+Rules:
+
+- Advisory only; do not block packet generation.
+- Keep categories few and stable.
+- Do not overfit to char count.
+- Prefer clear labels over fake precision.
+
+Done when:
+
+- Fitness score distinguishes size, evidence strength, actionability, and
+  empty-state clarity.
+- Tests cover a too-thin packet and an oversized-but-useful packet.
+
+## P26-014 Packet Diff View
+
+Problem:
+
+Operators need to understand whether a new packet is better or merely smaller.
+External AI reviews often compare p20 and p26 informally; KnowNet can make that
+comparison explicit.
+
+Implementation shape:
+
+Compare two packet records or fixtures and show:
+
+```txt
+character delta
+removed sections
+added sections
+signal changes
+required_context changes
+contract_version change
+```
+
+Rules:
+
+- This is an operator/debug view, not mandatory packet content.
+- Do not put full diff output into external AI packets by default.
+- Prefer summary diff over raw JSON diff.
+
+Done when:
+
+- Operator can compare two packet IDs or fixtures.
+- Diff output explains whether actionability improved, not just whether size
+  dropped.
+- Diff stays outside copy-ready compact packet content.
+
 ## Acceptance
 
 ```txt
@@ -524,6 +750,12 @@ P26-005 Compact Overview Budget
 P26-006 Opt-In Detail Profiles And Schema References
 P26-007 Standard Alignment Without New Weight
 P26-008 Semantic Trim After External Review
+P26-009 Golden Packet Fixtures
+P26-010 AI Review Comparator
+P26-011 Ask-Operator Output Mode
+P26-012 Evidence Upgrade Path
+P26-013 Packet Fitness Score
+P26-014 Packet Diff View
 ```
 
 ## Out Of Scope
