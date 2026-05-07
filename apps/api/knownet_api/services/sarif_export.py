@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
+from functools import lru_cache
+from pathlib import Path
 from pathlib import PurePosixPath
 from typing import Any
 
 import attr
+from jsonschema import Draft202012Validator
 from sarif_om import (
     ArtifactLocation,
     Location,
@@ -36,6 +40,17 @@ SEVERITY_TO_LEVEL = {
 
 TRUSTED_DEFAULT_EVIDENCE = {"direct_access", "operator_verified"}
 DEFAULT_EXPORT_STATUSES = {"accepted", "implemented"}
+SCHEMA_PATH = Path(__file__).resolve().parents[1] / "schemas" / "sarif-schema-2.1.0.json"
+
+
+@lru_cache(maxsize=1)
+def sarif_schema() -> dict[str, Any]:
+    return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+
+
+def validate_sarif_log(log: dict[str, Any]) -> list[str]:
+    validator = Draft202012Validator(sarif_schema())
+    return [error.message for error in sorted(validator.iter_errors(log), key=lambda item: list(item.path))[:20]]
 
 
 def _schema_name(attribute: attr.Attribute) -> str:
@@ -72,6 +87,11 @@ def rule_id_for_finding(finding: dict[str, Any]) -> str:
     area = re.sub(r"[^a-z0-9]+", "-", str(finding.get("area") or "knownet").lower()).strip("-") or "knownet"
     severity = re.sub(r"[^a-z0-9]+", "-", str(finding.get("severity") or "info").lower()).strip("-") or "info"
     return f"knownet.{area}.{severity}"
+
+
+def guid_for_finding(finding: dict[str, Any]) -> str:
+    source = str(finding.get("id") or finding.get("finding_id") or "")
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"knownet:finding:{source}"))
 
 
 def safe_sarif_path(path: str | None) -> tuple[str | None, str | None]:
@@ -193,7 +213,7 @@ def build_sarif_log(findings: list[dict[str, Any]], *, run_id: str, generated_at
         paths, omitted_locations = changed_files_from_row(finding)
         omitted_location_count += len(omitted_locations)
         result = Result(
-            guid=str(finding.get("id") or finding.get("finding_id") or ""),
+            guid=guid_for_finding(finding),
             rule_id=rule_id,
             level=sarif_level(str(finding.get("severity") or "info")),
             message=Message(text=str(finding.get("title") or "KnowNet finding")),

@@ -1329,6 +1329,40 @@ export default function HomePage() {
     }
   }
 
+  async function exportSarifFindings() {
+    if (!canOperate) {
+      setStatus("Owner or admin login required");
+      return;
+    }
+    setStatus("Exporting SARIF");
+    try {
+      const response = await fetch(`${apiBase}/api/collaboration/findings.sarif?vault_id=${encodeURIComponent(vaultId)}`, {
+        headers: {
+          Accept: "application/sarif+json",
+          ...(sessionToken ? { Authorization: `Bearer ${sessionToken}` } : {}),
+          "X-KnowNet-Vault": vaultId,
+        },
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(errorText || "SARIF export failed");
+      }
+      const content = await response.text();
+      const blob = new Blob([content], { type: "application/sarif+json" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "knownet-findings.sarif";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setStatus("SARIF exported");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "SARIF export failed");
+    }
+  }
+
   async function createContextBundleForCurrentPage() {
     const selectedPageIds = bundlePageIds.length ? bundlePageIds : selectedSlug ? [pageIdFromSlug(selectedSlug)] : [];
     if (!selectedPageIds.length) {
@@ -1674,6 +1708,7 @@ export default function HomePage() {
             onReviewMarkdownChange={setReviewMarkdown}
             onImportReview={importCollaborationReview}
             onRefresh={loadCollaborationReviews}
+            onExportSarif={exportSarifFindings}
             onLoadReview={loadCollaborationReview}
             onDecideFinding={decideCollaborationFinding}
             onCreateFindingTask={createFindingTask}

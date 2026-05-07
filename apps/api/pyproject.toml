@@ -12,6 +12,7 @@ dependencies = [
   "pytest>=8.0",
   "python-frontmatter>=1.1",
   "PyYAML>=6.0",
+  "jsonschema>=4.26",
   "sarif-om>=1.0.4",
   "sentence-transformers>=2.7"
 ]

@@ -39,6 +39,15 @@ Implemented surface:
   upload to GitHub automatically.
 - SARIF fixtures cover accepted, implemented-with-location, and explicit
   context_limited exports.
+- Follow-up scope is explicitly limited to schema validation, UI export, and
+  opt-in GitHub upload. Finding source-location schema work is deferred to a
+  later phase.
+- Generated SARIF is validated locally against a checked-in SARIF 2.1.0 schema
+  cache before the endpoint returns it.
+- AI Reviews exposes a small Export SARIF action that downloads the trusted
+  default export.
+- scripts/upload_sarif_to_github.ps1 provides explicit operator-triggered
+  GitHub Code Scanning upload through the `gh` CLI.
 ```
 
 ## Fixed Rules
@@ -52,6 +61,7 @@ Do not:
   covers it.
 - Add GitHub upload as the first step.
 - Require code locations for non-code findings.
+- Add explicit finding source-location fields in this phase.
 - Turn context_limited findings into GitHub alerts without operator review.
 - Put raw evidence dumps, secrets, raw DB content, backups, local-only machine
   paths, or packet bodies into SARIF.
@@ -415,6 +425,92 @@ Done when:
 - The phase document names the future path.
 - The implementation does not overfit to GitHub before local export works.
 
+## P27-007 SARIF Schema Validation
+
+Problem:
+
+The endpoint currently emits a SARIF-shaped log. Phase 27 should also validate
+that log against the official SARIF schema or a local cached copy of it.
+
+Implementation shape:
+
+Use a lightweight JSON Schema validator and the official SARIF 2.1.0 schema.
+Prefer a checked-in schema cache if network validation would make tests flaky.
+
+Rules:
+
+- Do not fetch the schema during every request.
+- Do not make external network availability part of normal export.
+- Validation should be local and deterministic.
+- If validation fails, return a clear API error rather than invalid SARIF.
+
+Done when:
+
+- Unit tests validate generated SARIF against the schema.
+- `/api/collaboration/findings.sarif` validates output before returning it.
+- Invalid SARIF generation fails loudly in tests.
+
+## P27-008 UI Export Button
+
+Problem:
+
+Operators should not need to know the endpoint URL to export SARIF.
+
+Implementation shape:
+
+Add an export action to the AI Reviews workspace:
+
+```txt
+Export SARIF
+```
+
+The button should call the conservative default endpoint and download or copy
+the `.sarif` JSON.
+
+Rules:
+
+- Keep this small. No SARIF dashboard.
+- Use the existing auth/session fetch path.
+- Show success/failure status.
+- Do not expose GitHub token handling in the UI.
+
+Done when:
+
+- AI Reviews has a visible SARIF export action.
+- The action uses the default trusted filter.
+- Failure is visible to the operator.
+
+## P27-009 Optional GitHub Upload Script
+
+Problem:
+
+GitHub Code Scanning can consume SARIF, but upload must remain explicit.
+
+Implementation shape:
+
+Add a separate opt-in script:
+
+```txt
+scripts/upload_sarif_to_github.ps1
+```
+
+It should accept a SARIF file path and repo coordinates, then call GitHub using
+the installed `gh` CLI or GitHub API. This is not called by the API or UI.
+
+Rules:
+
+- No automatic upload.
+- No GitHub token storage in KnowNet.
+- Fail with a clear message if `gh` is unavailable or unauthenticated.
+- Do not upload context_limited findings unless the operator exported them
+  explicitly.
+
+Done when:
+
+- Operator can run the script manually after generating SARIF.
+- Script does not create local dependency folders or venvs.
+- Phase docs clearly state upload is optional.
+
 ## Acceptance
 
 ```txt
@@ -427,6 +523,8 @@ Done when:
 6. SARIF preserves KnowNet metadata under properties.knownet.
 7. Compact packets remain unchanged and do not inline SARIF.
 8. GitHub upload is documented as an opt-in later step, not automatic behavior.
+9. SARIF export is schema-validated locally.
+10. AI Reviews exposes a small Export SARIF action.
 ```
 
 ## Suggested Implementation Order
@@ -438,6 +536,9 @@ P27-005 SARIF Validation Fixture
 P27-002 Findings Export Endpoint
 P27-004 Local Export Script
 P27-006 Future GitHub Code Scanning Integration
+P27-007 SARIF Schema Validation
+P27-008 UI Export Button
+P27-009 Optional GitHub Upload Script
 ```
 
 ## Out Of Scope
@@ -449,6 +550,7 @@ P27-006 Future GitHub Code Scanning Integration
 - GitHub token management
 - SARIF import from GitHub
 - Line-level code scanning engine
+- Finding source-location schema migration
 - Static analysis implementation
 - JSON-LD, CloudEvents, or in-toto
 - Full release_check

@@ -97,7 +97,7 @@ from ..services.project_snapshot import (
     snapshot_diff_summary,
     target_agent_policy,
 )
-from ..services.sarif_export import DEFAULT_EXPORT_STATUSES, TRUSTED_DEFAULT_EVIDENCE, build_sarif_log
+from ..services.sarif_export import DEFAULT_EXPORT_STATUSES, TRUSTED_DEFAULT_EVIDENCE, build_sarif_log, validate_sarif_log
 from ..services.ai_review_comparator import compare_ai_reviews
 from ..services.rust_core import RustCoreError
 
@@ -975,6 +975,9 @@ async def export_findings_sarif(
     )
     generated_at = utc_now()
     sarif = build_sarif_log(rows, run_id=f"knownet-sarif-{generated_at}", generated_at=generated_at)
+    validation_errors = validate_sarif_log(sarif)
+    if validation_errors:
+        raise HTTPException(status_code=500, detail={"code": "sarif_export_invalid", "message": "Generated SARIF failed schema validation", "details": {"errors": validation_errors}})
     return JSONResponse(content=sarif, media_type="application/sarif+json")
 
 

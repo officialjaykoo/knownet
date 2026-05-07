@@ -5,7 +5,7 @@ from fastapi.testclient import TestClient
 from fixture_utils import load_json_fixture_dir
 from knownet_api.config import get_settings
 from knownet_api.main import app
-from knownet_api.services.sarif_export import build_sarif_log, safe_sarif_path
+from knownet_api.services.sarif_export import build_sarif_log, safe_sarif_path, validate_sarif_log
 
 
 def _isolate_settings(monkeypatch, tmp_path):
@@ -53,6 +53,7 @@ def test_sarif_export_service_uses_standard_shape_and_safe_locations():
     assert knownet["evidence_quality"] == "operator_verified"
     assert knownet["implementation"]["commit"] == "abcdef1"
     assert len(knownet["omitted_locations"]) == 2
+    assert validate_sarif_log(log) == []
 
 
 def test_sarif_safe_path_rejects_generated_secret_and_absolute_paths():
@@ -75,6 +76,7 @@ def test_phase27_sarif_fixtures_keep_standard_core_shape():
         assert result["ruleId"].startswith("knownet.")
         assert result["level"] in {"error", "warning", "note"}
         qualities.add(result["properties"]["knownet"]["evidence_quality"])
+        assert validate_sarif_log(fixture) == []
     assert {"direct_access", "operator_verified", "context_limited"} <= qualities
 
 

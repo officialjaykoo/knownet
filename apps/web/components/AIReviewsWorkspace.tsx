@@ -1,7 +1,7 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { Check, CirclePlus, RefreshCw, Save, SquarePen, X } from "lucide-react";
+import { Check, CirclePlus, Download, RefreshCw, Save, SquarePen, X } from "lucide-react";
 
 type AIReviewsWorkspaceProps = {
   canWrite: boolean;
@@ -12,6 +12,7 @@ type AIReviewsWorkspaceProps = {
   onReviewMarkdownChange: (value: string) => void;
   onImportReview: (event: FormEvent<HTMLFormElement>) => void;
   onRefresh: () => void;
+  onExportSarif: () => void;
   onLoadReview: (reviewId: string) => void;
   onDecideFinding: (findingId: string, decision: "accepted" | "rejected" | "deferred" | "needs_more_context") => void;
   onCreateFindingTask: (findingId: string) => void;
@@ -26,6 +27,7 @@ export function AIReviewsWorkspace({
   onReviewMarkdownChange,
   onImportReview,
   onRefresh,
+  onExportSarif,
   onLoadReview,
   onDecideFinding,
   onCreateFindingTask,
@@ -40,6 +42,10 @@ export function AIReviewsWorkspace({
         <button onClick={onRefresh} type="button">
           <RefreshCw aria-hidden size={15} />
           Refresh
+        </button>
+        <button disabled={!canOperate} onClick={onExportSarif} title={canOperate ? "Export trusted findings as SARIF" : "Owner/admin login required"} type="button">
+          <Download aria-hidden size={15} />
+          Export SARIF
         </button>
       </div>
       <div className="ai-reviews-grid">
