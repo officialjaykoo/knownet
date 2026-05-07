@@ -1,0 +1,36 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "KnowNet",
+          "rules": [
+            {
+              "id": "knownet.docs.medium"
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "knownet.docs.medium",
+          "level": "warning",
+          "message": {
+            "text": "Context limited fixture"
+          },
+          "partialFingerprints": {
+            "knownetFindingId": "finding_fixture_context"
+          },
+          "properties": {
+            "knownet": {
+              "evidence_quality": "context_limited",
+              "status": "accepted"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

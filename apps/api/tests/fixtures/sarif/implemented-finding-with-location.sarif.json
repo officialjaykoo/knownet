@@ -1,0 +1,48 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "KnowNet",
+          "rules": [
+            {
+              "id": "knownet.api.high"
+            }
+          ]
+        }
+      },
+      "results": [
+        {
+          "ruleId": "knownet.api.high",
+          "level": "error",
+          "message": {
+            "text": "Implemented finding fixture"
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "apps/api/knownet_api/services/sarif_export.py"
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "knownetFindingId": "finding_fixture_implemented"
+          },
+          "properties": {
+            "knownet": {
+              "evidence_quality": "direct_access",
+              "status": "implemented",
+              "implementation": {
+                "commit": "abcdef1"
+              }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
