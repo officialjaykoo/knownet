@@ -31,12 +31,14 @@ artifacts, not source.
 
 ## Generated Artifacts
 
-Repo-local generated files use:
+Repo-local generated build files use:
 
 ```txt
-.local/venvs/api
 .local/cargo-target
 ```
+
+Python API dependencies are installed into the workstation's global Python
+interpreter. Do not create repo-local Python virtual environments.
 
 Tool-standard generated folders remain ignored:
 
@@ -49,4 +51,4 @@ __pycache__
 
 Use `scripts/clean_generated.ps1` for normal cache cleanup. Use
 `scripts/clean_generated.ps1 -All` only when you intentionally want to remove
-the API virtualenv, web dependencies, and Rust build output too.
+web dependencies and Rust build output too.

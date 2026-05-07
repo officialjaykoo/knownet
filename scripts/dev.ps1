@@ -10,7 +10,7 @@ $Root = $KnownetRoot
 $ApiDir = $KnownetApiDir
 $CoreDir = $KnownetCoreDir
 $WebDir = $KnownetWebDir
-$VenvPython = $KnownetApiVenvPython
+$Python = $KnownetPython
 $RunDir = Join-Path $Root "data/tmp/dev"
 $LogDir = Join-Path $Root "data/logs/dev"
 
@@ -128,14 +128,13 @@ Push-Location $CoreDir
 cargo build
 Pop-Location
 
-Step "Preparing API virtual environment"
-if (-not (Test-Path $VenvPython)) {
-  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $KnownetApiVenvDir) | Out-Null
-  python -m venv $KnownetApiVenvDir
-}
-
+Step "Checking global Python API dependencies"
 Push-Location $ApiDir
-& $VenvPython -m pip install -e .
+try {
+  & $Python -c "import fastapi, uvicorn, pydantic_settings, aiosqlite, httpx, frontmatter, yaml" | Out-Null
+} catch {
+  & $Python -m pip install "fastapi>=0.115" "uvicorn[standard]>=0.30" "pydantic>=2.8" "pydantic-settings>=2.4" "aiosqlite>=0.20" "httpx>=0.27" "pytest>=8.0" "python-frontmatter>=1.1" "PyYAML>=6.0" "sentence-transformers>=2.7"
+}
 Pop-Location
 
 Step "Installing web dependencies"
@@ -173,7 +172,7 @@ if ($ProductionWeb) {
 }
 Write-Host "Logs: $LogDir"
 
-$apiProcess = Start-Process $VenvPython -WindowStyle Hidden -PassThru -WorkingDirectory $ApiDir -RedirectStandardOutput $ApiOut -RedirectStandardError $ApiErr -ArgumentList @(
+$apiProcess = Start-Process $Python -WindowStyle Hidden -PassThru -WorkingDirectory $ApiDir -RedirectStandardOutput $ApiOut -RedirectStandardError $ApiErr -ArgumentList @(
   "-m",
   "uvicorn",
   "knownet_api.main:app",

@@ -31,8 +31,8 @@ Start the local development stack:
 .\scripts\dev.ps1
 ```
 
-This builds the Rust daemon, creates `.local/venvs/api` when needed, installs API
-and web dependencies, then starts:
+This builds the Rust daemon, checks global Python API dependencies, installs web
+dependencies, then starts:
 
 - API: `http://127.0.0.1:8000`
 - Web: `http://127.0.0.1:3000`
@@ -58,10 +58,10 @@ slow restore/import flows and smoke tests during normal coding.
 `release_check.ps1` still runs fast API tests, slow operational tests, smoke
 tests, Rust tests, npm audit, and the web build before a push or release.
 
-Local generated files live outside source folders where practical. The API
-virtualenv is under `.local/venvs/api`; Cargo build output is under
+Local generated files stay ignored and disposable. Cargo build output is under
 `.local/cargo-target`; Next and npm generated folders remain tool-standard
-ignored directories and can be removed with
+ignored directories. Python API dependencies use the workstation's global
+Python interpreter, not a repo-local virtualenv. Generated folders can be removed with
 `.\scripts\clean_generated.ps1`. See [Local Layout](./docs/LOCAL_LAYOUT.md).
 
 If Rust rebuild fails with `access denied`, stop running API/Rust processes and

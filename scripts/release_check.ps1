@@ -5,7 +5,7 @@ $Root = $KnownetRoot
 $ApiDir = $KnownetApiDir
 $CoreDir = $KnownetCoreDir
 $WebDir = $KnownetWebDir
-$VenvPython = $KnownetApiVenvPython
+$Python = $KnownetPython
 $EvidencePath = Join-Path $Root "docs/RELEASE_EVIDENCE.md"
 
 function Step($Message) {
@@ -53,29 +53,26 @@ cargo test
 Pop-Location
 
 Step "API tests"
-if (-not (Test-Path $VenvPython)) {
-  throw "API virtualenv not found at .local/venvs/api. Run scripts/dev.ps1 first."
-}
 Push-Location $ApiDir
-& $VenvPython -m pytest -m "not slow and not smoke"
+& $Python -m pytest -m "not slow and not smoke"
 Pop-Location
 
 Step "MCP tests"
 $env:PYTHONPATH = Join-Path $Root "apps/mcp"
-& $VenvPython -m pytest (Join-Path $Root "apps/mcp/tests/test_knownet_mcp.py") -q
+& $Python -m pytest (Join-Path $Root "apps/mcp/tests/test_knownet_mcp.py") -q
 
 Step "SDK tests"
 $env:PYTHONPATH = Join-Path $Root "packages/knownet-agent-py"
-& $VenvPython -m pytest (Join-Path $Root "packages/knownet-agent-py/tests") -q
+& $Python -m pytest (Join-Path $Root "packages/knownet-agent-py/tests") -q
 
 Step "Slow operational API tests"
 Push-Location $ApiDir
-& $VenvPython -m pytest -m slow
+& $Python -m pytest -m slow
 Pop-Location
 
 Step "Smoke tests"
 Push-Location $ApiDir
-& $VenvPython -m pytest -m smoke
+& $Python -m pytest -m smoke
 Pop-Location
 
 Step "Web dependency audit"
