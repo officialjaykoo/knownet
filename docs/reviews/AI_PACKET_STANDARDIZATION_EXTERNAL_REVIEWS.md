@@ -1377,3 +1377,80 @@ role_boundaries.narrative removal: Claude, Qwen, Kimi, MiniMax
 
 The HTTP(S) schema reference suggestion is useful for future public docs but
 should not block the current local-first packet workflow.
+
+## 2026-05-07 Claude Follow-Up On P26-008 Through P26-014
+
+Reviewer: Claude  
+Focus: Phase 26 follow-up task design  
+Verdict: P26-008 is immediately actionable; P26-009 should move up and run with
+P26-008
+
+### Summary
+
+Claude reviewed the newly added P26-008 through P26-014 follow-up tasks and
+recommended tightening several implementation details before coding. The main
+theme is to keep new fields signal-local, deterministic, and testable with
+fixtures.
+
+### Recommendations Applied To Phase 26
+
+1. `empty_state.reason` must be an enum.
+
+   Use separate values:
+
+   ```txt
+   fresh_install
+   indexing_pending
+   data_load_failed
+   intentionally_empty
+   unknown_empty_state
+   ```
+
+   Avoid mixed values such as `fresh_install_or_no_pages`.
+
+2. P26-009 fixtures should run with P26-008.
+
+   Minimum fixture set:
+
+   ```txt
+   empty-project-overview
+   healthy-project-overview
+   degraded-project-overview
+   ```
+
+3. AI Review Comparator should remain deterministic.
+
+   Start with section parsing for:
+
+   ```txt
+   score
+   top_changes
+   do_not_change
+   standard_patterns
+   verdict
+   ```
+
+   Explicitly detect conflicts such as "remove X" versus "do not remove X".
+
+4. `context_questions` should be generated from `signals[].required_context`.
+
+   Do not maintain a second question source.
+
+5. `evidence_upgrade_path` belongs inside the signal.
+
+   Do not add another top-level upgrade path.
+
+6. Packet fitness must be advisory and explainable.
+
+   Include `advisory_only: true` and a simple scoring breakdown.
+
+7. Packet diff must include `actionability_delta`.
+
+   Diff should show whether the packet became more useful, not only whether it
+   became smaller.
+
+### Codex Notes
+
+These recommendations are implementation guardrails. They prevent the new
+follow-up tasks from repeating earlier packet mistakes: top-level duplication,
+free-form fields where enums are needed, and size metrics replacing usefulness.

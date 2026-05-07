@@ -474,11 +474,24 @@ Implementation shape:
    {
      "empty_state": {
        "active": true,
-       "reason": "fresh_install_or_no_pages",
+       "reason": "fresh_install",
        "operator_question": "Is this a fresh install, or should pages already exist?"
      }
    }
    ```
+
+   `reason` must be an enum, not a free-form string:
+
+   ```txt
+   fresh_install
+   indexing_pending
+   data_load_failed
+   intentionally_empty
+   unknown_empty_state
+   ```
+
+   Do not use combined reasons such as `fresh_install_or_no_pages`; external AI
+   cannot branch cleanly on mixed meanings.
 
    Keep this compact. It should reduce false findings from external AI, not add
    a new diagnostic dump.
@@ -508,6 +521,7 @@ Done when:
 - Copy-ready content does not carry nested duplicate links.
 - Empty state is explicitly labeled so external AI does not confuse a fresh
   install with data loss.
+- Empty-state reason values are fixed enums and tested.
 - The resulting packet remains accurate first and compact second.
 
 ## P26-009 Golden Packet Fixtures
@@ -520,11 +534,17 @@ state. KnowNet needs a small fixture set that represents common packet states.
 
 Implementation shape:
 
-Create stable packet fixtures such as:
+Create the first three stable packet fixtures together with P26-008:
 
 ```txt
 empty-project-overview
 healthy-project-overview
+degraded-project-overview
+```
+
+Then add optional fixtures as needed:
+
+```txt
 provider-failure-review
 security-warning-review
 implementation-candidates
@@ -551,6 +571,8 @@ Rules:
 Done when:
 
 - At least three representative compact packet fixtures exist.
+- The first three fixtures cover empty/fresh install, healthy, and degraded
+  states.
 - Tests verify they stay within expected size bands.
 - Tests verify required signals and required_context are present.
 
@@ -578,6 +600,17 @@ Rules:
 
 - Start as an operator-side helper or API utility; no complex ML clustering.
 - Use deterministic keyword/section parsing first.
+- Parse at least these sections when present:
+
+  ```txt
+  score
+  top_changes
+  do_not_change
+  standard_patterns
+  verdict
+  ```
+
+- Detect explicit conflicts such as "remove X" versus "do not remove X".
 - Keep source attribution per model.
 - Do not auto-implement comparator output.
 
@@ -586,6 +619,7 @@ Done when:
 - The comparator can ingest at least three AI packet reviews.
 - It returns shared recommendations with reviewer attribution.
 - It separates consensus from one-off suggestions.
+- It reports conflict items explicitly instead of hiding them in summaries.
 
 ## P26-011 Ask-Operator Output Mode
 
@@ -620,7 +654,23 @@ Expected response shape:
 
 Rules:
 
-- Questions should derive from `signals[].required_context`.
+- Questions must derive from `signals[].required_context`; do not maintain a
+  second independent question source.
+- The generation rule is:
+
+  ```python
+  def build_context_questions(signals):
+      return [
+          {
+              "question": signal["required_context"]["ask_operator"],
+              "missing": signal["required_context"]["missing"],
+              "reason": signal.get("description"),
+          }
+          for signal in signals
+          if signal.get("required_context")
+      ]
+  ```
+
 - Keep max questions low, usually 3.
 - Do not treat questions as findings.
 - Let the operator answer questions and regenerate or upgrade the packet.
@@ -630,6 +680,7 @@ Done when:
 - Packet contract documents `context_questions`.
 - Parser can distinguish context questions from findings.
 - UI or API can display the questions without importing them as findings.
+- Question output is generated from signal-level required_context in tests.
 
 ## P26-012 Evidence Upgrade Path
 
@@ -641,10 +692,16 @@ explicit when missing context is known.
 
 Implementation shape:
 
-Add a compact upgrade hint where appropriate:
+Add a compact upgrade hint inside the signal that needs more context:
 
 ```json
 {
+  "code": "ai_state_quality.fail",
+  "severity": "high",
+  "required_context": {
+    "missing": ["fresh_install_confirmation"],
+    "ask_operator": "Is this a fresh install, or should pages already exist?"
+  },
   "evidence_upgrade_path": {
     "from": "context_limited",
     "to": "operator_verified",
@@ -656,6 +713,7 @@ Add a compact upgrade hint where appropriate:
 Rules:
 
 - Keep it tied to signals or findings, not as a large global explanation.
+- Do not add a top-level `evidence_upgrade_path`.
 - Do not invent `direct_access` when only operator confirmation is available.
 - Do not auto-upgrade evidence quality without an explicit operator action.
 
@@ -680,6 +738,7 @@ Add an advisory score outside or alongside `packet_integrity`:
 ```json
 {
   "packet_fitness": {
+    "advisory_only": true,
     "score": 86,
     "size": "excellent",
     "evidence": "weak",
@@ -692,6 +751,18 @@ Add an advisory score outside or alongside `packet_integrity`:
 Rules:
 
 - Advisory only; do not block packet generation.
+- Include `advisory_only: true`.
+- Document the score formula in the same module or schema reference. Keep the
+  formula simple, for example:
+
+  ```txt
+  score = 100
+    - size_penalty
+    - missing_context_penalty
+    - weak_evidence_penalty
+    + actionability_bonus
+  ```
+
 - Keep categories few and stable.
 - Do not overfit to char count.
 - Prefer clear labels over fake precision.
@@ -700,6 +771,8 @@ Done when:
 
 - Fitness score distinguishes size, evidence strength, actionability, and
   empty-state clarity.
+- Fitness output includes `advisory_only: true` and an explainable formula or
+  breakdown.
 - Tests cover a too-thin packet and an oversized-but-useful packet.
 
 ## P26-014 Packet Diff View
@@ -720,6 +793,7 @@ removed sections
 added sections
 signal changes
 required_context changes
+actionability_delta
 contract_version change
 ```
 
@@ -734,6 +808,7 @@ Done when:
 - Operator can compare two packet IDs or fixtures.
 - Diff output explains whether actionability improved, not just whether size
   dropped.
+- Diff output includes `actionability_delta` before raw size deltas.
 - Diff stays outside copy-ready compact packet content.
 
 ## Acceptance
@@ -764,12 +839,11 @@ P26-004 Single Effective Limits
 P26-005 Compact Overview Budget
 P26-006 Opt-In Detail Profiles And Schema References
 P26-007 Standard Alignment Without New Weight
-P26-008 Semantic Trim After External Review
-P26-009 Golden Packet Fixtures
-P26-010 AI Review Comparator
+P26-008 Semantic Trim After External Review + P26-009 Golden Packet Fixtures
 P26-011 Ask-Operator Output Mode
 P26-012 Evidence Upgrade Path
 P26-013 Packet Fitness Score
+P26-010 AI Review Comparator
 P26-014 Packet Diff View
 ```
 
