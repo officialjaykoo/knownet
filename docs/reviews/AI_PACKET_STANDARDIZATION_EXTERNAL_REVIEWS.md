@@ -540,9 +540,101 @@ premature. A balanced interpretation is to reference schemas for stable tool
 and packet shapes, while delaying strict runtime rejection until compact packet
 shape settles.
 
+## 2026-05-07 MiniMax Review
+
+Reviewer: MiniMax  
+Focus: packet/snapshot standardization review  
+Score: 72/100  
+Verdict: sufficient but overbuilt for local-first
+
+### Summary
+
+MiniMax judged the packet as clear and safe, with good MCP integration and W3C
+trace context usage. Its criticism is that the packet carries too much overhead
+for a local-first project. Like the other reviews, MiniMax focused on the
+20,468 character packet exceeding the 12,000 character budget.
+
+### Top 5 Recommended Changes
+
+1. Reduce `hard_limits.char_budget` for the overview profile.
+
+   MiniMax recommends moving the overview profile from `12,000` characters to
+   `8,000` characters. Its reasoning is that external AI review works better
+   when the default packet forces compact context rather than allowing broad
+   detail.
+
+2. Remove or conditionalize unused MCP prompt methods.
+
+   If not actively used, remove these from the default packet:
+
+   ```txt
+   prompts/list
+   prompts/get
+   ```
+
+   Alternatively, include them only in a detailed MCP/profile view.
+
+3. Remove `snapshot_self_test` or replace it with a minimal version.
+
+   MiniMax agrees with Claude, Gemini, DeepSeek, and Kimi that self-test output
+   is useful at generation time but too long for AI-facing packet text.
+
+4. Remove `provider_matrix` from the default profile.
+
+   MiniMax argues that the overview packet does not need eight-provider detail
+   by default. Provider information should appear only in a provider/detail
+   profile.
+
+5. Reduce `output_contract.max_findings` from `5` to `3`.
+
+   MiniMax recommends making default AI output shorter. This differs from some
+   previous reviews that wanted `max_findings` unified but did not necessarily
+   require reducing it.
+
+### Do Not Change
+
+- Keep the W3C trace context structure.
+- Keep `role_and_access_boundaries`; MiniMax considers it clear and safe.
+- Keep `import_contract`, including `dry_run` and required fields.
+- Keep `node_card_contract`; it is already minimal and clear.
+- Keep the security policy narrative and refused/escalation lists.
+
+### Open Source / Standard Patterns To Absorb
+
+MiniMax recommended these patterns:
+
+- OpenTelemetry trace context: keep `traceparent` and consider adding trace
+  flags for sampling support.
+- JSON Schema `$defs`: separate reusable definitions such as
+  `node_card_contract` and `output_contract`.
+- MCP `SamplingMessage`-style priority: consider adding sampling or priority
+  metadata to evidence quality later.
+- RFC 9110 HTTP semantics: make `read_endpoint` explicit with method and path,
+  for example `GET /api/...`.
+
+### Importable Finding
+
+```txt
+Title: Packet oversized relative to overview char budget
+Severity: medium
+Area: Data
+Evidence: snapshot_quality.details.content_chars is 20468 while
+profile_char_budget is 12000, exceeding the budget by about 70%.
+Proposed change: Reduce the overview packet size by removing unused fields, or
+split into compact overview and detailed variants.
+```
+
+### Codex Notes
+
+MiniMax reinforces the strongest consensus item: compact the default packet.
+Its most opinionated recommendation is lowering the overview budget to `8,000`
+characters and reducing default findings to `3`. That is useful as a speed
+target, but should be weighed against Kimi's `required_context` idea so compact
+packets do not become too thin to produce importable findings.
+
 ## Cross-Review Synthesis
 
-Common findings from Claude, Gemini, DeepSeek, Qwen, and Kimi:
+Common findings from Claude, Gemini, DeepSeek, Qwen, Kimi, and MiniMax:
 
 1. The packet is too large and overbuilt.
 2. Markdown/JSON or contract duplication should be reduced or eliminated.
@@ -552,6 +644,8 @@ Common findings from Claude, Gemini, DeepSeek, Qwen, and Kimi:
 6. Limits and metadata should have one source of truth.
 7. Empty/null scaffolding should be omitted.
 8. Guardrails should remain explicit.
+9. The default profile should be compact; detailed/provider views should be
+   opt-in.
 
 Likely next implementation direction:
 
@@ -562,6 +656,7 @@ Create a compact external-AI packet mode:
 - no snapshot_self_test
 - no inline action_input_schema
 - no duplicated provider_matrix
+- provider_matrix only in provider/detail profiles
 - compact health summary only
 - one signals array for prioritized actionable items
 - required_context for targeted follow-up questions
@@ -598,4 +693,11 @@ Fourth open question:
 ```txt
 Should KnowNet replace custom `knownet://` packet/schema URIs with MCP-native,
 relative API, or HTTPS resource paths for external AI handoff?
+```
+
+Fifth open question:
+
+```txt
+Should the compact overview target remain 12,000 characters, or should KnowNet
+adopt an 8,000 character target and move more detail into opt-in profiles?
 ```
