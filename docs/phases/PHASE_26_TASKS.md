@@ -34,6 +34,8 @@ Implemented surface:
 - Compact packets use contract_ref, contract_hash, packet_integrity, limits,
   compact health, and prioritized signals instead of full inline contract,
   contract_shape, snapshot_self_test, and Markdown/JSON duplication.
+- Copy-ready packet content omits full snapshot_quality details; quality remains
+  response metadata while packet_integrity carries compact size/budget status.
 - required_context lives on the signal that needs it.
 - max_findings and max_signals are separate effective limits.
 - Empty/null scaffolding is omitted from compact packet content.

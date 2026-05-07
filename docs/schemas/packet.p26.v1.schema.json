@@ -47,12 +47,6 @@
     "trace": {
       "$ref": "#/$defs/trace"
     },
-    "contract": {
-      "$ref": "#/$defs/contract"
-    },
-    "contract_shape": {
-      "type": "object"
-    },
     "ai_context": {
       "$ref": "#/$defs/ai_context"
     },

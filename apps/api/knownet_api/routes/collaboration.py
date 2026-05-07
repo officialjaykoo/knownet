@@ -84,6 +84,7 @@ from ..services.project_snapshot import (
     packet_integrity_summary,
     packet_signals,
     packet_summary,
+    profile_char_budget,
     profile_hard_limits,
     source_manifest,
     project_snapshot_focus,
@@ -1310,7 +1311,7 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
     compact_health_payload = compact_health(health)
     standard_delta = _standard_delta(delta)
 
-    def compact_payload(*, quality_payload: dict[str, Any] | None = None, signals: list[dict[str, Any]] | None = None, integrity: dict[str, Any] | None = None) -> dict[str, Any]:
+    def compact_payload(*, signals: list[dict[str, Any]] | None = None, integrity: dict[str, Any] | None = None) -> dict[str, Any]:
         include_provider_detail = profile == "provider_review"
         include_detail_state = profile in {"stability", "performance", "security", "implementation", "provider_review"}
         payload_dict = {
@@ -1337,7 +1338,6 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
             "snapshot_diff_summary": diff_summary,
             "do_not_suggest": do_not_suggest,
             "packet_integrity": integrity,
-            "snapshot_quality": quality_payload,
             "preflight": preflight if include_detail_state else {"pages": preflight.get("pages"), "ai_state_pages": preflight.get("ai_state_pages")},
             "ai_state_quality": {"overall_status": quality.get("overall_status"), "summary": quality.get("summary", {})},
             "search_index_status": (health or {}).get("search"),
@@ -1373,8 +1373,21 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
     )
     signals = packet_signals(issues, max_signals=int(effective_limits["max_signals"]))
     packet_integrity = packet_integrity_summary(status="pass", checks_passed=4, checked_at=generated_at)
-    content_payload = compact_payload(quality_payload=snapshot_quality, signals=signals, integrity=packet_integrity)
-    content = json.dumps(content_payload, ensure_ascii=False, indent=2)
+    char_budget = profile_char_budget(profile)
+    optimization_target = 8000 if profile == "overview" else min(8000, char_budget)
+    content = ""
+    for _ in range(3):
+        content_payload = compact_payload(signals=signals, integrity=packet_integrity)
+        content = json.dumps(content_payload, ensure_ascii=False, indent=2)
+        packet_integrity.update(
+            {
+                "content_chars": len(content),
+                "char_budget": char_budget,
+                "optimization_target_chars": optimization_target,
+                "under_char_budget": len(content) <= char_budget,
+                "under_optimization_target": len(content) <= optimization_target,
+            }
+        )
     if "mostly_context_limited" in snapshot_quality["warnings"]:
         contract = build_packet_contract(
             packet_kind="project_snapshot",
@@ -1390,7 +1403,7 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
             target_agent_overrides=target_policy,
         )
         contract_hash = "sha256:" + hashlib.sha256(json.dumps(contract, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-        content_payload = compact_payload(quality_payload=snapshot_quality, signals=signals, integrity=packet_integrity)
+        content_payload = compact_payload(signals=signals, integrity=packet_integrity)
         content = json.dumps(content_payload, ensure_ascii=False, indent=2)
     content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
     packet_dir = settings.data_dir / "project-snapshot-packets"

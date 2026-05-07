@@ -86,6 +86,8 @@ def test_packet_schema_documents_standard_header_and_trace_fields():
     assert schema["$id"] == "/api/schemas/packet/p26.v1"
     assert "protocol_version" in schema["required"]
     assert "schema_ref" in schema["required"]
+    assert "contract" not in schema["properties"]
+    assert "contract_shape" not in schema["properties"]
     trace_schema = schema["$defs"]["trace"]
     assert "traceparent" in trace_schema["required"]
     assert trace_schema["properties"]["trace_id"]["pattern"] == "^[0-9a-f]{32}$"
@@ -511,6 +513,10 @@ Add provider retry and alerting.
         assert overview_data["important_changes"]["high_severity_findings"][0]["action_route"] == "implement"
         assert overview_data["snapshot_diff_summary"]
         assert overview_data["packet_integrity"]["status"] == "pass"
+        assert overview_data["packet_integrity"]["content_chars"] == len(overview_data["content"])
+        assert overview_data["packet_integrity"]["content_chars"] <= 12000
+        assert overview_data["packet_integrity"]["char_budget"] == 12000
+        assert overview_data["packet_integrity"]["optimization_target_chars"] == 8000
         assert "snapshot_self_test" not in overview_data
         assert "contract_shape" not in overview_data
         assert "contract" not in overview_data
@@ -520,9 +526,11 @@ Add provider retry and alerting.
         assert content_json["contract_ref"] == "/api/schemas/packet/p26.v1"
         assert len(overview_data["content"]) <= 12000
         assert "snapshot_self_test" not in content_json
+        assert "snapshot_quality" not in content_json
         assert "contract_shape" not in content_json
         assert "contract" not in content_json
         assert "signals" in content_json
+        assert "signals.required_context" in content_json["ai_context"]["read_order"]
 
         finding_detail = client.get(f"/api/collaboration/findings/{finding_id}")
         assert finding_detail.status_code == 200, finding_detail.text

@@ -375,7 +375,7 @@ def ai_context(*, profile: str, target_agent: str, focus: str, output_mode: str)
         "target_agent": target_agent,
         "task": focus,
         "output_mode": output_mode,
-        "read_order": ["ai_context", "signals", "required_context", "packet_summary", "contract_ref"],
+        "read_order": ["ai_context", "signals", "signals.required_context", "packet_summary", "contract_ref"],
         "style": "Keep the answer short, evidence-tagged, and import-ready.",
     }
 
