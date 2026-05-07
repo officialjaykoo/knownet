@@ -9,7 +9,8 @@ from knownet_api.config import get_settings
 from knownet_api.main import app
 from knownet_api.routes.collaboration import parse_review_markdown
 from knownet_api.services.packet_contract import build_packet_contract, contract_shape, explicit_stale_context_suppression, validate_packet_header, validate_packet_schema_core
-from knownet_api.services.project_snapshot import snapshot_self_test
+from knownet_api.services.ai_review_comparator import compare_ai_reviews
+from knownet_api.services.project_snapshot import EMPTY_STATE_REASONS, packet_diff_view, snapshot_self_test
 from fixture_utils import load_json_fixture_dir
 
 
@@ -383,6 +384,12 @@ def test_project_snapshot_packet_summarizes_safe_handoff_state(tmp_path, monkeyp
         assert "storage_path" not in data
         content_json = json.loads(content)
         assert content_json["type"] == "project_snapshot_packet"
+        assert "links" not in content_json
+        assert content_json["packet_url"].startswith("/api/collaboration/project-snapshot-packets/")
+        assert "narrative" not in content_json["role_boundaries"]
+        assert "preflight" not in content_json
+        assert "ai_state_quality" not in content_json
+        assert content_json["packet_fitness"]["advisory_only"] is True
         assert "Tell Codex the next implementation move." in content
         assert content_json["packet_summary"]["accepted_findings"]
         assert finding_id in content
@@ -525,12 +532,19 @@ Add provider retry and alerting.
         content_json = json.loads(overview_data["content"])
         assert content_json["contract_ref"] == "/api/schemas/packet/p26.v1"
         assert len(overview_data["content"]) <= 12000
+        assert "links" not in content_json
+        assert content_json["packet_url"].startswith("/api/collaboration/project-snapshot-packets/")
         assert "snapshot_self_test" not in content_json
         assert "snapshot_quality" not in content_json
         assert "contract_shape" not in content_json
         assert "contract" not in content_json
+        assert "preflight" not in content_json
+        assert "ai_state_quality" not in content_json
+        assert "narrative" not in content_json["role_boundaries"]
         assert "signals" in content_json
         assert "signals.required_context" in content_json["ai_context"]["read_order"]
+        assert content_json["packet_fitness"]["advisory_only"] is True
+        assert "formula" in content_json["packet_fitness"]
 
         finding_detail = client.get(f"/api/collaboration/findings/{finding_id}")
         assert finding_detail.status_code == 200, finding_detail.text
@@ -566,6 +580,86 @@ Add provider retry and alerting.
         assert missing.status_code == 404
         assert missing.json()["detail"]["code"] == "project_snapshot_since_packet_not_found"
     get_settings.cache_clear()
+
+
+def test_phase26_empty_state_context_questions_and_diff_helpers(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/collaboration/project-snapshot-packets",
+            json={"target_agent": "claude", "output_mode": "context_questions"},
+        )
+        assert response.status_code == 200, response.text
+        data = response.json()["data"]
+        content_json = json.loads(data["content"])
+        assert data["output_mode"] == "context_questions"
+        assert content_json["context_questions"]
+        assert content_json["context_questions"][0]["question"]
+        assert content_json["signals"][0]["required_context"]
+        assert content_json["signals"][0]["evidence_upgrade_path"]["from"] == "context_limited"
+        assert content_json["empty_state"]["reason"] in EMPTY_STATE_REASONS
+        assert content_json["empty_state"]["reason"] != "fresh_install_or_no_pages"
+
+        compact = {
+            "output_mode": "context_questions",
+            "questions": [
+                {
+                    "question": "Is this a fresh install?",
+                    "missing": ["fresh_install_confirmation"],
+                    "reason": "No pages are present.",
+                }
+            ],
+        }
+        dry_run = client.post("/api/collaboration/reviews?dry_run=true", json={"markdown": json.dumps(compact)})
+        assert dry_run.status_code == 200, dry_run.text
+        dry_data = dry_run.json()["data"]
+        assert dry_data["finding_count"] == 0
+        assert dry_data["context_questions"][0]["missing"] == ["fresh_install_confirmation"]
+        assert dry_data["import_ready"] is False
+
+        diff = client.post(
+            "/api/collaboration/project-snapshot-packets/compare",
+            json={
+                "left_packet": {"contract_version": "p26.v1", "signals": []},
+                "right_packet": content_json,
+            },
+        )
+        assert diff.status_code == 200, diff.text
+        diff_data = diff.json()["data"]
+        assert "actionability_delta" in diff_data
+        assert diff_data["actionability_delta"] > 0
+    get_settings.cache_clear()
+
+
+def test_phase26_golden_packet_fixtures_are_actionable():
+    fixtures = load_json_fixture_dir("project_packets")
+    assert {fixture["name"] for fixture in fixtures} == {"empty-project-overview", "healthy-project-overview", "degraded-project-overview"}
+    for fixture in fixtures:
+        packet = fixture["packet"]
+        expected = fixture["expected"]
+        content = json.dumps(packet, ensure_ascii=False)
+        assert expected["min_chars"] <= len(content) <= expected["max_chars"]
+        assert packet["output_mode"] == expected["output_mode"]
+        signal_codes = [signal["code"] for signal in packet.get("signals") or []]
+        assert signal_codes == expected["signals"]
+        has_required = any(signal.get("required_context") for signal in packet.get("signals") or [])
+        assert has_required is expected["required_context"]
+        if expected.get("empty_state_reason"):
+            assert packet["empty_state"]["reason"] == expected["empty_state_reason"]
+
+
+def test_phase26_ai_review_comparator_reports_consensus_and_conflict():
+    comparison = compare_ai_reviews(
+        [
+            {"source_agent": "claude", "text": "## Top Changes\n- Remove ai_state_quality duplication\n\n## Do Not Change\n- Keep traceparent"},
+            {"source_agent": "deepseek", "text": "## Top Changes\n- Remove ai_state_quality duplication\n\n## Do Not Change\n- Keep traceparent"},
+            {"source_agent": "gemini", "text": "## Top Changes\n- Strip traceparent\n\n## Do Not Change\n- Do not remove traceparent"},
+        ]
+    )
+    assert comparison["common_recommendations"]
+    assert any("ai_state_quality" in item["text"] for item in comparison["common_recommendations"])
+    assert comparison["do_not_change_consensus"]
+    assert comparison["candidate_implementation_list"]
 
 
 def test_context_limited_high_finding_does_not_auto_create_task(tmp_path, monkeypatch):

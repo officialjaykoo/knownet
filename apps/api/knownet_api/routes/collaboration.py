@@ -73,13 +73,18 @@ from ..services.packet_contract import (
 from ..services.project_snapshot import (
     DEFAULT_PROJECT_SNAPSHOT_FOCUS,
     ai_context,
+    build_context_questions,
     compact_health,
     compact_limits,
+    compact_role_boundaries,
     do_not_suggest_rules,
     do_not_reopen,
+    empty_state_signal,
     important_changes,
     node_card,
     omit_empty,
+    packet_diff_view,
+    packet_fitness_score,
     packet_issues,
     packet_integrity_summary,
     packet_signals,
@@ -91,6 +96,7 @@ from ..services.project_snapshot import (
     snapshot_diff_summary,
     target_agent_policy,
 )
+from ..services.ai_review_comparator import compare_ai_reviews
 from ..services.rust_core import RustCoreError
 
 router = APIRouter(prefix="/api/collaboration", tags=["collaboration"])
@@ -177,6 +183,22 @@ class ProjectSnapshotPacketRequest(BaseModel):
     since_packet_id: str | None = Field(default=None, max_length=80)
     allow_since_packet_fallback: bool = False
     quality_acknowledged: bool = False
+
+
+class PacketCompareRequest(BaseModel):
+    left_packet_id: str | None = Field(default=None, max_length=80)
+    right_packet_id: str | None = Field(default=None, max_length=80)
+    left_packet: dict | None = None
+    right_packet: dict | None = None
+
+
+class AIReviewComparisonItem(BaseModel):
+    source_agent: str = Field(default="external_ai", max_length=80)
+    text: str = Field(min_length=1, max_length=256 * 1024)
+
+
+class AIReviewComparisonRequest(BaseModel):
+    reviews: list[AIReviewComparisonItem] = Field(min_length=1, max_length=12)
 
 
 class ExperimentPacketRequest(BaseModel):
@@ -482,6 +504,21 @@ async def import_review(payload: ImportReviewRequest, request: Request, dry_run:
         metadata["source_model"] = payload.source_model
     elif agent and agent.agent_model:
         metadata["source_model"] = agent.agent_model
+    if dry_run and not findings and metadata.get("context_questions"):
+        return {
+            "ok": True,
+            "data": {
+                "dry_run": True,
+                "metadata": metadata,
+                "finding_count": 0,
+                "findings": [],
+                "context_questions": metadata.get("context_questions") or [],
+                "duplicate_candidates": [],
+                "parser_errors": parser_errors,
+                "truncated_findings": bool(metadata.get("truncated_findings")),
+                "import_ready": False,
+            },
+        }
     if not findings:
         raise HTTPException(status_code=422, detail={"code": "collaboration_no_findings", "message": "No findings found", "details": {}})
     duplicate_candidates = await _finding_duplicate_candidates(settings.sqlite_path, vault_id=payload.vault_id or actor.vault_id, findings=findings)
@@ -501,6 +538,7 @@ async def import_review(payload: ImportReviewRequest, request: Request, dry_run:
                 "metadata": metadata,
                 "finding_count": len(findings),
                 "findings": findings,
+                "context_questions": metadata.get("context_questions") or [],
                 "duplicate_candidates": duplicate_candidates,
                 "parser_errors": parser_errors,
                 "truncated_findings": bool(metadata.get("truncated_findings")),
@@ -1310,10 +1348,19 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
     contract_hash = "sha256:" + hashlib.sha256(json.dumps(contract, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
     compact_health_payload = compact_health(health)
     standard_delta = _standard_delta(delta)
+    empty_state_payload = empty_state_signal(preflight=preflight, quality=quality, health=health)
+    compact_role_payload = compact_role_boundaries(contract["role_and_access_boundaries"])
 
-    def compact_payload(*, signals: list[dict[str, Any]] | None = None, integrity: dict[str, Any] | None = None) -> dict[str, Any]:
+    def compact_payload(
+        *,
+        signals: list[dict[str, Any]] | None = None,
+        integrity: dict[str, Any] | None = None,
+        fitness: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         include_provider_detail = profile == "provider_review"
         include_detail_state = profile in {"stability", "performance", "security", "implementation", "provider_review"}
+        active_signals = signals or []
+        context_questions = build_context_questions(active_signals, max_questions=int(OUTPUT_MODES[output_mode].get("max_questions") or 3))
         payload_dict = {
             "id": packet_id,
             "type": "project_snapshot_packet",
@@ -1323,7 +1370,7 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
             "contract_ref": contract_ref,
             "contract_hash": contract_hash,
             "generated_at": generated_at,
-            "links": _resource_links(self_href=f"/api/collaboration/project-snapshot-packets/{packet_id}", content_href=f"/api/collaboration/project-snapshot-packets/{packet_id}", storage_href=f"project-snapshot-packets/{packet_id}.md"),
+            "packet_url": f"/api/collaboration/project-snapshot-packets/{packet_id}",
             "trace": trace_payload,
             "vault_id": payload.vault_id,
             "profile": profile,
@@ -1331,19 +1378,22 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
             "effective_focus": focus,
             "ai_context": ai_context_payload,
             "limits": effective_limits,
-            "role_boundaries": contract["role_and_access_boundaries"],
+            "role_boundaries": compact_role_payload,
             "health": compact_health_payload,
-            "signals": signals or [],
+            "signals": active_signals,
+            "context_questions": context_questions if output_mode == "context_questions" else None,
+            "empty_state": empty_state_payload,
             "packet_summary": summary_payload,
             "snapshot_diff_summary": diff_summary,
             "do_not_suggest": do_not_suggest,
             "packet_integrity": integrity,
-            "preflight": preflight if include_detail_state else {"pages": preflight.get("pages"), "ai_state_pages": preflight.get("ai_state_pages")},
-            "ai_state_quality": {"overall_status": quality.get("overall_status"), "summary": quality.get("summary", {})},
+            "packet_fitness": fitness,
+            "preflight": preflight if include_detail_state else None,
+            "ai_state_quality": {"overall_status": quality.get("overall_status"), "summary": quality.get("summary", {})} if include_detail_state else None,
             "search_index_status": (health or {}).get("search"),
             "delta": standard_delta,
             "node_cards": snapshot_node_cards,
-            "source_manifest": packet_source_manifest,
+            "source_manifest": packet_source_manifest if snapshot_node_cards else None,
             "provider_matrix": matrix.get("summary", {}) if include_provider_detail else None,
             "important_changes": important if include_detail_state else {"summary": important.get("summary", {})},
             "do_not_reopen": no_reopen if include_detail_state else None,
@@ -1376,8 +1426,9 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
     char_budget = profile_char_budget(profile)
     optimization_target = 8000 if profile == "overview" else min(8000, char_budget)
     content = ""
+    packet_fitness: dict[str, Any] | None = None
     for _ in range(3):
-        content_payload = compact_payload(signals=signals, integrity=packet_integrity)
+        content_payload = compact_payload(signals=signals, integrity=packet_integrity, fitness=packet_fitness)
         content = json.dumps(content_payload, ensure_ascii=False, indent=2)
         packet_integrity.update(
             {
@@ -1387,6 +1438,14 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
                 "under_char_budget": len(content) <= char_budget,
                 "under_optimization_target": len(content) <= optimization_target,
             }
+        )
+        packet_fitness = packet_fitness_score(
+            content_chars=len(content),
+            char_budget=char_budget,
+            optimization_target=optimization_target,
+            signals=signals,
+            empty_state=empty_state_payload,
+            packet_summary_payload=summary_payload,
         )
     if "mostly_context_limited" in snapshot_quality["warnings"]:
         contract = build_packet_contract(
@@ -1403,7 +1462,7 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
             target_agent_overrides=target_policy,
         )
         contract_hash = "sha256:" + hashlib.sha256(json.dumps(contract, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-        content_payload = compact_payload(signals=signals, integrity=packet_integrity)
+        content_payload = compact_payload(signals=signals, integrity=packet_integrity, fitness=packet_fitness)
         content = json.dumps(content_payload, ensure_ascii=False, indent=2)
     content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
     packet_dir = settings.data_dir / "project-snapshot-packets"
@@ -1454,6 +1513,7 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
             "warnings": warnings,
             "snapshot_quality": snapshot_quality,
             "packet_integrity": packet_integrity,
+            "packet_fitness": packet_fitness,
             "contract_ref": contract_ref,
             "contract_hash": contract_hash,
             "limits": effective_limits,
@@ -1464,6 +1524,8 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
             "ai_context": ai_context_payload,
             "issues": issues,
             "signals": signals,
+            "context_questions": build_context_questions(signals, max_questions=int(OUTPUT_MODES[output_mode].get("max_questions") or 3)),
+            "empty_state": empty_state_payload,
             "packet_summary": summary_payload,
             "node_cards": snapshot_node_cards,
             "source_manifest": packet_source_manifest,
@@ -1503,6 +1565,37 @@ async def get_project_snapshot_packet(packet_id: str, request: Request, actor: A
             "copy_ready": True,
         },
     }
+
+
+def _stored_packet_json(settings, packet_id: str) -> dict[str, Any]:
+    if not re.match(r"^snapshot_[a-f0-9]{12}$", packet_id):
+        raise HTTPException(status_code=404, detail={"code": "project_snapshot_packet_not_found", "message": "Project snapshot packet not found", "details": {"packet_id": packet_id}})
+    path = settings.data_dir / "project-snapshot-packets" / f"{packet_id}.md"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail={"code": "project_snapshot_packet_not_found", "message": "Project snapshot packet not found", "details": {"packet_id": packet_id}})
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=409, detail={"code": "project_snapshot_packet_not_json", "message": "Stored packet is not JSON", "details": {"packet_id": packet_id, "error": str(exc)}}) from exc
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=409, detail={"code": "project_snapshot_packet_invalid_json", "message": "Stored packet JSON must be an object", "details": {"packet_id": packet_id}})
+    return parsed
+
+
+@router.post("/project-snapshot-packets/compare")
+async def compare_project_snapshot_packets(payload: PacketCompareRequest, request: Request, actor: Actor = Depends(require_review_access)):
+    settings = request.app.state.settings
+    left = payload.left_packet or (_stored_packet_json(settings, payload.left_packet_id) if payload.left_packet_id else None)
+    right = payload.right_packet or (_stored_packet_json(settings, payload.right_packet_id) if payload.right_packet_id else None)
+    if not isinstance(left, dict) or not isinstance(right, dict):
+        raise HTTPException(status_code=422, detail={"code": "packet_compare_requires_two_packets", "message": "Provide left/right packet objects or packet ids.", "details": {}})
+    return {"ok": True, "data": packet_diff_view(left, right)}
+
+
+@router.post("/ai-review-comparisons")
+async def compare_external_ai_reviews(payload: AIReviewComparisonRequest, actor: Actor = Depends(require_review_access)):
+    reviews = [{"source_agent": item.source_agent, "text": item.text} for item in payload.reviews]
+    return {"ok": True, "data": compare_ai_reviews(reviews)}
 
 
 @router.post("/experiment-packets")

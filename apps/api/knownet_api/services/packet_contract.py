@@ -54,6 +54,12 @@ OUTPUT_MODES: dict[str, dict[str, Any]] = {
         "description": "Return provider stability, speed, or security risks only.",
         "forbidden_sections": ["unrelated UI advice", "broad project review", "raw provider token request"],
     },
+    "context_questions": {
+        "max_findings": 0,
+        "max_questions": 3,
+        "description": "Return only short operator questions derived from signals.required_context.",
+        "forbidden_sections": ["importable findings", "implementation plan", "release blocker claim"],
+    },
 }
 
 
@@ -356,7 +362,7 @@ def validate_packet_contract(contract: dict[str, Any]) -> list[str]:
 
 def output_contract(output_mode: str, *, mostly_context_limited: bool = False) -> dict[str, Any]:
     mode = OUTPUT_MODES.get(output_mode, OUTPUT_MODES["top_findings"])
-    return {
+    contract = {
         "output_mode": output_mode if output_mode in OUTPUT_MODES else "top_findings",
         "max_findings": mode["max_findings"],
         "description": mode["description"],
@@ -368,6 +374,10 @@ def output_contract(output_mode: str, *, mostly_context_limited: bool = False) -
             else "context_limited findings may flag review work, but must not become release blockers without operator verification."
         ),
     }
+    if "max_questions" in mode:
+        contract["max_questions"] = mode["max_questions"]
+        contract["question_source"] = "signals.required_context"
+    return contract
 
 
 def build_packet_contract(

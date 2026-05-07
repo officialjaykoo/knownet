@@ -274,6 +274,14 @@ _SIGNAL_SEVERITY_ORDER = {
     "expected_degraded": 4,
 }
 
+EMPTY_STATE_REASONS = {
+    "fresh_install",
+    "indexing_pending",
+    "data_load_failed",
+    "intentionally_empty",
+    "unknown_empty_state",
+}
+
 
 def _signal_required_context(code: str) -> dict[str, Any] | None:
     if code == "ai_state_quality.fail":
@@ -299,6 +307,36 @@ def _signal_required_context(code: str) -> dict[str, Any] | None:
     return None
 
 
+def _signal_evidence_upgrade_path(code: str, required_context: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not required_context:
+        return None
+    if code == "ai_state_quality.fail":
+        return {
+            "from": "context_limited",
+            "to": "operator_verified",
+            "requires": ["operator confirms empty-state reason or provides node cards/findings"],
+        }
+    if code in {"health.degraded", "provider_matrix.failed"} or code.startswith("packet."):
+        return {
+            "from": "context_limited",
+            "to": "operator_verified",
+            "requires": ["operator provides requested context"],
+        }
+    return None
+
+
+def _compact_params(params: dict[str, Any]) -> dict[str, Any]:
+    summary = params.get("summary")
+    if (
+        isinstance(summary, dict)
+        and summary
+        and all(isinstance(value, (int, float)) or value is None for value in summary.values())
+        and all((value or 0) == 0 for value in summary.values())
+    ):
+        return {**params, "summary": "empty"}
+    return params
+
+
 def packet_signals(issues: list[dict[str, Any]], *, max_signals: int) -> list[dict[str, Any]]:
     signals: list[dict[str, Any]] = []
     for issue in issues:
@@ -311,12 +349,15 @@ def packet_signals(issues: list[dict[str, Any]], *, max_signals: int) -> list[di
             "code": code,
             "severity": severity,
             "action": action,
-            "params": issue.get("action_params") or {},
+            "params": _compact_params(issue.get("action_params") or {}),
             "description": code.replace(".", " ").replace("_", " "),
         }
         required_context = _signal_required_context(code)
         if required_context:
             signal["required_context"] = required_context
+        upgrade_path = _signal_evidence_upgrade_path(code, required_context)
+        if upgrade_path:
+            signal["evidence_upgrade_path"] = upgrade_path
         signals.append(signal)
     signals.sort(key=lambda item: (_SIGNAL_SEVERITY_ORDER.get(str(item.get("severity")), 99), 0 if item.get("action") else 1, str(item.get("code"))))
     return signals[: max(0, max_signals)]
@@ -349,6 +390,154 @@ def compact_limits(*, profile: str, target_policy: dict[str, Any], hard_limits: 
     limits["optimization_target_chars"] = 8000 if profile == "overview" else min(8000, int(limits["char_budget"]))
     limits["max_signals"] = int(limits.get("max_signals") or 5)
     return limits
+
+
+def compact_role_boundaries(boundaries: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "allowed": list(boundaries.get("allowed") or []),
+        "refused": list(boundaries.get("refused") or []),
+        "escalate_on": list(boundaries.get("escalate_on") or []),
+    }
+
+
+def empty_state_signal(*, preflight: dict[str, Any], quality: dict[str, Any], health: dict | None = None) -> dict[str, Any] | None:
+    pages = int(preflight.get("pages") or 0)
+    ai_state_pages = int(preflight.get("ai_state_pages") or 0)
+    unresolved = int(preflight.get("unresolved_nodes") or 0)
+    health_codes = set(compact_health(health).get("issue_codes") or [])
+    if pages > 0 and ai_state_pages == 0:
+        reason = "indexing_pending"
+    elif pages == 0 and ai_state_pages == 0:
+        reason = "unknown_empty_state"
+        if health_codes & {"data.load_failed", "pages.load_failed", "index.load_failed"}:
+            reason = "data_load_failed"
+        elif quality.get("overall_status") in {"ok", "expected_degraded"} and unresolved == 0:
+            reason = "fresh_install"
+    else:
+        return None
+    return {
+        "active": True,
+        "reason": reason,
+        "operator_question": "Is this a fresh install, intentionally empty, still indexing, or should pages already exist?",
+        "allowed_reasons": sorted(EMPTY_STATE_REASONS),
+    }
+
+
+def build_context_questions(signals: list[dict[str, Any]], *, max_questions: int = 3) -> list[dict[str, Any]]:
+    questions: list[dict[str, Any]] = []
+    for signal in signals:
+        required_context = signal.get("required_context")
+        if not isinstance(required_context, dict):
+            continue
+        question = required_context.get("ask_operator")
+        missing = required_context.get("missing") or []
+        if not question:
+            continue
+        questions.append(
+            {
+                "question": question,
+                "missing": missing,
+                "reason": signal.get("description"),
+                "signal_code": signal.get("code"),
+            }
+        )
+    return questions[: max(0, max_questions)]
+
+
+def packet_fitness_score(
+    *,
+    content_chars: int,
+    char_budget: int,
+    optimization_target: int,
+    signals: list[dict[str, Any]],
+    empty_state: dict[str, Any] | None,
+    packet_summary_payload: dict[str, Any],
+) -> dict[str, Any]:
+    required_context_count = sum(1 for signal in signals if signal.get("required_context"))
+    actionable_count = sum(1 for signal in signals if signal.get("action"))
+    evidence_items = sum(len(packet_summary_payload.get(key) or []) for key in ("accepted_findings", "finding_tasks", "model_runs", "node_cards"))
+    size_penalty = 0
+    if content_chars > char_budget:
+        size_penalty = min(25, int(((content_chars - char_budget) / max(char_budget, 1)) * 25) + 5)
+    elif content_chars > optimization_target:
+        size_penalty = 3
+    weak_evidence_penalty = 10 if evidence_items == 0 else 0
+    missing_context_penalty = min(20, required_context_count * 5)
+    actionability_bonus = min(8, actionable_count * 2)
+    score = max(0, min(100, 100 - size_penalty - weak_evidence_penalty - missing_context_penalty + actionability_bonus))
+    if content_chars <= optimization_target:
+        size_label = "excellent"
+    elif content_chars <= char_budget:
+        size_label = "good"
+    else:
+        size_label = "over_budget"
+    evidence_label = "weak" if evidence_items == 0 else "present"
+    actionability_label = "good" if actionable_count else "needs_context"
+    empty_label = "clear" if not empty_state else ("needs_operator_confirmation" if empty_state.get("reason") == "unknown_empty_state" else str(empty_state.get("reason")))
+    return {
+        "advisory_only": True,
+        "score": score,
+        "size": size_label,
+        "evidence": evidence_label,
+        "actionability": actionability_label,
+        "empty_state_clarity": empty_label,
+        "formula": "100 - size_penalty - missing_context_penalty - weak_evidence_penalty + actionability_bonus",
+        "breakdown": {
+            "size_penalty": size_penalty,
+            "missing_context_penalty": missing_context_penalty,
+            "weak_evidence_penalty": weak_evidence_penalty,
+            "actionability_bonus": actionability_bonus,
+        },
+    }
+
+
+def _packet_actionability(packet: dict[str, Any]) -> int:
+    signals = packet.get("signals") or []
+    if not isinstance(signals, list):
+        signals = []
+    score = 0
+    for signal in signals:
+        if not isinstance(signal, dict):
+            continue
+        if signal.get("action"):
+            score += 2
+        if signal.get("required_context"):
+            score += 1
+        if signal.get("evidence_upgrade_path"):
+            score += 1
+    if packet.get("packet_summary"):
+        score += 1
+    return score
+
+
+def packet_diff_view(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    left_keys = set(left)
+    right_keys = set(right)
+    left_signals = [signal.get("code") for signal in left.get("signals") or [] if isinstance(signal, dict)]
+    right_signals = [signal.get("code") for signal in right.get("signals") or [] if isinstance(signal, dict)]
+    left_required = sorted(signal.get("code") for signal in left.get("signals") or [] if isinstance(signal, dict) and signal.get("required_context"))
+    right_required = sorted(signal.get("code") for signal in right.get("signals") or [] if isinstance(signal, dict) and signal.get("required_context"))
+    left_chars = len(json_dumps_compact(left))
+    right_chars = len(json_dumps_compact(right))
+    left_actionability = _packet_actionability(left)
+    right_actionability = _packet_actionability(right)
+    return {
+        "actionability_delta": right_actionability - left_actionability,
+        "actionability": {"left": left_actionability, "right": right_actionability},
+        "character_delta": right_chars - left_chars,
+        "characters": {"left": left_chars, "right": right_chars},
+        "removed_sections": sorted(left_keys - right_keys),
+        "added_sections": sorted(right_keys - left_keys),
+        "signal_changes": {"left": left_signals, "right": right_signals},
+        "required_context_changes": {"left": left_required, "right": right_required},
+        "contract_version_change": [left.get("contract_version"), right.get("contract_version")],
+    }
+
+
+def json_dumps_compact(value: Any) -> str:
+    import json
+
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
 def packet_integrity_summary(*, status: str, checks_passed: int, checked_at: str) -> dict[str, Any]:

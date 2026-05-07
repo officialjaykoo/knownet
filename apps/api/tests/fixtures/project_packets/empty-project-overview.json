@@ -1,0 +1,42 @@
+{
+  "name": "empty-project-overview",
+  "packet": {
+    "id": "fixture_empty",
+    "type": "project_snapshot_packet",
+    "contract_version": "p26.v1",
+    "profile": "overview",
+    "output_mode": "top_findings",
+    "signals": [
+      {
+        "code": "ai_state_quality.fail",
+        "severity": "high",
+        "action": "triage_ai_state_failures",
+        "required_context": {
+          "missing": ["node_card_excerpts", "accepted_or_pending_findings"],
+          "ask_operator": "Provide relevant node cards or confirm this is a fresh install before turning AI-state findings into implementation work."
+        },
+        "evidence_upgrade_path": {
+          "from": "context_limited",
+          "to": "operator_verified",
+          "requires": ["operator confirms empty-state reason or provides node cards/findings"]
+        }
+      }
+    ],
+    "empty_state": {
+      "active": true,
+      "reason": "fresh_install",
+      "operator_question": "Is this a fresh install, intentionally empty, still indexing, or should pages already exist?"
+    },
+    "packet_integrity": {
+      "content_chars": 900
+    }
+  },
+  "expected": {
+    "min_chars": 100,
+    "max_chars": 2000,
+    "signals": ["ai_state_quality.fail"],
+    "required_context": true,
+    "output_mode": "top_findings",
+    "empty_state_reason": "fresh_install"
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "healthy-project-overview",
+  "packet": {
+    "id": "fixture_healthy",
+    "type": "project_snapshot_packet",
+    "contract_version": "p26.v1",
+    "profile": "overview",
+    "output_mode": "top_findings",
+    "health": {
+      "overall_status": "ok",
+      "degraded": false
+    },
+    "signals": [],
+    "packet_summary": {
+      "accepted_findings": [
+        {
+          "id": "finding_1",
+          "title": "Healthy fixture finding",
+          "severity": "medium",
+          "evidence_quality": "operator_verified"
+        }
+      ]
+    },
+    "packet_integrity": {
+      "content_chars": 700
+    }
+  },
+  "expected": {
+    "min_chars": 100,
+    "max_chars": 1800,
+    "signals": [],
+    "required_context": false,
+    "output_mode": "top_findings"
+  }
+}

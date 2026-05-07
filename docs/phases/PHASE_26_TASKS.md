@@ -46,6 +46,27 @@ Implemented surface:
   legacy quality-warning controls.
 - External follow-up reviews now agree that Phase 26 is enough for active use;
   remaining work is semantic trim, not another packet redesign.
+- P26-008 semantic trim is implemented for copy-ready content: nested links are
+  replaced with one `packet_url`, `role_boundaries.narrative` is omitted,
+  `ai_state_quality`/`preflight` are kept out of overview content, and explicit
+  enum-based `empty_state` is emitted when the packet state is empty.
+- P26-009 golden packet fixtures exist for empty, healthy, and degraded overview
+  packets with expected size bands, signals, required_context, and output mode.
+- P26-010 review comparison is available as a deterministic operator helper via
+  `/api/collaboration/ai-review-comparisons`; it reports common
+  recommendations, one-off recommendations, conflicts, do-not-change consensus,
+  and implementation candidates without auto-applying them.
+- P26-011 `context_questions` output mode is supported by packet generation and
+  review dry-run parsing. Questions are generated from
+  `signals[].required_context` and are never imported as findings.
+- P26-012 signal-local `evidence_upgrade_path` is emitted for context-limited
+  signals that can become `operator_verified` after explicit operator context.
+- P26-013 `packet_fitness` is advisory-only and reports score, size, evidence,
+  actionability, empty-state clarity, and formula/breakdown.
+- P26-014 packet diff is exposed via
+  `/api/collaboration/project-snapshot-packets/compare`; it reports
+  `actionability_delta` before raw character/section deltas and stays out of
+  copy-ready packet content.
 ```
 
 Operator decision after external reviews:

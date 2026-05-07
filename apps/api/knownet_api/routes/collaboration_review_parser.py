@@ -104,6 +104,45 @@ def parse_compact_review_json(data: dict, metadata: dict) -> tuple[list[dict], l
         errors.append(f"unsupported_output_mode:{output_mode}")
         output_mode = "top_findings"
     metadata["output_mode"] = output_mode
+    if output_mode == "context_questions":
+        questions_raw = data.get("questions") or []
+        if isinstance(questions_raw, dict):
+            questions_raw = [questions_raw]
+        if not isinstance(questions_raw, list):
+            errors.append("context_questions_not_list")
+            questions_raw = []
+        max_questions = int(OUTPUT_MODES[output_mode].get("max_questions") or 3)
+        if len(questions_raw) > max_questions:
+            errors.append(f"too_many_context_questions:{len(questions_raw)}>{max_questions}")
+        questions: list[dict[str, Any]] = []
+        for index, item in enumerate(questions_raw[:max_questions]):
+            if not isinstance(item, dict):
+                errors.append(f"context_question_not_object:{index + 1}")
+                continue
+            question = str(item.get("question") or "").strip()
+            missing = item.get("missing") or []
+            if not question:
+                errors.append(f"context_question_missing_question:{index + 1}")
+            if not isinstance(missing, list):
+                errors.append(f"context_question_missing_not_list:{index + 1}")
+                missing = []
+            questions.append(
+                {
+                    "question": question,
+                    "missing": [str(value) for value in missing],
+                    "reason": str(item.get("reason") or ""),
+                    "signal_code": str(item.get("signal_code") or ""),
+                }
+            )
+        metadata["context_questions"] = questions
+        if data.get("findings") or data.get("implementation_candidates"):
+            errors.append("context_questions_does_not_accept_findings")
+        if errors:
+            metadata["ai_feedback_prompt"] = (
+                "Revise the response to match the packet output contract. "
+                f"Errors: {', '.join(errors)}. Return only supported context questions."
+            )
+        return [], errors
     findings_raw = data.get("findings") or data.get("implementation_candidates") or []
     if isinstance(findings_raw, dict):
         findings_raw = [findings_raw]
@@ -159,6 +198,7 @@ def review_dry_run_result(markdown: str) -> dict:
         "findings": findings,
         "parser_errors": parser_errors,
         "truncated_findings": bool(metadata.get("truncated_findings")),
+        "context_questions": metadata.get("context_questions") or [],
         "import_ready": import_ready,
         "rejection_reason": None if import_ready else "parser_errors" if parser_errors else "no_findings",
         "ai_feedback_prompt": feedback,

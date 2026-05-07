@@ -231,6 +231,31 @@ def test_compact_output_contract_parser_and_feedback():
     assert "ai_feedback_prompt" in metadata
 
 
+def test_context_questions_output_mode_does_not_import_findings():
+    payload = {
+        "output_mode": "context_questions",
+        "questions": [
+            {
+                "question": "Is this a fresh install?",
+                "missing": ["fresh_install_confirmation"],
+                "reason": "No pages are present.",
+                "signal_code": "ai_state_quality.fail",
+            }
+        ],
+    }
+    metadata, findings, errors = parse_review_markdown(json.dumps(payload))
+    assert errors == []
+    assert findings == []
+    assert metadata["output_mode"] == "context_questions"
+    assert metadata["context_questions"][0]["question"] == "Is this a fresh install?"
+
+    noisy = {"output_mode": "context_questions", "findings": [{"title": "Wrong"}]}
+    metadata, findings, errors = parse_review_markdown(json.dumps(noisy))
+    assert findings == []
+    assert "context_questions_does_not_accept_findings" in errors
+    assert "ai_feedback_prompt" in metadata
+
+
 def test_output_mode_fixtures_assert_parser_behavior():
     fixtures = load_json_fixture_dir("provider_comparison")
     assert {fixture["name"] for fixture in fixtures} == {"decision_only", "implementation_candidates", "provider_risk_check", "top_findings_too_many"}

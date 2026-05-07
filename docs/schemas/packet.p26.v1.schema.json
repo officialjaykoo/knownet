@@ -38,6 +38,9 @@
       "type": "string",
       "pattern": "^sha256:[0-9a-f]{64}$"
     },
+    "packet_url": {
+      "type": "string"
+    },
     "generated_at": {
       "type": "string"
     },
@@ -67,6 +70,18 @@
     },
     "packet_integrity": {
       "type": "object"
+    },
+    "packet_fitness": {
+      "$ref": "#/$defs/packet_fitness"
+    },
+    "empty_state": {
+      "$ref": "#/$defs/empty_state"
+    },
+    "context_questions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/context_question"
+      }
     },
     "packet_summary": {
       "type": "object"
@@ -552,6 +567,102 @@
             }
           },
           "additionalProperties": true
+        },
+        "evidence_upgrade_path": {
+          "type": "object",
+          "required": ["from", "to", "requires"],
+          "properties": {
+            "from": {
+              "const": "context_limited"
+            },
+            "to": {
+              "const": "operator_verified"
+            },
+            "requires": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "empty_state": {
+      "type": "object",
+      "required": ["active", "reason", "operator_question"],
+      "properties": {
+        "active": {
+          "const": true
+        },
+        "reason": {
+          "enum": ["fresh_install", "indexing_pending", "data_load_failed", "intentionally_empty", "unknown_empty_state"]
+        },
+        "operator_question": {
+          "type": "string"
+        },
+        "allowed_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "context_question": {
+      "type": "object",
+      "required": ["question", "missing"],
+      "properties": {
+        "question": {
+          "type": "string"
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "reason": {
+          "type": "string"
+        },
+        "signal_code": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "packet_fitness": {
+      "type": "object",
+      "required": ["advisory_only", "score", "formula", "breakdown"],
+      "properties": {
+        "advisory_only": {
+          "const": true
+        },
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "size": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        },
+        "actionability": {
+          "type": "string"
+        },
+        "empty_state_clarity": {
+          "type": "string"
+        },
+        "formula": {
+          "type": "string"
+        },
+        "breakdown": {
+          "type": "object"
         }
       },
       "additionalProperties": true

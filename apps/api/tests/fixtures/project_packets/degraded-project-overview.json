@@ -1,0 +1,41 @@
+{
+  "name": "degraded-project-overview",
+  "packet": {
+    "id": "fixture_degraded",
+    "type": "project_snapshot_packet",
+    "contract_version": "p26.v1",
+    "profile": "overview",
+    "output_mode": "provider_risk_check",
+    "health": {
+      "overall_status": "degraded",
+      "degraded": true,
+      "issue_codes": ["embedding.unavailable"]
+    },
+    "signals": [
+      {
+        "code": "health.degraded",
+        "severity": "medium",
+        "action": "inspect_health_issue",
+        "required_context": {
+          "missing": ["health_issue_details"],
+          "ask_operator": "Provide health issue details if this signal should become a finding."
+        },
+        "evidence_upgrade_path": {
+          "from": "context_limited",
+          "to": "operator_verified",
+          "requires": ["operator provides requested context"]
+        }
+      }
+    ],
+    "packet_integrity": {
+      "content_chars": 850
+    }
+  },
+  "expected": {
+    "min_chars": 100,
+    "max_chars": 2000,
+    "signals": ["health.degraded"],
+    "required_context": true,
+    "output_mode": "provider_risk_check"
+  }
+}
