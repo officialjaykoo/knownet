@@ -4,18 +4,17 @@ This runbook covers the local-first MVP operations path.
 
 ## Development Environment
 
-Keep source and local execution environments separate. Follow
+Keep source and generated/local execution artifacts separate. Follow
 `docs/DEVELOPMENT_ENV_POLICY.md`.
 
-Agents must not create repo-local virtual environments or run global
-`python -m pip install ...` during routine verification. If Python test
-dependencies are missing, report the missing environment instead of installing
-packages.
+Agents must not create repo-local virtual environments. API verification uses
+the workstation's global Python interpreter, and missing API dependencies should
+be installed globally with `python -m pip install ...`.
 
 ## First Install And Run
 
 1. Build the Rust daemon from `apps/core` with `cargo build`.
-2. Install API dependencies in `.local/venvs/api`.
+2. Install API dependencies into global Python.
 3. Install web dependencies in `apps/web` with `npm install`.
 4. Start API on `127.0.0.1:8000`.
 5. Start web on `127.0.0.1:3000`.
