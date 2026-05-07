@@ -848,3 +848,89 @@ Sixth open question:
 Should KnowNet findings remain a compact custom import shape for now, or should
 the next stable import format map directly to SARIF fields?
 ```
+
+## 2026-05-07 DeepSeek Review After Phase 26 Compact Packet
+
+Reviewer: DeepSeek  
+Focus: Phase 26 compact external AI packet  
+Packet: `snapshot_20f26adeab6e`  
+Score: 80/100  
+Verdict: enough for now
+
+### Summary
+
+DeepSeek's post-Phase 26 review is the first review to rate the compact packet
+as good enough for current use. The score moved from earlier overbuilt ratings
+into an 80/100 range after the packet dropped below the 8,000-character
+optimization target. DeepSeek still sees small redundant fields, but no longer
+recommends broad redesign.
+
+### Top Concrete Changes
+
+1. Remove standalone `ai_state_quality` and `preflight` objects.
+
+   DeepSeek says the current `signals` already carries the useful summary. The
+   remaining top-level objects duplicate context and can be removed from the
+   AI-facing packet body to save characters.
+
+2. Replace `health.issue_codes` with terse reasons.
+
+   Recommended shape:
+
+   ```json
+   {
+     "reasons": [
+       {
+         "code": "security.public_without_cloudflare_access",
+         "text": "Public mode without Cloudflare Access origin gate"
+       }
+     ]
+   }
+   ```
+
+   This keeps health compact while making the issue understandable without a
+   separate operator lookup.
+
+3. Drop top-level `links`.
+
+   DeepSeek argues external copy-paste reviewers consume the payload directly
+   and rarely resolve API hrefs from the snapshot. Removing `links` would reduce
+   noise and save roughly 200 characters.
+
+### Do Not Change
+
+DeepSeek specifically says to keep:
+
+- `signals` with embedded `required_context`
+- precise `ask_operator` prompts
+- `role_boundaries`
+- `contract_ref` and `schema_ref`
+- W3C `trace`
+- `limits` with character budget tracking
+
+### Standard Pattern
+
+DeepSeek recommends adopting CloudEvents envelope attributes:
+
+```txt
+id
+source
+type
+time
+```
+
+The recommendation is to use CloudEvents as a light header layer over the
+existing W3C `traceparent`, not to add a heavy event subsystem.
+
+### Codex Notes
+
+This review changes the implementation posture: Phase 26 is now good enough for
+active external AI use. Remaining work should be small trimming, not another
+contract redesign. The highest-signal follow-up candidates are:
+
+```txt
+1. Fold preflight/ai_state_quality into signals or packet_summary.
+2. Make compact health self-explanatory with short reason text.
+3. Consider whether links belong only in stored API responses, not copy-ready
+   content.
+```
