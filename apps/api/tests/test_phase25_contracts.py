@@ -83,7 +83,7 @@ def test_project_snapshot_includes_source_manifest(tmp_path, monkeypatch):
         assert data["source_manifest"]["sources"]
         packet_file = get_settings().data_dir / data["links"]["storage"]["href"]
         content = packet_file.read_text(encoding="utf-8")
-        assert "## Source Manifest" in content
+        assert json.loads(content)["source_manifest"]["type"] == "source_manifest"
     get_settings.cache_clear()
 
 

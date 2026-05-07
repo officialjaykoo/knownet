@@ -1,5 +1,7 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+import json
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -360,3 +362,11 @@ async def health():
 async def health_summary():
     data = await _health_payload()
     return {"ok": True, "data": {"overall_status": data["overall_status"], "issues": data["issues"], "issue_details": data["issue_details"], "search": data["search"], "checked_at": data["checked_at"]}}
+
+
+@app.get("/api/schemas/packet/p26.v1")
+async def packet_p26_schema():
+    schema_path = Path(__file__).resolve().parents[3] / "docs" / "schemas" / "packet.p26.v1.schema.json"
+    if not schema_path.exists():
+        return JSONResponse(status_code=404, content={"ok": False, "detail": {"code": "schema_not_found", "message": "Packet schema file not found"}})
+    return {"ok": True, "data": json.loads(schema_path.read_text(encoding="utf-8"))}

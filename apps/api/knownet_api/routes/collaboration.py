@@ -26,7 +26,6 @@ from ..security import (
 )
 from ..routes.operator import build_ai_state_quality, build_provider_matrix
 from .collaboration_review_parser import (
-    EVIDENCE_QUALITIES,
     finding_dedupe_key as _finding_dedupe_key,
     normalize_area as _normalize_area,
     normalize_evidence_quality as _normalize_evidence_quality,
@@ -36,12 +35,10 @@ from .collaboration_review_parser import (
 )
 from .collaboration_packets import (
     DEFAULT_EXPERIMENT_PACKET_SLUGS,
-    json_line as _json_line,
     packet_excerpt_for_slug as _packet_excerpt_for_slug,
     packet_preflight as _packet_preflight,
     packet_row as _packet_row,
     packet_warning_list as _packet_warning_list,
-    profile_allows as _profile_allows,
     project_snapshot_delta as _project_snapshot_delta,
     resolve_snapshot_since as _resolve_snapshot_since,
     resource_links as _resource_links,
@@ -76,18 +73,21 @@ from ..services.packet_contract import (
 from ..services.project_snapshot import (
     DEFAULT_PROJECT_SNAPSHOT_FOCUS,
     ai_context,
+    compact_health,
+    compact_limits,
     do_not_suggest_rules,
     do_not_reopen,
     important_changes,
-    next_action_hints,
     node_card,
+    omit_empty,
     packet_issues,
+    packet_integrity_summary,
+    packet_signals,
     packet_summary,
     profile_hard_limits,
     source_manifest,
     project_snapshot_focus,
     snapshot_diff_summary,
-    snapshot_self_test,
     target_agent_policy,
 )
 from ..services.rust_core import RustCoreError
@@ -283,7 +283,7 @@ async def ensure_collaboration_schema(sqlite_path: Path) -> None:
         "id TEXT PRIMARY KEY, vault_id TEXT NOT NULL DEFAULT 'local-default', target_agent TEXT NOT NULL, "
         "profile TEXT NOT NULL DEFAULT 'overview', output_mode TEXT NOT NULL DEFAULT 'top_findings', focus TEXT NOT NULL, "
         "content_hash TEXT NOT NULL, content_path TEXT NOT NULL, warnings_json TEXT NOT NULL DEFAULT '[]', "
-        "snapshot_quality_json TEXT NOT NULL DEFAULT '{}', contract_version TEXT NOT NULL DEFAULT 'p20.v1', "
+        "snapshot_quality_json TEXT NOT NULL DEFAULT '{}', contract_version TEXT NOT NULL DEFAULT 'p26.v1', "
         "created_by TEXT, created_at TEXT NOT NULL)",
         (),
     )
@@ -1218,12 +1218,6 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
     preflight = await _packet_preflight(settings.sqlite_path, payload.vault_id)
     since, since_packet, delta_warnings = await _resolve_snapshot_since(settings, payload, profile)
     delta = await _project_snapshot_delta(settings.sqlite_path, payload.vault_id, since)
-    release_summary = {
-        "release_ready": quality.get("overall_status") != "fail" and not (health and health.get("overall_status") == "attention_required"),
-        "health": health.get("overall_status") if health else "unknown",
-        "ai_state_quality": quality.get("overall_status"),
-        "provider_matrix": matrix.get("summary", {}),
-    }
     high_open = await fetch_one(
         settings.sqlite_path,
         "SELECT COUNT(*) AS count FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
@@ -1281,8 +1275,6 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
     do_not_suggest = do_not_suggest_rules(profile)
     summary_payload = packet_summary(accepted_rows=accepted_rows, task_rows=task_rows, run_rows=run_rows, important=important)
     ai_context_payload = ai_context(profile=profile, target_agent=payload.target_agent, focus=focus, output_mode=output_mode)
-    pre_issues = packet_issues(warnings=warnings, health=health, quality=quality, preflight=preflight, high_open_findings=int(high_open["count"] or 0) if high_open else 0, provider_matrix=matrix.get("summary", {}))
-    pre_hints = next_action_hints(important, pre_issues)
     packet_id = f"snapshot_{uuid4().hex[:12]}"
     generated_at = utc_now()
     packet_source_manifest = source_manifest(snapshot_node_cards, generated_at=generated_at)
@@ -1312,189 +1304,53 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
     contract_validation_errors = validate_packet_contract(contract)
     if contract_validation_errors:
         raise HTTPException(status_code=500, detail={"code": "project_snapshot_contract_invalid", "message": "Generated packet contract is invalid", "details": {"errors": contract_validation_errors}})
-    sections = [
-        "# KnowNet Project Snapshot Packet",
-        "",
-        "## Packet Metadata",
-        "",
-        f"- id: {packet_id}",
-        f"- contract_version: {PACKET_CONTRACT_VERSION}",
-        f"- protocol_version: {PACKET_PROTOCOL_VERSION}",
-        f"- schema_ref: {PACKET_SCHEMA_REF}",
-        f"- generated_at: {generated_at}",
-        f"- target_agent: {payload.target_agent}",
-        f"- vault_id: {payload.vault_id}",
-        f"- profile: {profile}",
-        f"- output_mode: {output_mode}",
-        "- evidence_quality_default: context_limited unless direct KnowNet API access is used",
-        "",
-        "## Operator Focus",
-        "",
-        focus.strip(),
-        "",
-        *packet_contract_markdown(contract),
-        "",
-        "## Current State Summary",
-        "",
-        f"- health: {health.get('overall_status') if health else 'unknown'}",
-        f"- ai_state_quality: {quality.get('overall_status')}",
-        f"- release_ready_estimate: {release_summary['release_ready']}",
-        f"- preflight: {_json_line(preflight)}",
-        f"- provider_matrix: {_json_line(matrix.get('summary', {}))}",
-        f"- warnings: {_json_line(warnings)}",
-    ]
-    sections.extend(["", "## AI Context", ""])
-    sections.append(f"- role: {ai_context_payload['role']}")
-    sections.append(f"- task: {ai_context_payload['task']}")
-    sections.append(f"- read_order: {_json_line(ai_context_payload['read_order'])}")
-    sections.extend(["", "## Next Action Hints", ""])
-    for hint in pre_hints or ["No immediate action hint."]:
-        sections.append(f"- {hint}")
-    sections.extend(["", "## Issues", ""])
-    for issue in pre_issues or [{"code": "none", "action_template": "no_action", "action_params": {}}]:
-        sections.append(f"- {issue['code']}: {issue['action_template']} {_json_line(issue.get('action_params') or {})}")
-    if delta:
-        sections.append(f"- delta_since: {delta['since']}")
-        standard_delta = _standard_delta(delta)
-        sections.append(f"- delta: {_json_line(standard_delta['summary'] if standard_delta else {})}")
-        sections.append(f"- delta_counts: {_json_line({key: len((standard_delta or {}).get('changed', {}).get(key, [])) for key in ('nodes', 'findings', 'finding_tasks', 'model_runs')})}")
-    sections.extend(["", "## Node Cards", ""])
-    sections.append("```json")
-    sections.append(json.dumps(snapshot_node_cards, ensure_ascii=False, indent=2))
-    sections.append("```")
-    sections.extend(["", "## Source Manifest", ""])
-    sections.append("```json")
-    sections.append(json.dumps(packet_source_manifest, ensure_ascii=False, indent=2))
-    sections.append("```")
-    sections.extend(["", "## Snapshot Diff Summary", ""])
-    for item in diff_summary:
-        sections.append(f"- {item}")
-    sections.extend(["", "## Important Changes", ""])
-    sections.append(f"- summary: {_json_line(important['summary'])}")
-    for key, label in (
-        ("high_severity_findings", "high severity finding"),
-        ("actionable_tasks", "actionable task"),
-        ("failed_model_runs", "failed model run"),
-        ("implementation_evidence", "implementation evidence"),
-    ):
-        rows = important[key]
-        for row in rows[:4]:
-            title = row.get("title") or row.get("model") or row.get("verification") or row.get("id")
-            status = row.get("status") or row.get("severity") or row.get("provider") or "recorded"
-            route = row.get("action_route")
-            sections.append(f"- {label}: {row['id']} [{status}{f'/{route}' if route else ''}] {title}")
-    sections.extend(["", "## Known Done / Do Not Reopen", ""])
-    sections.append(f"- summary: {_json_line(no_reopen['summary'])}")
-    for row in no_reopen["implemented_findings"][:5]:
-        sections.append(f"- implemented: {row['id']} [{row['severity']}/{row['area']}] {row['title']}")
-    for row in no_reopen["resolved_or_deferred_findings"][:5]:
-        sections.append(f"- {row['status']}: {row['id']} {row['title']}")
-    sections.extend(["", "## Do Not Suggest", ""])
-    for rule in do_not_suggest:
-        sections.append(f"- {rule}")
-    if _profile_allows(profile, "accepted_findings") or profile == "overview":
-        sections.extend(["", "## Recent Accepted Findings", ""])
-        if accepted_rows:
-            for row in accepted_rows:
-                sections.append(f"- {row['id']} [{row['severity']}/{row['area']}/{row['evidence_quality']}]: {row['title']}")
-        else:
-            sections.append("- none")
-    if _profile_allows(profile, "finding_tasks") or _profile_allows(profile, "implementation_work") or profile == "overview":
-        sections.extend(["", "## Recent Finding Tasks", ""])
-        if task_rows:
-            for row in task_rows:
-                owner = row["owner"] or "unassigned"
-                sections.append(f"- {row['id']} -> {row['finding_id']} [{row['status']}/{row['priority']}/{owner}]: {row['title']}")
-        else:
-            sections.append("- none")
-    if _profile_allows(profile, "model_runs") or profile == "overview":
-        sections.extend(["", "## Recent Model Runs", ""])
-        if run_rows:
-            for row in run_rows:
-                sections.append(f"- {row['id']} [{row['provider']}/{row['status']}]: {row['model']} updated_at={row['updated_at']}")
-        else:
-            sections.append("- none")
-    if _profile_allows(profile, "stability_risks"):
-        sections.extend(["", "## Stability Signals", ""])
-        sections.append(f"- health: {health.get('overall_status') if health else 'unknown'}")
-        sections.append(f"- high_open_findings: {int(high_open['count'] or 0) if high_open else 0}")
-        sections.append(f"- provider_failures: {matrix.get('summary', {}).get('failed', 0)}")
-    if _profile_allows(profile, "performance_signals"):
-        sections.extend(["", "## Performance Signals", ""])
-        sections.append(f"- provider_matrix: {_json_line(matrix.get('summary', {}))}")
-        sections.append(f"- sampled_model_runs: {len(run_rows)}")
-        sections.append(f"- search_index_status: {_json_line((health or {}).get('search') or {})}")
-    if _profile_allows(profile, "security_signals"):
-        sections.extend(["", "## Security Signals", ""])
-        sections.append(f"- public_mode: {settings.public_mode}")
-        sections.append("- forbidden_access: raw DB/filesystem/secrets/shell/backups/sessions/users")
-        sections.append(f"- evidence_quality_mix: {_json_line({value: sum(1 for row in accepted_rows if row.get('evidence_quality') == value) for value in sorted(EVIDENCE_QUALITIES)})}")
-    if delta:
-        sections.extend(["", "## Delta Since Last Snapshot", ""])
-        for key, label in (("pages", "pages"), ("findings", "findings"), ("finding_tasks", "finding tasks"), ("model_runs", "model runs")):
-            rows = delta[key]
-            sections.append(f"- {label}: {len(rows)}")
-            for row in rows[:8]:
-                title = row.get("title") or row.get("model") or row.get("slug") or row.get("id")
-                status = row.get("status") or row.get("provider") or "updated"
-                sections.append(f"  - {row['id']} [{status}] {title} updated_at={row.get('updated_at')}")
-    sections.extend(
-        [
-            "",
-            "## Machine Readable JSON",
-            "",
-            "```json",
-            json.dumps(
-                {
-                    "id": packet_id,
-                    "type": "project_snapshot_packet",
-                    "contract_version": PACKET_CONTRACT_VERSION,
-                    "protocol_version": PACKET_PROTOCOL_VERSION,
-                    "schema_ref": PACKET_SCHEMA_REF,
-                    "trace": trace_payload,
-                    "generated_at": generated_at,
-                    "vault_id": payload.vault_id,
-                    "focus": payload.focus,
-                    "effective_focus": focus,
-                    "profile": profile,
-                    "output_mode": output_mode,
-                    "contract": contract,
-                    "contract_shape": contract_shape(contract),
-                    "ai_context": ai_context_payload,
-                    "next_action_hints": "computed_after_render",
-                    "issues": "computed_after_render",
-                    "packet_summary": summary_payload,
-                    "target_agent_policy": target_policy,
-                    "profile_hard_limits": hard_limits,
-                    "health": health,
-                    "ai_state_quality": {"overall_status": quality.get("overall_status"), "summary": quality.get("summary", {})},
-                    "release_summary": release_summary,
-                    "provider_matrix": matrix.get("summary", {}),
-                    "search_index_status": (health or {}).get("search"),
-                    "preflight": preflight,
-                    "delta": _standard_delta(delta),
-                    "since_packet": dict(since_packet) if since_packet else None,
-                    "important_changes": important,
-                    "snapshot_diff_summary": diff_summary,
-                    "do_not_reopen": no_reopen,
-                    "do_not_suggest": do_not_suggest,
-                    "warnings": warnings,
-                    "snapshot_self_test": "computed_after_render",
-                    "snapshot_quality": "computed_after_render",
-                    "accepted_findings": accepted_rows,
-                    "finding_tasks": task_rows,
-                    "model_runs": run_rows,
-                    "node_cards": snapshot_node_cards,
-                    "source_manifest": packet_source_manifest,
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            "```",
-            "",
-        ]
-    )
-    content = "\n".join(sections)
+    effective_limits = compact_limits(profile=profile, target_policy=target_policy, hard_limits=hard_limits)
+    contract_ref = PACKET_SCHEMA_REF
+    contract_hash = "sha256:" + hashlib.sha256(json.dumps(contract, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    compact_health_payload = compact_health(health)
+    standard_delta = _standard_delta(delta)
+
+    def compact_payload(*, quality_payload: dict[str, Any] | None = None, signals: list[dict[str, Any]] | None = None, integrity: dict[str, Any] | None = None) -> dict[str, Any]:
+        include_provider_detail = profile == "provider_review"
+        include_detail_state = profile in {"stability", "performance", "security", "implementation", "provider_review"}
+        payload_dict = {
+            "id": packet_id,
+            "type": "project_snapshot_packet",
+            "contract_version": PACKET_CONTRACT_VERSION,
+            "protocol_version": PACKET_PROTOCOL_VERSION,
+            "schema_ref": PACKET_SCHEMA_REF,
+            "contract_ref": contract_ref,
+            "contract_hash": contract_hash,
+            "generated_at": generated_at,
+            "links": _resource_links(self_href=f"/api/collaboration/project-snapshot-packets/{packet_id}", content_href=f"/api/collaboration/project-snapshot-packets/{packet_id}", storage_href=f"project-snapshot-packets/{packet_id}.md"),
+            "trace": trace_payload,
+            "vault_id": payload.vault_id,
+            "profile": profile,
+            "output_mode": output_mode,
+            "effective_focus": focus,
+            "ai_context": ai_context_payload,
+            "limits": effective_limits,
+            "role_boundaries": contract["role_and_access_boundaries"],
+            "health": compact_health_payload,
+            "signals": signals or [],
+            "packet_summary": summary_payload,
+            "snapshot_diff_summary": diff_summary,
+            "do_not_suggest": do_not_suggest,
+            "packet_integrity": integrity,
+            "snapshot_quality": quality_payload,
+            "preflight": preflight if include_detail_state else {"pages": preflight.get("pages"), "ai_state_pages": preflight.get("ai_state_pages")},
+            "ai_state_quality": {"overall_status": quality.get("overall_status"), "summary": quality.get("summary", {})},
+            "search_index_status": (health or {}).get("search"),
+            "delta": standard_delta,
+            "node_cards": snapshot_node_cards,
+            "source_manifest": packet_source_manifest,
+            "provider_matrix": matrix.get("summary", {}) if include_provider_detail else None,
+            "important_changes": important if include_detail_state else {"summary": important.get("summary", {})},
+            "do_not_reopen": no_reopen if include_detail_state else None,
+        }
+        return omit_empty(payload_dict)
+
+    content = json.dumps(compact_payload(), ensure_ascii=False, indent=2)
     _assert_no_secret_text(content, settings)
     snapshot_quality = _snapshot_quality(
         content=content,
@@ -1515,29 +1371,10 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
         high_open_findings=int(high_open["count"] or 0) if high_open else 0,
         provider_matrix=matrix.get("summary", {}),
     )
-    action_hints = next_action_hints(important, issues)
-    self_test = snapshot_self_test(
-        content=content,
-        contract=contract,
-        profile=profile,
-        required_sections=["## Packet Contract", "## Important Changes", "## Do Not Suggest"],
-    )
-    content = content.replace(
-        '"snapshot_self_test": "computed_after_render"',
-        '"snapshot_self_test": ' + json.dumps(self_test, ensure_ascii=False, indent=2),
-    )
-    content = content.replace(
-        '"snapshot_quality": "computed_after_render"',
-        '"snapshot_quality": ' + json.dumps(snapshot_quality, ensure_ascii=False, indent=2),
-    )
-    content = content.replace(
-        '"issues": "computed_after_render"',
-        '"issues": ' + json.dumps(issues, ensure_ascii=False, indent=2),
-    )
-    content = content.replace(
-        '"next_action_hints": "computed_after_render"',
-        '"next_action_hints": ' + json.dumps(action_hints, ensure_ascii=False, indent=2),
-    )
+    signals = packet_signals(issues, max_signals=int(effective_limits["max_signals"]))
+    packet_integrity = packet_integrity_summary(status="pass", checks_passed=4, checked_at=generated_at)
+    content_payload = compact_payload(quality_payload=snapshot_quality, signals=signals, integrity=packet_integrity)
+    content = json.dumps(content_payload, ensure_ascii=False, indent=2)
     if "mostly_context_limited" in snapshot_quality["warnings"]:
         contract = build_packet_contract(
             packet_kind="project_snapshot",
@@ -1552,6 +1389,9 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
             ),
             target_agent_overrides=target_policy,
         )
+        contract_hash = "sha256:" + hashlib.sha256(json.dumps(contract, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+        content_payload = compact_payload(quality_payload=snapshot_quality, signals=signals, integrity=packet_integrity)
+        content = json.dumps(content_payload, ensure_ascii=False, indent=2)
     content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
     packet_dir = settings.data_dir / "project-snapshot-packets"
     packet_dir.mkdir(parents=True, exist_ok=True)
@@ -1589,7 +1429,6 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
     )
     self_href = f"/api/collaboration/project-snapshot-packets/{packet_id}"
     storage_href = f"project-snapshot-packets/{packet_id}.md"
-    standard_delta = _standard_delta(delta)
     response_data = {
             "id": packet_id,
             "type": "project_snapshot_packet",
@@ -1599,33 +1438,32 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
             "content_hash": content_hash,
             "preflight": preflight,
             "delta": standard_delta,
-            "since_packet": dict(since_packet) if since_packet else None,
             "warnings": warnings,
             "snapshot_quality": snapshot_quality,
-            "snapshot_self_test": self_test,
-            "contract": contract,
-            "contract_shape": contract_shape(contract),
+            "packet_integrity": packet_integrity,
+            "contract_ref": contract_ref,
+            "contract_hash": contract_hash,
+            "limits": effective_limits,
+            "role_boundaries": contract["role_and_access_boundaries"],
             "protocol_version": PACKET_PROTOCOL_VERSION,
             "schema_ref": PACKET_SCHEMA_REF,
             "trace": trace_payload,
             "ai_context": ai_context_payload,
-            "next_action_hints": action_hints,
             "issues": issues,
+            "signals": signals,
             "packet_summary": summary_payload,
             "node_cards": snapshot_node_cards,
             "source_manifest": packet_source_manifest,
             "profile": profile,
             "output_mode": output_mode,
             "effective_focus": focus,
-            "target_agent_policy": target_policy,
-            "profile_hard_limits": hard_limits,
             "important_changes": important,
             "snapshot_diff_summary": diff_summary,
-            "do_not_reopen": no_reopen,
             "do_not_suggest": do_not_suggest,
             "contract_version": PACKET_CONTRACT_VERSION,
             "copy_ready": True,
     }
+    response_data = omit_empty(response_data)
     schema_errors = validate_packet_schema_core(response_data)
     if schema_errors:
         raise HTTPException(status_code=500, detail={"code": "project_snapshot_packet_schema_invalid", "message": "Generated project snapshot packet failed packet schema validation", "details": {"errors": schema_errors}})

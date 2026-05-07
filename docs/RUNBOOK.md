@@ -201,17 +201,18 @@ implementation    next Codex task selection
 provider_review   Gemini/DeepSeek/Qwen/Kimi/GLM runner review
 ```
 
-Packets use `contract_version: p20.v1` across copy-paste and API-key provider
+Packets use `contract_version: p26.v1` across copy-paste and API-key provider
 flows. If `snapshot_quality.warnings` is not empty, acknowledge the warning in
 the UI before sending or copying the packet; this does not block API generation
 but prevents warning blindness.
-Every project snapshot also includes `important_changes`, `do_not_suggest`, and
-`target_agent_policy` in the machine-readable JSON block so smaller providers
-can answer from the highest-signal state instead of rereading the full packet.
-Use `snapshot_diff_summary` to understand why the delta matters, and
-`do_not_reopen` to prevent external AI from re-raising implemented, rejected, or
-intentionally deferred work. `snapshot_self_test` should be `pass` before a
-packet is trusted for a model comparison experiment.
+Every project snapshot is compact JSON by default and includes `contract_ref`,
+`limits`, compact `health`, prioritized `signals`, `packet_summary`,
+`snapshot_diff_summary`, and `do_not_suggest` so smaller providers can answer
+from the highest-signal state instead of rereading a large Markdown packet.
+Use per-signal `required_context` to see what an external AI should ask for
+before upgrading context-limited evidence. `packet_integrity` replaces the old
+inline `snapshot_self_test`; detailed validation belongs outside the AI-facing
+packet.
 
 Search uses SQLite FTS5 when `search.fts` is `ready`; otherwise KnowNet falls
 back to indexed LIKE plus Markdown scan. Rebuild the lightweight page index with:

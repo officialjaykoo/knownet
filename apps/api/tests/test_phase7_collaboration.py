@@ -68,7 +68,7 @@ def test_phase20_packet_contract_self_test_validates_boundaries_budget_and_stale
         operator_question="Review packet.",
         stale_context_suppression=explicit_stale_context_suppression(suppressed_before="2026-05-05T00:00:00Z"),
     )
-    content = "# KnowNet Project Snapshot Packet\n\n## Packet Contract\n\n- contract_version: p20.v1\n- profile: overview\n\n## Important Changes\n\n## Do Not Suggest\n"
+    content = "# KnowNet Project Snapshot Packet\n\n## Packet Contract\n\n- contract_version: p26.v1\n- profile: overview\n\n## Important Changes\n\n## Do Not Suggest\n"
     result = snapshot_self_test(content=content, contract=contract, profile="overview", required_sections=["## Packet Contract", "## Important Changes"])
     assert result["overall_status"] == "pass", result
 
@@ -82,8 +82,8 @@ def test_phase20_packet_contract_self_test_validates_boundaries_budget_and_stale
 
 
 def test_packet_schema_documents_standard_header_and_trace_fields():
-    schema = json.loads((REPO_ROOT / "docs" / "schemas" / "packet.p20.v1.schema.json").read_text(encoding="utf-8"))
-    assert schema["$id"] == "knownet://schemas/packet/p20.v1"
+    schema = json.loads((REPO_ROOT / "docs" / "schemas" / "packet.p26.v1.schema.json").read_text(encoding="utf-8"))
+    assert schema["$id"] == "/api/schemas/packet/p26.v1"
     assert "protocol_version" in schema["required"]
     assert "schema_ref" in schema["required"]
     trace_schema = schema["$defs"]["trace"]
@@ -92,15 +92,24 @@ def test_packet_schema_documents_standard_header_and_trace_fields():
     assert "CLIENT" in trace_schema["properties"]["span_kind"]["enum"]
 
 
+def test_packet_schema_endpoint_exposes_p26_contract(tmp_path, monkeypatch):
+    _isolate_settings(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        response = client.get("/api/schemas/packet/p26.v1")
+        assert response.status_code == 200, response.text
+        assert response.json()["data"]["$id"] == "/api/schemas/packet/p26.v1"
+
+
 def test_packet_schema_core_validator_uses_schema_required_fields():
-    schema = json.loads((REPO_ROOT / "docs" / "schemas" / "packet.p20.v1.schema.json").read_text(encoding="utf-8"))
+    schema = json.loads((REPO_ROOT / "docs" / "schemas" / "packet.p26.v1.schema.json").read_text(encoding="utf-8"))
     contract = build_packet_contract(packet_kind="project_snapshot", target_agent="claude", operator_question="Review packet.")
     packet = {
         "id": "packet_test",
         "type": "project_snapshot_packet",
-        "contract_version": "p20.v1",
+        "contract_version": "p26.v1",
         "protocol_version": "2026-05-05",
-        "schema_ref": "knownet://schemas/packet/p20.v1",
+        "schema_ref": "/api/schemas/packet/p26.v1",
+        "contract_ref": "/api/schemas/packet/p26.v1",
         "generated_at": "2026-05-05T00:00:00Z",
         "links": {"self": {"href": "/api/test"}},
         "trace": {
@@ -111,8 +120,6 @@ def test_packet_schema_core_validator_uses_schema_required_fields():
             "span_kind": "INTERNAL",
             "attributes": {"service.name": "knownet"},
         },
-        "contract": contract,
-        "contract_shape": contract_shape(contract),
         "ai_context": {"role": "test", "target_agent": "claude", "task": "validate", "read_order": ["contract"]},
     }
     assert validate_packet_schema_core(packet, schema) == []
@@ -372,9 +379,10 @@ def test_project_snapshot_packet_summarizes_safe_handoff_state(tmp_path, monkeyp
         assert "packet_id" not in data
         assert "read_url" not in data
         assert "storage_path" not in data
-        assert "KnowNet Project Snapshot Packet" in content
+        content_json = json.loads(content)
+        assert content_json["type"] == "project_snapshot_packet"
         assert "Tell Codex the next implementation move." in content
-        assert "Recent Accepted Findings" in content
+        assert content_json["packet_summary"]["accepted_findings"]
         assert finding_id in content
         assert "C:\\" not in content
         assert str(app.state.settings.data_dir) not in content
@@ -404,17 +412,16 @@ def test_project_snapshot_packet_can_include_since_delta(tmp_path, monkeypatch):
         assert response.status_code == 200, response.text
         data = response.json()["data"]
         assert data["delta"]["since"] == "2026-01-01T00:00:00Z"
-        assert {"summary", "added", "changed", "removed"} <= set(data["delta"])
+        assert {"summary", "added", "changed"} <= set(data["delta"])
         assert data["delta"]["changed"]["findings"]
         assert data["delta"]["changed"]["finding_tasks"]
         assert data["delta"]["summary"]["new_or_updated_findings"] >= 1
         assert data["delta"]["summary"]["changed_tasks"] >= 1
         assert "delta_summary" not in data
         assert "delta_standard" not in data
-        assert "Delta Since Last Snapshot" in data["content"]
-        assert "delta:" in data["content"]
+        content_json = json.loads(data["content"])
+        assert content_json["delta"]["summary"]
         assert "delta_summary" not in data["content"]
-        assert "delta_counts" in data["content"]
 
         bad = client.post("/api/collaboration/project-snapshot-packets", json={"since": "not-a-date"})
         assert bad.status_code == 422
@@ -461,14 +468,16 @@ Add provider retry and alerting.
         overview_data = overview.json()["data"]
         assert overview_data["profile"] == "overview"
         assert overview_data["effective_focus"].startswith("Summarize the current KnowNet state")
-        assert overview_data["contract_version"] == "p20.v1"
+        assert overview_data["contract_version"] == "p26.v1"
         assert overview_data["type"] == "project_snapshot_packet"
         assert overview_data["generated_at"]
         assert overview_data["links"]["self"]["href"].startswith("/api/collaboration/project-snapshot-packets/")
         assert "packet_id" not in overview_data
         assert "packet_schema_version" not in overview_data
         assert overview_data["protocol_version"] == "2026-05-05"
-        assert overview_data["schema_ref"] == "knownet://schemas/packet/p20.v1"
+        assert overview_data["schema_ref"] == "/api/schemas/packet/p26.v1"
+        assert overview_data["contract_ref"] == "/api/schemas/packet/p26.v1"
+        assert overview_data["contract_hash"].startswith("sha256:")
         assert overview_data["trace"]["name"] == "knownet.project_snapshot_packet"
         assert re.fullmatch(r"[0-9a-f]{32}", overview_data["trace"]["trace_id"])
         assert re.fullmatch(r"[0-9a-f]{16}", overview_data["trace"]["span_id"])
@@ -477,50 +486,43 @@ Add provider retry and alerting.
         assert overview_data["trace"]["attributes"]["knownet.packet.source_id"] == overview_data["id"]
         assert overview_data["trace"]["attributes"]["knownet.packet.profile"] == "overview"
         assert validate_packet_header(overview_data) == []
-        assert overview_data["contract"]["packet_metadata"]["protocol_version"] == "2026-05-05"
-        assert overview_data["contract_shape"]["protocol_version"] == "2026-05-05"
-        assert overview_data["contract"]["capabilities"]["resources"]["node_cards"] is True
         assert overview_data["ai_context"]["role"] == "overview_reviewer"
-        assert overview_data["next_action_hints"]
         assert overview_data["issues"]
         assert overview_data["issues"][0]["action_template"]
         assert overview_data["issues"][0]["action_input_schema"]["type"] == "object"
         assert overview_data["issues"][0]["action_input_schema"]["additionalProperties"] is False
+        assert overview_data["signals"]
+        assert overview_data["signals"][0]["severity"] in {"high", "medium", "low", "expected_degraded"}
+        assert overview_data["limits"]["max_findings"] == 3
+        assert overview_data["limits"]["max_signals"] == 5
         assert overview_data["packet_summary"]["accepted_findings"][0]["detail_url"] == f"/api/collaboration/findings/{finding_id}"
         assert overview_data["packet_summary"]["finding_tasks"][0]["detail_url"].startswith("/api/collaboration/finding-tasks/")
         assert overview_data["node_cards"]
         assert overview_data["node_cards"][0]["detail_url"].startswith("/api/pages/")
-        assert overview_data["contract"]["packet_metadata"]["contract_version"] == "p20.v1"
-        boundaries = overview_data["contract"]["role_and_access_boundaries"]
+        boundaries = overview_data["role_boundaries"]
         assert boundaries["allowed"]
         assert "raw_db" in boundaries["refused"]
         assert "system_state_assertion" in boundaries["escalate_on"]
         assert len(boundaries["narrative"]) <= 3
-        assert overview_data["contract"]["stale_context_suppression"] == {"active": False}
-        assert "short_summary first" in overview_data["contract"]["node_card_contract"]["read_rules"][0]
-        assert overview_data["contract"]["node_card_contract"]["example"]["detail_url"].startswith("/api/pages/")
-        assert overview_data["contract"]["hard_limits"]["char_budget"] == 12000
-        assert overview_data["contract_shape"]["valid"] is True
-        assert "role_and_access_boundaries" in overview_data["contract_shape"]["sections"]
         assert overview_data["snapshot_quality"]["advisory_only"] is True
         assert overview_data["snapshot_quality"]["details"]["profile_char_budget"] == 12000
         assert "details" in overview_data["snapshot_quality"]
         assert overview_data["important_changes"]["summary"]["high_severity_findings"] >= 1
         assert overview_data["important_changes"]["high_severity_findings"][0]["action_route"] == "implement"
         assert overview_data["snapshot_diff_summary"]
-        assert overview_data["do_not_reopen"]["summary"]["implemented"] == 0
-        assert overview_data["snapshot_self_test"]["overall_status"] == "pass", overview_data["snapshot_self_test"]
-        assert overview_data["profile_hard_limits"]["max_findings"] == 3
+        assert overview_data["packet_integrity"]["status"] == "pass"
+        assert "snapshot_self_test" not in overview_data
+        assert "contract_shape" not in overview_data
+        assert "contract" not in overview_data
+        assert "profile_hard_limits" not in overview_data
         assert any("release_check" in rule for rule in overview_data["do_not_suggest"])
-        assert "Important Changes" in overview_data["content"]
-        assert "Snapshot Diff Summary" in overview_data["content"]
-        assert "Known Done / Do Not Reopen" in overview_data["content"]
-        assert "Do Not Suggest" in overview_data["content"]
-        assert "Recent Accepted Findings" in overview_data["content"]
-        assert "AI Context" in overview_data["content"]
-        assert "Next Action Hints" in overview_data["content"]
-        assert "Issues" in overview_data["content"]
-        assert "Node Cards" in overview_data["content"]
+        content_json = json.loads(overview_data["content"])
+        assert content_json["contract_ref"] == "/api/schemas/packet/p26.v1"
+        assert len(overview_data["content"]) <= 12000
+        assert "snapshot_self_test" not in content_json
+        assert "contract_shape" not in content_json
+        assert "contract" not in content_json
+        assert "signals" in content_json
 
         finding_detail = client.get(f"/api/collaboration/findings/{finding_id}")
         assert finding_detail.status_code == 200, finding_detail.text
@@ -541,18 +543,12 @@ Add provider retry and alerting.
         stability_data = stability.json()["data"]
         assert stability_data["profile"] == "stability"
         assert stability_data["effective_focus"].startswith("Only stability risks.")
-        assert stability_data["target_agent_policy"]["compact"] is True
-        assert stability_data["target_agent_policy"]["max_recent_tasks"] == 5
-        assert stability_data["profile_hard_limits"]["max_recent_runs"] == 6
-        assert stability_data["contract"]["target_agent_overrides"]["compact"] is True
-        assert stability_data["contract"]["stale_context_suppression"]["active"] is True
-        assert stability_data["contract"]["stale_context_suppression"]["suppressed_before"]
-        assert stability_data["contract_shape"]["valid"] is True
-        assert stability_data["packet_summary"]["model_runs"] == []
-        assert "Stability Signals" in stability_data["content"]
-        assert "Recent Accepted Findings" not in stability_data["content"]
+        assert stability_data["limits"]["max_recent_tasks"] == 4
+        assert stability_data["limits"]["max_recent_runs"] == 4
+        assert "model_runs" not in stability_data["packet_summary"]
+        assert json.loads(stability_data["content"])["profile"] == "stability"
         assert "profile_mismatch_delta" in stability_data["warnings"]
-        assert stability_data["since_packet"]["id"] == overview_data["id"]
+        assert stability_data["delta"]
 
         invalid = client.post("/api/collaboration/project-snapshot-packets", json={"profile": "unknown"})
         assert invalid.status_code == 422
@@ -645,7 +641,7 @@ fallback_order: Use inline context first.
         )
         assert response.status_code == 200, response.text
         content = response.json()["data"]["content"]
-        assert "contract_version: p20.v1" in content
+        assert "contract_version: p26.v1" in content
         assert "output_mode: top_findings" in content
         assert "Role And Access Boundaries" in content
         assert "Node Cards" in content
@@ -654,7 +650,7 @@ fallback_order: Use inline context first.
         data = response.json()["data"]
         assert "packet_schema_version" not in data
         assert data["protocol_version"] == "2026-05-05"
-        assert data["schema_ref"] == "knownet://schemas/packet/p20.v1"
+        assert data["schema_ref"] == "/api/schemas/packet/p26.v1"
         assert data["trace"]["name"] == "knownet.experiment_packet"
         assert re.fullmatch(r"[0-9a-f]{32}", data["trace"]["trace_id"])
         assert data["trace"]["traceparent"] == f"00-{data['trace']['trace_id']}-{data['trace']['span_id']}-01"
@@ -677,8 +673,8 @@ def test_phase20_packet_shape_and_dry_run_are_provider_agnostic(tmp_path, monkey
 
         snapshot = client.post("/api/collaboration/project-snapshot-packets", json={"target_agent": "gemini", "profile": "provider_review"})
         assert snapshot.status_code == 200, snapshot.text
-        snapshot_shape = snapshot.json()["data"]["contract_shape"]
-        assert snapshot_shape["valid"] is True
+        snapshot_data = snapshot.json()["data"]
+        assert snapshot_data["contract_ref"] == "/api/schemas/packet/p26.v1"
 
         packet = client.post(
             "/api/collaboration/experiment-packets",
@@ -692,7 +688,7 @@ def test_phase20_packet_shape_and_dry_run_are_provider_agnostic(tmp_path, monkey
         assert packet.status_code == 200, packet.text
         packet_data = packet.json()["data"]
         assert packet_data["contract_shape"]["valid"] is True
-        assert packet_data["contract_shape"]["sections"] == snapshot_shape["sections"]
+        assert "role_and_access_boundaries" in packet_data["contract_shape"]["sections"]
         packet_id = packet_data["id"]
 
         responses = [

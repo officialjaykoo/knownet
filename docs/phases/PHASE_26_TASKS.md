@@ -1,6 +1,6 @@
 # Phase 26 Tasks: Compact External AI Packet
 
-Status: planned
+Status: implemented in the codebase on 2026-05-07
 Created: 2026-05-07
 Updated: 2026-05-07
 
@@ -25,6 +25,20 @@ Reference review log:
 
 ```txt
 docs/reviews/AI_PACKET_STANDARDIZATION_EXTERNAL_REVIEWS.md
+```
+
+Implemented surface:
+
+```txt
+- Project snapshot packets now emit compact JSON as the copy-ready content.
+- Compact packets use contract_ref, contract_hash, packet_integrity, limits,
+  compact health, and prioritized signals instead of full inline contract,
+  contract_shape, snapshot_self_test, and Markdown/JSON duplication.
+- required_context lives on the signal that needs it.
+- max_findings and max_signals are separate effective limits.
+- Empty/null scaffolding is omitted from compact packet content.
+- Provider matrix and heavy detail are opt-in by profile.
+- /api/schemas/packet/p26.v1 exposes the referenced packet schema.
 ```
 
 Operator decision after external reviews:

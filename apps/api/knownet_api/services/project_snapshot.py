@@ -266,13 +266,116 @@ def packet_issues(*, warnings: list[str], health: dict | None, quality: dict, pr
     return unique
 
 
+_SIGNAL_SEVERITY_ORDER = {
+    "critical": 0,
+    "high": 1,
+    "medium": 2,
+    "low": 3,
+    "expected_degraded": 4,
+}
+
+
+def _signal_required_context(code: str) -> dict[str, Any] | None:
+    if code == "ai_state_quality.fail":
+        return {
+            "missing": ["node_card_excerpts", "accepted_or_pending_findings"],
+            "ask_operator": "Provide relevant node cards or confirm this is a fresh install before turning AI-state findings into implementation work.",
+        }
+    if code == "health.degraded":
+        return {
+            "missing": ["health_issue_details"],
+            "ask_operator": "Provide health issue details if this signal should become a finding.",
+        }
+    if code == "provider_matrix.failed":
+        return {
+            "missing": ["live_provider_status", "failed_model_run_detail"],
+            "ask_operator": "Provide live provider status and the failed run detail before marking provider findings as direct_access.",
+        }
+    if code.startswith("packet."):
+        return {
+            "missing": ["full_packet_or_operator_acknowledgement"],
+            "ask_operator": "Acknowledge the packet warning or regenerate a narrower packet before treating this as complete context.",
+        }
+    return None
+
+
+def packet_signals(issues: list[dict[str, Any]], *, max_signals: int) -> list[dict[str, Any]]:
+    signals: list[dict[str, Any]] = []
+    for issue in issues:
+        code = str(issue.get("code") or "unknown")
+        action = issue.get("action_template")
+        severity = str(issue.get("severity") or "medium")
+        if severity == "low" and code == "packet.oversized":
+            severity = "medium"
+        signal = {
+            "code": code,
+            "severity": severity,
+            "action": action,
+            "params": issue.get("action_params") or {},
+            "description": code.replace(".", " ").replace("_", " "),
+        }
+        required_context = _signal_required_context(code)
+        if required_context:
+            signal["required_context"] = required_context
+        signals.append(signal)
+    signals.sort(key=lambda item: (_SIGNAL_SEVERITY_ORDER.get(str(item.get("severity")), 99), 0 if item.get("action") else 1, str(item.get("code"))))
+    return signals[: max(0, max_signals)]
+
+
+def compact_health(health: dict | None) -> dict[str, Any]:
+    if not health:
+        return {"overall_status": "unknown", "degraded": False, "issue_codes": []}
+    issue_codes: list[str] = []
+    for issue in health.get("issues") or []:
+        if isinstance(issue, dict) and issue.get("code"):
+            issue_codes.append(str(issue["code"]))
+        elif isinstance(issue, str):
+            issue_codes.append(issue)
+    overall = str(health.get("overall_status") or "unknown")
+    return {
+        "overall_status": overall,
+        "degraded": overall not in {"ok", "healthy", "expected_degraded"},
+        "checked_at": health.get("checked_at"),
+        "issue_codes": issue_codes,
+    }
+
+
+def compact_limits(*, profile: str, target_policy: dict[str, Any], hard_limits: dict[str, Any]) -> dict[str, Any]:
+    limits = dict(hard_limits)
+    for key in ("max_recent_tasks", "max_recent_runs", "max_important_changes"):
+        if key in target_policy:
+            limits[key] = min(int(limits.get(key, target_policy[key])), int(target_policy[key]))
+    limits["char_budget"] = profile_char_budget(profile)
+    limits["optimization_target_chars"] = 8000 if profile == "overview" else min(8000, int(limits["char_budget"]))
+    limits["max_signals"] = int(limits.get("max_signals") or 5)
+    return limits
+
+
+def packet_integrity_summary(*, status: str, checks_passed: int, checked_at: str) -> dict[str, Any]:
+    return {"status": status, "checks_passed": checks_passed, "checked_at": checked_at}
+
+
+def omit_empty(value: Any) -> Any:
+    if isinstance(value, dict):
+        result = {}
+        for key, item in value.items():
+            cleaned = omit_empty(item)
+            if cleaned in (None, [], {}):
+                continue
+            result[key] = cleaned
+        return result
+    if isinstance(value, list):
+        return [item for item in (omit_empty(item) for item in value) if item not in (None, [], {})]
+    return value
+
+
 def ai_context(*, profile: str, target_agent: str, focus: str, output_mode: str) -> dict[str, Any]:
     return {
         "role": f"{profile}_reviewer",
         "target_agent": target_agent,
         "task": focus,
         "output_mode": output_mode,
-        "read_order": ["ai_context", "next_action_hints", "issues", "packet_summary", "contract"],
+        "read_order": ["ai_context", "signals", "required_context", "packet_summary", "contract_ref"],
         "style": "Keep the answer short, evidence-tagged, and import-ready.",
     }
 

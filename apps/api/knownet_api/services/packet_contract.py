@@ -5,9 +5,9 @@ import re
 from typing import Any
 
 
-PACKET_CONTRACT_VERSION = "p20.v1"
+PACKET_CONTRACT_VERSION = "p26.v1"
 PACKET_PROTOCOL_VERSION = "2026-05-05"
-PACKET_SCHEMA_REF = "knownet://schemas/packet/p20.v1"
+PACKET_SCHEMA_REF = "/api/schemas/packet/p26.v1"
 
 PACKET_CONTRACT_SECTIONS = [
     "packet_metadata",
@@ -85,12 +85,12 @@ PROFILE_SECTION_RULES: dict[str, dict[str, list[str]]] = {
 }
 
 PROFILE_HARD_LIMITS: dict[str, dict[str, Any]] = {
-    "overview": {"max_findings": 3, "max_important_changes": 8, "max_recent_tasks": 8, "max_recent_runs": 5},
-    "stability": {"max_findings": 3, "max_important_changes": 8, "max_recent_tasks": 4, "max_recent_runs": 6},
-    "performance": {"max_findings": 3, "max_important_changes": 8, "max_recent_tasks": 4, "max_recent_runs": 6},
-    "security": {"max_findings": 3, "max_important_changes": 8, "max_recent_tasks": 5, "max_recent_runs": 4},
-    "implementation": {"max_findings": 1, "max_important_changes": 10, "max_recent_tasks": 10, "max_recent_runs": 4},
-    "provider_review": {"max_findings": 3, "max_important_changes": 6, "max_recent_tasks": 3, "max_recent_runs": 5},
+    "overview": {"max_findings": 3, "max_signals": 5, "max_important_changes": 8, "max_recent_tasks": 8, "max_recent_runs": 5},
+    "stability": {"max_findings": 3, "max_signals": 5, "max_important_changes": 8, "max_recent_tasks": 4, "max_recent_runs": 6},
+    "performance": {"max_findings": 3, "max_signals": 5, "max_important_changes": 8, "max_recent_tasks": 4, "max_recent_runs": 6},
+    "security": {"max_findings": 3, "max_signals": 5, "max_important_changes": 8, "max_recent_tasks": 5, "max_recent_runs": 4},
+    "implementation": {"max_findings": 1, "max_signals": 3, "max_important_changes": 10, "max_recent_tasks": 10, "max_recent_runs": 4},
+    "provider_review": {"max_findings": 3, "max_signals": 5, "max_important_changes": 6, "max_recent_tasks": 3, "max_recent_runs": 5},
 }
 
 PROFILE_CHAR_BUDGETS: dict[str, int] = {
@@ -267,7 +267,7 @@ def validate_packet_header(packet: dict[str, Any]) -> list[str]:
 
 
 def validate_packet_schema_core(packet: dict[str, Any], schema: dict[str, Any] | None = None) -> list[str]:
-    """Validate the runtime subset that must agree with docs/schemas/packet.p20.v1.schema.json."""
+    """Validate the runtime subset that must agree with docs/schemas/packet.p26.v1.schema.json."""
     errors: list[str] = []
     required = [
         "id",
@@ -278,8 +278,6 @@ def validate_packet_schema_core(packet: dict[str, Any], schema: dict[str, Any] |
         "generated_at",
         "links",
         "trace",
-        "contract",
-        "contract_shape",
         "ai_context",
     ]
     if schema:
@@ -291,10 +289,11 @@ def validate_packet_schema_core(packet: dict[str, Any], schema: dict[str, Any] |
             errors.append(f"schema_required_missing:{key}")
     errors.extend(validate_packet_header(packet))
     contract = packet.get("contract")
-    if not isinstance(contract, dict):
-        errors.append("contract_missing")
-    else:
+    contract_ref = packet.get("contract_ref")
+    if isinstance(contract, dict):
         errors.extend(validate_packet_contract(contract))
+    elif not isinstance(contract_ref, str) or not contract_ref:
+        errors.append("contract_ref_missing")
     return errors
 
 
