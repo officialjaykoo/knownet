@@ -36,6 +36,8 @@ Operator decision after external reviews:
 4. SARIF belongs in a later findings/tooling phase, not in Phase 26 packets.
 5. CloudEvents, JSON-LD, and in-toto are out of scope until real consumers need
    them.
+6. required_context should live on the signal that needs it, not as another
+   detached top-level section.
 ```
 
 ## Fixed Rules
@@ -44,6 +46,7 @@ Do not:
 
 - Add a new provider-specific packet schema.
 - Add another full validation framework before the compact shape settles.
+- Include full `snapshot_self_test` in compact AI-facing output.
 - Expand MCP capabilities, prompts, sampling, logging, or provider surfaces just
   because a standard supports them.
 - Put raw secrets, raw database files, backups, sessions, users, local paths,
@@ -65,7 +68,7 @@ Do:
 - Use standard names and shapes only where they reduce custom parsing.
 - Keep the implementation small enough for a local-first project.
 
-## P26-001 Required Context For Short Follow-Up Questions
+## P26-001 Per-Signal Required Context For Short Follow-Up Questions
 
 Problem:
 
@@ -84,14 +87,23 @@ context -> AI returns a stronger finding.
 
 Implementation shape:
 
-Add `required_context` to the compact packet or output contract:
+Add `required_context` to the specific `signal` that needs more context, not as
+another detached top-level section:
 
 ```json
 {
-  "required_context": {
-    "missing": ["node_card_excerpts", "live_provider_status"],
-    "ask_operator": "Provide live provider status before marking provider findings as direct_access."
-  }
+  "signals": [
+    {
+      "code": "provider.status_unverified",
+      "severity": "medium",
+      "action": "verify_provider_status",
+      "description": "Provider state cannot be marked direct_access from this packet alone.",
+      "required_context": {
+        "missing": ["live_provider_status"],
+        "ask_operator": "Provide live provider status before marking provider findings as direct_access."
+      }
+    }
+  ]
 }
 ```
 
@@ -99,14 +111,16 @@ Rules:
 
 - Keep the list short and concrete.
 - Use names the operator can provide or that KnowNet can expose.
-- Pair `required_context` with `evidence_quality`.
+- Pair per-signal `required_context` with `evidence_quality`.
+- Do not add a second top-level `required_context` list unless it is a compact
+  summary generated from the signal-level requirements.
 - Do not let `context_limited` findings become release blockers unless the
   required context is later provided or operator-verified.
 
 Done when:
 
 - External AI can ask for missing context in one short targeted question.
-- `context_limited` output includes what would make it stronger.
+- `context_limited` output includes what would make it stronger per signal.
 - Import logic can distinguish finding proposals from context requests.
 
 ## P26-002 Contract Ref And Single Canonical Contract
@@ -129,6 +143,8 @@ Implementation shape:
 - Keep one canonical contract object or referenced contract for compact JSON.
 - Replace duplicated contract text with `contract_ref` and/or `contract_hash`.
 - Remove `contract_shape` from compact AI-facing output.
+- Remove full `snapshot_self_test` from compact AI-facing output.
+- Replace it, only if needed, with a tiny `packet_integrity` summary.
 - Keep human-readable contract documentation outside the compact packet.
 
 Candidate compact shape:
@@ -136,7 +152,12 @@ Candidate compact shape:
 ```json
 {
   "contract_ref": "/api/schemas/packet/p26.v1",
-  "contract_hash": "sha256:..."
+  "contract_hash": "sha256:...",
+  "packet_integrity": {
+    "status": "pass",
+    "checks_passed": 10,
+    "checked_at": "2026-05-07T00:00:00Z"
+  }
 }
 ```
 
@@ -144,6 +165,8 @@ Done when:
 
 - Compact packet output has one effective contract source.
 - Duplicated contract text is absent from compact output.
+- Full `snapshot_self_test` is absent from compact output.
+- `packet_integrity`, if present, is a short summary only.
 - Human-readable contract documentation exists outside the compact packet.
 
 ## P26-003 Compact Health And Unified Signals
@@ -179,7 +202,7 @@ Keep compact health as state:
 }
 ```
 
-Add one compact, sorted `signals` array for actions:
+Add one compact, sorted priority queue named `signals` for actions:
 
 ```json
 {
@@ -194,7 +217,11 @@ Add one compact, sorted `signals` array for actions:
       "code": "health.degraded",
       "severity": "medium",
       "action": "inspect_health_issue",
-      "params": {}
+      "params": {},
+      "required_context": {
+        "missing": ["health_issue_details"],
+        "ask_operator": "Provide health issue details if this signal should become a finding."
+      }
     }
   ]
 }
@@ -203,15 +230,19 @@ Add one compact, sorted `signals` array for actions:
 Rules:
 
 - `severity` and `action` must be top-level fields on each signal.
-- Cap `signals` at the effective `max_findings` or another explicit compact
-  signal limit.
+- Sort `signals` by severity and actionability:
+  `critical`, `high`, `medium`, `low`, `expected_degraded`.
+- Cap `signals` with an explicit `max_signals`; do not reuse `max_findings`
+  unless the effective values are intentionally equal.
 - Prefer `code`, `severity`, `action`, `params`, and one-line `description`.
+- Allow per-signal `required_context` where the next AI question should be
+  short and targeted.
 - Use RFC 9457 Problem Details shape later only if it reduces custom parsing.
 - Keep detailed health and provider data in opt-in profiles.
 
 Done when:
 
-- Compact overview exposes one prioritized action stream.
+- Compact overview exposes one prioritized signal queue.
 - Health/provider/action hints no longer need to be read from several sections.
 - Compact health remains available for state, while `signals` carries action.
 - Signal objects are short enough for AI scanning and stable enough for import
@@ -241,6 +272,7 @@ Expose one effective `limits` object in compact output:
 {
   "limits": {
     "max_findings": 3,
+    "max_signals": 5,
     "max_important_changes": 8,
     "char_budget": 12000,
     "optimization_target_chars": 8000
@@ -252,12 +284,15 @@ Rules:
 
 - Internal profile or target-agent overrides may still exist.
 - Compact output should show only the final effective values.
+- `max_findings` and `max_signals` are separate unless intentionally equal:
+  findings are import candidates, signals are attention/action candidates.
 - If override precedence matters, document it outside the packet or expose a
   one-line `limits_source` field.
 
 Done when:
 
 - `max_findings`, char budget, and output mode do not conflict across fields.
+- `max_signals` is present and does not conflict with `max_findings`.
 - Compact output contains one effective `limits` object.
 - Override precedence is documented and tested, not guessed by the AI.
 
@@ -279,7 +314,7 @@ Implementation shape:
 - Keep `overview` as the default external AI profile.
 - Treat `12,000` chars as the first practical target and warning threshold.
 - Treat `8,000` chars as an optimization target after `required_context`,
-  `contract_ref`, `signals`, and `limits` are in place.
+  `contract_ref`, `packet_integrity`, `signals`, and `limits` are in place.
 - Move provider, MCP schema, and diagnostic detail into opt-in profiles.
 - Emit `oversized_packet` only as a quality warning; do not silently truncate.
 
@@ -353,13 +388,16 @@ Done when:
 ## Acceptance
 
 ```txt
-1. required_context helps external AI ask shorter follow-up questions.
+1. Per-signal required_context helps external AI ask shorter follow-up
+   questions.
 2. Compact overview packet is the default external AI handoff shape.
 3. Compact overview is designed for 12,000 chars first, with 8,000 chars as an
    optimization target.
 4. Packet has one canonical contract reference and one effective limits object.
-5. Empty/null scaffolding and snapshot_self_test are absent from compact output.
-6. Health remains compact state, while actionable items use one signals array.
+5. Empty/null scaffolding and full snapshot_self_test are absent from compact
+   output; packet_integrity is short if present.
+6. Health remains compact state, while actionable items use one prioritized
+   signals queue with separate max_signals.
 7. Provider matrix, full schemas, and detailed diagnostics are opt-in.
 8. Role boundaries, evidence_quality, W3C trace context, and import guardrails
    remain intact.
@@ -368,7 +406,7 @@ Done when:
 ## Suggested Implementation Order
 
 ```txt
-P26-001 Required Context
+P26-001 Per-Signal Required Context
 P26-002 Contract Ref And Single Canonical Contract
 P26-003 Compact Health And Unified Signals
 P26-004 Single Effective Limits
