@@ -1095,3 +1095,74 @@ Remove role_boundaries.narrative from copy-ready content.
 The zero-summary compression idea is new and practical. The schema-referenced
 `ask_operator` idea saves little but risks weakening the best Phase 26 usability
 feature, so it should wait unless repeated signals make the text expensive.
+
+## 2026-05-07 Kimi Review After Phase 26 Compact Packet
+
+Reviewer: Kimi  
+Focus: Phase 26 compact external AI packet  
+Packet: `snapshot_20f26adeab6e`  
+Score: 84/100  
+Verdict: enough for now
+
+### Summary
+
+Kimi agrees that the packet is now short enough for daily handoffs. It cites the
+under-6K size, single contract reference, unified signals,
+per-signal `required_context`, and clean role boundaries as the reasons the
+packet is import-ready.
+
+### Top Concrete Changes
+
+1. Remove `ai_state_quality` and `preflight` duplication.
+
+   Kimi says these top-level fields repeat the same zero-value state already
+   embedded in the first signal's `params.summary`. Removing both saves roughly
+   400 characters and removes a cross-reference burden.
+
+2. Flatten `links`.
+
+   Kimi says `links.self`, `links.content`, and `links.storage` are identical or
+   derivable enough for external reviewers. A single `packet_url` string would
+   be sufficient if a link is still needed.
+
+3. Remove `role_boundaries.narrative`.
+
+   This matches Claude and Qwen. The structured arrays are enough for AI
+   consumers, and the narrative text is redundant.
+
+### Do Not Change
+
+Kimi specifically says:
+
+- Do not add another JSON Schema validation layer.
+- Do not expand `signals` beyond the current overview cap.
+- Do not replace W3C `traceparent`.
+- Do not inline MCP resource/tool schemas.
+- Do not add SARIF, CloudEvents, or JSON-LD to the packet.
+
+### Standard Pattern
+
+Kimi recommends RFC 9457 Problem Details for API error responses, not for the
+compact packet itself. Suggested future use cases:
+
+```txt
+/api/schemas/packet/p26.v1 errors
+propose_finding error responses
+```
+
+### Codex Notes
+
+Kimi's review creates a strong three-review overlap around removing
+`role_boundaries.narrative`, and a strong DeepSeek/Kimi overlap around removing
+or folding `preflight` and `ai_state_quality`.
+
+The current practical trim list is:
+
+```txt
+1. Remove top-level ai_state_quality from copy-ready content.
+2. Remove top-level preflight from copy-ready content.
+3. Remove role_boundaries.narrative from copy-ready content.
+4. Flatten or move links out of copy-ready content.
+```
+
+These are small enough to implement as Phase 26 polish rather than a new phase.
