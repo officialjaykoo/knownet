@@ -51,13 +51,18 @@ Implemented surface:
 Operator decision after external reviews:
 
 ```txt
-1. 12,000 chars is the first target/warning line.
-2. 8,000 chars is a second optimization target, not a hard requirement.
-3. required_context and contract_ref are the fastest practical wins.
-4. SARIF belongs in a later findings/tooling phase, not in Phase 26 packets.
-5. CloudEvents, JSON-LD, and in-toto are out of scope until real consumers need
+1. 8,000 chars is not the goal.
+2. 12,000 chars is not the goal either.
+3. The goal is minimum misunderstanding, enough evidence, and immediate action.
+4. 12K inside accurate is good.
+5. 14K is acceptable when the evidence is needed.
+6. 5K is a failure if it causes external AI to guess or misread the state.
+7. Character budgets are warning rails, not success criteria.
+8. required_context and contract_ref are the fastest practical wins.
+9. SARIF belongs in a later findings/tooling phase, not in Phase 26 packets.
+10. CloudEvents, JSON-LD, and in-toto are out of scope until real consumers need
    them.
-6. required_context should live on the signal that needs it, not as another
+11. required_context should live on the signal that needs it, not as another
    detached top-level section.
 ```
 
@@ -322,28 +327,31 @@ Done when:
 Problem:
 
 External AI reviewers repeatedly flagged the default overview packet as too
-large:
+large, but Phase 26 must not turn size into the product goal:
 
 ```txt
 observed size: 20,468 chars
-first target / warning line: 12,000 chars
-second optimization target: 8,000 chars
+warning rail: around 12,000 chars
+excellent compactness: around 8,000 chars when accuracy is preserved
 ```
 
 Implementation shape:
 
 - Keep `overview` as the default external AI profile.
-- Treat `12,000` chars as the first practical target and warning threshold.
-- Treat `8,000` chars as an optimization target after `required_context`,
-  `contract_ref`, `packet_integrity`, `signals`, and `limits` are in place.
+- Treat 12K and 8K as diagnostic rails, not success criteria.
+- Prefer a 10K-12K accurate packet over a 5K packet that invites guessing.
+- Allow a packet above 12K when the extra context is needed for correct
+  judgment; mark it with a warning instead of silently trimming evidence.
 - Move provider, MCP schema, and diagnostic detail into opt-in profiles.
 - Emit `oversized_packet` only as a quality warning; do not silently truncate.
 
 Done when:
 
-- The default overview packet is designed to fit under 12,000 chars.
-- The packet reports whether it is near the 8,000 char optimization target.
+- The default overview packet reports size against warning rails without
+  treating smallness as success by itself.
 - Oversized packets explain which sections caused the size overrun.
+- Tests or fixtures can show at least one case where a larger packet is kept
+  because it is more accurate.
 - Provider/detail profiles can still include richer context on request.
 
 ## P26-006 Opt-In Detail Profiles And Schema References
@@ -475,7 +483,14 @@ Implementation shape:
    Keep this compact. It should reduce false findings from external AI, not add
    a new diagnostic dump.
 
-Rules:
+Accuracy-first rules:
+
+- 8K or lower is not the goal.
+- Inside 12K is good only when the packet remains accurate.
+- 14K is acceptable when needed evidence would otherwise be lost.
+- 5K is a failure if it makes external AI misunderstand the state.
+
+Trim rules:
 
 - Do not make 5K or lower a target.
 - Do not remove `signals[].required_context`.
@@ -727,8 +742,8 @@ Done when:
 1. Per-signal required_context helps external AI ask shorter follow-up
    questions.
 2. Compact overview packet is the default external AI handoff shape.
-3. Compact overview is designed for 12,000 chars first, with 8,000 chars as an
-   optimization target.
+3. Compact overview treats 12K/8K as warning rails, not success criteria;
+   accuracy and actionability come first.
 4. Packet has one canonical contract reference and one effective limits object.
 5. Empty/null scaffolding and full snapshot_self_test are absent from compact
    output; packet_integrity is short if present.
