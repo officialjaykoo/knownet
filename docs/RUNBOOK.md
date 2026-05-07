@@ -2,6 +2,16 @@
 
 This runbook covers the local-first MVP operations path.
 
+## Development Environment
+
+Keep source and local execution environments separate. Follow
+`docs/DEVELOPMENT_ENV_POLICY.md`.
+
+Agents must not create repo-local virtual environments or run global
+`python -m pip install ...` during routine verification. If Python test
+dependencies are missing, report the missing environment instead of installing
+packages.
+
 ## First Install And Run
 
 1. Build the Rust daemon from `apps/core` with `cargo build`.
