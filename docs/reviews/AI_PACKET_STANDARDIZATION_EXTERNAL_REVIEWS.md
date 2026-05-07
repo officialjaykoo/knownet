@@ -106,3 +106,145 @@ Create a compact packet profile that replaces inline contract and schema-heavy
 issue details with references while preserving enough context for copy-paste
 external AI review.
 ```
+
+## 2026-05-07 Gemini Review
+
+Reviewer: Gemini  
+Focus: packet/snapshot standardization review  
+Score: 65/100  
+Verdict: overbuilt
+
+### Summary
+
+Gemini agreed with Claude that the packet is overbuilt. Its main criticism is
+that KnowNet is still sending a large monolithic hybrid packet instead of using
+separate standard context and action surfaces. Gemini was more direct than
+Claude about preferring strict MCP resources/tools over a custom packet wrapper.
+
+### Top 5 Recommended Changes
+
+1. Eliminate Markdown/JSON duplication.
+
+   Gemini observed that the packet duplicates most important content between
+   narrative Markdown sections and the `## Machine Readable JSON` block. This is
+   a direct cause of the `oversized_packet` warning:
+
+   ```txt
+   20,468 > 12,000 chars
+   ```
+
+   Recommendation: pick one primary format for AI review instead of shipping the
+   same capability, contract, and summary data twice.
+
+2. Drop empty structures.
+
+   Omit empty arrays and empty/null blocks entirely. Examples:
+
+   ```json
+   {
+     "node_cards": [],
+     "accepted_findings": [],
+     "source_manifest": {
+       "sources": []
+     }
+   }
+   ```
+
+   These fields preserve schema shape but add no context for the reviewing AI.
+
+3. Remove internal telemetry.
+
+   Gemini recommends stripping OpenTelemetry/W3C trace context from AI-facing
+   packets:
+
+   ```txt
+   trace_id
+   span_id
+   span_kind
+   attributes
+   ```
+
+   Gemini's view differs from Claude here. Claude recommended keeping W3C
+   `traceparent`; Gemini says external LLMs do not need APM routing data.
+
+4. Remove meta-diagnostics.
+
+   Delete `snapshot_self_test` from the payload. Gemini agrees with Claude that
+   external AIs do not need internal packet unit-test results such as checks for
+   section headers.
+
+5. Deduplicate action schemas.
+
+   `issues[*].action_input_schema` duplicates schemas that belong in tool
+   definitions. Gemini recommends referencing only the action/tool name, for
+   example:
+
+   ```txt
+   triage_ai_state_failures
+   ```
+
+   The AI should rely on the primary tool definition or MCP tool schema instead.
+
+### Do Not Change
+
+- Keep `Role And Access Boundaries`.
+- Keep explicit `Output Contract` rules.
+
+Gemini called these guardrails excellent and deterministic because they reduce
+hallucinated access requests and unauthorized system assumptions.
+
+### Open Source / Standard Patterns To Absorb
+
+Gemini recommends absorbing the official Model Context Protocol strictly:
+
+- Use MCP `resources` for state and node context.
+- Use MCP `tools` for actions.
+- Stop relying on a custom monolithic `knownet://schemas/packet/p20.v1` hybrid
+  wrapper as the primary external AI interface.
+
+### Codex Notes
+
+Gemini reinforces the same core signal as Claude: packet size and duplication
+are the immediate problem. The strongest shared recommendation is to remove
+duplicated narrative/JSON payload content, `snapshot_self_test`, and inline
+action schemas.
+
+The main disagreement is telemetry:
+
+- Claude: keep W3C `traceparent`.
+- Gemini: remove trace telemetry from AI-facing packets.
+
+Codex recommendation after two reviews: keep trace identifiers in stored packet
+metadata, but consider removing or greatly shortening them in copy-paste
+external AI packet text. This preserves auditability without spending external
+AI context budget on telemetry.
+
+## Cross-Review Synthesis
+
+Common findings from Claude and Gemini:
+
+1. The packet is too large and overbuilt.
+2. Markdown/JSON or contract duplication should be reduced.
+3. `snapshot_self_test` should not be in AI-facing packet text.
+4. Inline action schemas are too heavy for external review.
+5. Guardrails should remain explicit.
+
+Likely next implementation direction:
+
+```txt
+Create a compact external-AI packet mode:
+- one primary readable format
+- no empty structures
+- no snapshot_self_test
+- no inline action_input_schema
+- no duplicated provider_matrix
+- schema/tool references instead of schema bodies
+- role/access/output guardrails preserved
+```
+
+Open question:
+
+```txt
+Should copy-paste packets keep a small trace reference, or should trace data
+exist only in stored packet metadata and MCP/API responses?
+```
