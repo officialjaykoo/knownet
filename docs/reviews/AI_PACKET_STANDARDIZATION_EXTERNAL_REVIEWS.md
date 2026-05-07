@@ -1010,3 +1010,88 @@ Claude: collapse trace and remove role_boundaries.narrative.
 
 Because the packet is already below the 8,000-character target, these should be
 treated as small polish work, not a new phase-sized redesign.
+
+## 2026-05-07 Qwen Review After Phase 26 Compact Packet
+
+Reviewer: Qwen  
+Focus: Phase 26 compact external AI packet  
+Packet: `snapshot_20f26adeab6e`  
+Score: 88/100  
+Verdict: enough for now
+
+### Summary
+
+Qwen gives the strongest post-Phase 26 score so far. It explicitly says the
+packet is compact, signal-focused, and import-ready at 5,906 characters. Qwen
+also calls out `signals[].required_context` with `missing` and `ask_operator` as
+the right pattern for actionable findings without over-fetching.
+
+### Top Concrete Changes
+
+1. Remove `role_boundaries.narrative`.
+
+   This matches Claude's recommendation. Qwen says the prose duplicates the
+   structured `allowed`, `refused`, and `escalate_on` arrays. External AI can
+   infer or generate narrative from the arrays when needed.
+
+2. Compress zero-value summaries.
+
+   Qwen points to repeated summaries such as:
+
+   ```json
+   {
+     "pages": 0,
+     "ai_state_pages": 0
+   }
+   ```
+
+   It recommends omitting all-zero summaries or replacing them with a compact
+   sentinel such as `"summary": "empty"`.
+
+3. Make `required_context.ask_operator` schema-referenced.
+
+   For overview packets, Qwen suggests keeping only `missing` in the packet and
+   referencing a standard question template from a schema such as:
+
+   ```txt
+   knownet://schemas/signals/v1#context_questions
+   ```
+
+   This would preserve actionability while trimming repeated prompt text.
+
+### Do Not Change
+
+Qwen specifically says to keep:
+
+- W3C traceparent format and trace attribute structure
+- `role_boundaries` core arrays
+- `signals[].code`, `severity`, and `action`
+- `packet_integrity.char_budget` fields
+- `do_not_suggest`
+- `ai_context.read_order`
+
+### Standard Patterns
+
+Qwen recommends these standards for future alignment:
+
+- RFC 7807 Problem Details for `signals`
+- IETF JSON Hyper-Schema style `links`
+- CloudEvents envelope alignment
+
+### Codex Notes
+
+Qwen further strengthens the current consensus:
+
+```txt
+Phase 26 is enough for now.
+```
+
+The strongest shared trim candidate after Claude and Qwen is:
+
+```txt
+Remove role_boundaries.narrative from copy-ready content.
+```
+
+The zero-summary compression idea is new and practical. The schema-referenced
+`ask_operator` idea saves little but risks weakening the best Phase 26 usability
+feature, so it should wait unless repeated signals make the text expensive.
