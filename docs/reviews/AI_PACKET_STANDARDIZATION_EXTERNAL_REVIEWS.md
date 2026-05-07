@@ -416,9 +416,133 @@ packet identity and event-style interoperability.
 Qwen strongly supports keeping trace context and guardrails, aligning with
 Claude and DeepSeek against Gemini on telemetry removal.
 
+## 2026-05-07 Kimi Review
+
+Reviewer: Kimi  
+Focus: packet/snapshot standardization review  
+Score: 72/100  
+Verdict: insufficient
+
+### Summary
+
+Kimi judged the packet as structurally coherent but still insufficient for the
+core goal: helping external AI read faster, ask shorter questions, and produce
+importable findings. Its review is stricter than Qwen's despite the same score.
+The main complaint is that actionable signals are buried under duplicated
+contracts, stale scaffolding, and metadata noise.
+
+### Top 5 Recommended Changes
+
+1. Collapse dual contracts into one canonical JSON shape.
+
+   The `## Packet Contract` text block and the `contract` JSON object repeat
+   the same rules with slight drift. Kimi specifically called out a mismatch
+   where `max_findings` is `5` in text but `3` in `profile_hard_limits`.
+
+   Recommendation: prefer the machine-readable JSON as the source of truth and
+   replace the text block with a compact `contract_hash` or `contract_ref`.
+
+2. Strip null and empty scaffolding.
+
+   Remove fields that carry no signal:
+
+   ```txt
+   delta: null
+   since_packet: null
+   node_cards: []
+   sources: []
+   important_changes
+   do_not_reopen
+   ```
+
+   If a section has no content, omit the key entirely.
+
+3. Replace `knownet://` URIs with MCP-native or resolvable resource paths.
+
+   Kimi argued that custom `knownet://` URIs are not directly resolvable by
+   standard clients. Recommended alternatives:
+
+   ```txt
+   mcp://...
+   /api/...
+   HTTPS paths when available
+   ```
+
+   For local-first use, relative API paths may be more practical than a custom
+   faux-protocol.
+
+4. Merge `issues`, `next_action_hints`, and `health` into `signals`.
+
+   Actionable items are currently scattered across multiple sections with
+   inconsistent shapes. Kimi recommends a single sorted array:
+
+   ```json
+   {
+     "code": "health.degraded",
+     "severity": "medium",
+     "action": "inspect_health_issue",
+     "params": {}
+   }
+   ```
+
+   The array should be capped at the packet's `max_findings` limit.
+
+5. Add `required_context` to the output contract.
+
+   The packet says what an AI must not do, but not what missing context would
+   upgrade a finding from `context_limited`. Kimi recommends making the missing
+   context explicit:
+
+   ```json
+   {
+     "required_context": ["node_card_excerpts", "live_provider_status"]
+   }
+   ```
+
+   This should help external agents ask shorter, more targeted follow-up
+   questions.
+
+### Do Not Change
+
+- Do not add a JSON Schema validation layer yet; Kimi considers it premature
+  while the packet is still evolving.
+- Keep W3C `traceparent`; do not replace it with a custom trace format.
+- Keep `role_and_access_boundaries`; only remove duplication around it.
+- Do not expand MCP `capabilities` until a concrete consumer needs more tools,
+  prompts, logging, or sampling.
+
+### Open Source / Standard Patterns To Absorb
+
+Kimi recommended the following standards and conventions:
+
+- MCP terminology and shapes: align with `resources/list` and `tools/call` as
+  the primary interaction flow.
+- W3C Trace Context: keep `traceparent` and propagate `trace_id` into
+  `propose_finding` calls for cross-agent traceability.
+- JSON Schema for `inputSchema`: use it consistently and ensure `required`
+  arrays have matching property definitions.
+- OpenAPI-style parameter objects: replace ad-hoc `action_params` with
+  `{name, in, schema, required}` where typed client generation matters.
+- SARIF-style finding severity: map KnowNet severity to SARIF `level` and,
+  later, optional `rank` for CI/code-scanning portability.
+
+### Codex Notes
+
+Kimi adds two useful concepts that earlier reviews did not emphasize as
+strongly:
+
+- `signals` as a single high-priority action stream.
+- `required_context` as the mechanism for shorter follow-up questions.
+
+It disagrees with DeepSeek on JSON Schema timing. DeepSeek wanted schema
+references as a stronger source of truth; Kimi says formal validation is
+premature. A balanced interpretation is to reference schemas for stable tool
+and packet shapes, while delaying strict runtime rejection until compact packet
+shape settles.
+
 ## Cross-Review Synthesis
 
-Common findings from Claude, Gemini, DeepSeek, and Qwen:
+Common findings from Claude, Gemini, DeepSeek, Qwen, and Kimi:
 
 1. The packet is too large and overbuilt.
 2. Markdown/JSON or contract duplication should be reduced or eliminated.
@@ -426,7 +550,8 @@ Common findings from Claude, Gemini, DeepSeek, and Qwen:
 4. Inline action/tool schemas are too heavy for external review.
 5. Health should be compact and abnormal-detail-only.
 6. Limits and metadata should have one source of truth.
-7. Guardrails should remain explicit.
+7. Empty/null scaffolding should be omitted.
+8. Guardrails should remain explicit.
 
 Likely next implementation direction:
 
@@ -438,6 +563,8 @@ Create a compact external-AI packet mode:
 - no inline action_input_schema
 - no duplicated provider_matrix
 - compact health summary only
+- one signals array for prioritized actionable items
+- required_context for targeted follow-up questions
 - unified max_findings
 - unified metadata and limits object
 - schema/tool references instead of schema bodies
@@ -464,4 +591,11 @@ Third open question:
 Should the packet envelope adopt CloudEvents fields (`id`, `type`, `source`,
 `time`, `datacontenttype`) while keeping existing KnowNet trace metadata in
 stored packet records?
+```
+
+Fourth open question:
+
+```txt
+Should KnowNet replace custom `knownet://` packet/schema URIs with MCP-native,
+relative API, or HTTPS resource paths for external AI handoff?
 ```
