@@ -41,6 +41,9 @@ Implemented surface:
 - Empty/null scaffolding is omitted from compact packet content.
 - Provider matrix and heavy detail are opt-in by profile.
 - /api/schemas/packet/p26.v1 exposes the referenced packet schema.
+- AI Packets UI now presents Phase 26 compact packet size, signals,
+  signal-level required_context, and contract_ref instead of foregrounding
+  legacy quality-warning controls.
 ```
 
 Operator decision after external reviews:

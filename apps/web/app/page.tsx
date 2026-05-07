@@ -281,6 +281,23 @@ type ProjectSnapshotPacket = {
   profile?: string;
   output_mode?: string;
   contract_version?: string;
+  contract_ref?: string;
+  packet_integrity?: {
+    status?: string;
+    content_chars?: number;
+    char_budget?: number;
+    optimization_target_chars?: number;
+    under_char_budget?: boolean;
+    under_optimization_target?: boolean;
+  };
+  limits?: { max_findings?: number; max_signals?: number; char_budget?: number; optimization_target_chars?: number };
+  signals?: Array<{
+    code: string;
+    severity: string;
+    action?: string | null;
+    description?: string;
+    required_context?: { missing?: string[]; ask_operator?: string };
+  }>;
   snapshot_quality?: { score: number; warnings: string[]; advisory_only: boolean; acknowledgement_required_for_ui_send: boolean; acknowledged: boolean };
   copy_ready: boolean;
 };
@@ -961,7 +978,7 @@ export default function HomePage() {
     setProjectSnapshotProfile("overview");
     setProjectSnapshotOutputMode("top_findings");
     setProjectSnapshotSincePacketId("");
-    setProjectSnapshotFocus("Review packet/snapshot standardization. Score sufficiency, list only top 5 concrete changes, and avoid overbuilt platform work.");
+    setProjectSnapshotFocus("Review the compact KnowNet external AI packet. Score sufficiency, list only top 3 concrete changes, and focus on size, signals, required_context, and importability.");
     setStatus("Project packet preset applied");
   }
 
@@ -987,7 +1004,7 @@ export default function HomePage() {
         ? "This prompt is intended to be pasted unchanged into multiple AI systems. Do not adapt the packet per model."
         : `This prompt is intended for ${projectSnapshotTargetAgent}. Keep the answer tailored to that model's strengths but do not change the requested output shape.`;
     const prompt = [
-      "You are reviewing KnowNet packet and snapshot standardization.",
+      "You are reviewing the current KnowNet compact external AI packet.",
       `Target: ${targetLabel}.`,
       targetRule,
       "",
@@ -996,14 +1013,14 @@ export default function HomePage() {
       "Return exactly:",
       "1. Score out of 100",
       "2. Is it enough for now, insufficient, or overbuilt?",
-      "3. Top 5 concrete changes only",
+      "3. Top 3 concrete changes only",
       "4. What should NOT be changed next",
       "5. Any standard/open-source pattern we should absorb instead of inventing",
       "",
       "Rules:",
-      "- Prefer lightweight standard shapes: JSON Schema, OpenAPI-style params, MCP terminology, W3C trace context.",
-      "- Focus on making external AI read faster, ask shorter questions, produce importable findings/tasks, and help Codex implement faster.",
-      "- Remove anything overbuilt for a small local-first project.",
+      "- Focus only on whether this Phase 26 compact packet is short enough, accurate enough, and easy to turn into importable findings.",
+      "- Treat 12K chars as the warning line and 8K chars as an optimization target, not a hard requirement.",
+      "- Prefer concrete removals or field reshaping over new subsystems.",
       "",
       "KnowNet packet:",
       "```text",

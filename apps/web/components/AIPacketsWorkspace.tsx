@@ -80,23 +80,31 @@ export function AIPacketsWorkspace({
     : operatorBusyAction === "project-snapshot"
       ? "Project packet generation is already running"
       : "";
+  const packetIntegrity = projectSnapshotPacket?.packet_integrity ?? {};
+  const packetChars = packetIntegrity.content_chars ?? projectSnapshotPacket?.content?.length;
+  const packetBudget = packetIntegrity.char_budget ?? projectSnapshotPacket?.limits?.char_budget ?? 12000;
+  const packetTarget = packetIntegrity.optimization_target_chars ?? projectSnapshotPacket?.limits?.optimization_target_chars ?? 8000;
+  const packetSizeLabel = packetChars
+    ? `${packetChars.toLocaleString()} chars / ${packetBudget.toLocaleString()} budget / ${packetTarget.toLocaleString()} target`
+    : "size pending";
+  const packetSizeState = packetChars && packetChars > packetBudget ? "over budget" : packetChars && packetChars <= packetTarget ? "under target" : "within budget";
 
   return (
     <section className="ai-packets-workspace" aria-label="AI Packets">
       <div className="workspace-dashboard-head">
         <div>
           <p className="eyebrow">AI Packets</p>
-          <h2>External AI Handoff</h2>
+          <h2>Compact AI Handoff</h2>
         </div>
         <div className="operator-actions">
           <button
             disabled={Boolean(projectPacketDisabledReason)}
             onClick={onGenerateProjectSnapshotPacket}
-            title={projectPacketDisabledReason || "Generate a standard project snapshot packet"}
+            title={projectPacketDisabledReason || "Generate a compact Phase 26 project packet"}
             type="button"
           >
             <FileText aria-hidden size={15} />
-            {operatorBusyAction === "project-snapshot" ? "Snapshotting" : "Project packet"}
+            {operatorBusyAction === "project-snapshot" ? "Generating" : "Compact packet"}
           </button>
         </div>
       </div>
@@ -109,8 +117,8 @@ export function AIPacketsWorkspace({
         <section className="experiment-packet-panel">
           <div className="operator-panel-head">
             <div>
-              <h3>Project Snapshot Packet</h3>
-              <small>{projectSnapshotPacket.id} / {projectSnapshotPacket.warnings.length} warning(s)</small>
+              <h3>Compact Project Packet</h3>
+              <small>{projectSnapshotPacket.id} / {packetSizeLabel}</small>
             </div>
             <div className="operator-actions">
               <button onClick={onCopyProjectSnapshotPacket} type="button">
@@ -127,14 +135,26 @@ export function AIPacketsWorkspace({
             <div className="model-run-stats">
               <span>{projectSnapshotPacket.profile ?? "overview"}</span>
               <span>{projectSnapshotPacket.output_mode ?? "top_findings"}</span>
-              <span>{projectSnapshotPacket.contract_version ?? "p20.v1"}</span>
-              {projectSnapshotPacket.snapshot_quality ? <span>quality {projectSnapshotPacket.snapshot_quality.score}</span> : null}
+              <span>{projectSnapshotPacket.contract_version ?? "p26.v1"}</span>
+              <span>{packetSizeState}</span>
+              {projectSnapshotPacket.contract_ref ? <span>{projectSnapshotPacket.contract_ref}</span> : null}
               <span>{projectSnapshotPacket.links.storage?.href ?? "no storage link"}</span>
               <span>{projectSnapshotPacket.links.self.href}</span>
             </div>
-            {projectSnapshotPacket.snapshot_quality?.warnings?.length ? (
+            {projectSnapshotPacket.signals?.length ? (
+              <div className="model-run-findings">
+                {projectSnapshotPacket.signals.slice(0, 5).map((signal: any) => (
+                  <article key={signal.code}>
+                    <span>{signal.severity} / {signal.action ?? "observe"}</span>
+                    <strong>{signal.code}</strong>
+                    {signal.required_context?.ask_operator ? <small>{signal.required_context.ask_operator}</small> : null}
+                  </article>
+                ))}
+              </div>
+            ) : null}
+            {projectSnapshotPacket.warnings?.length ? (
               <div className="model-run-stats warning-stats">
-                {projectSnapshotPacket.snapshot_quality.warnings.map((warning: string) => (
+                {projectSnapshotPacket.warnings.map((warning: string) => (
                   <span key={warning}>{warning}</span>
                 ))}
               </div>
@@ -146,13 +166,13 @@ export function AIPacketsWorkspace({
       <section className="experiment-packet-panel">
         <div className="operator-panel-head">
           <div>
-            <h3>Snapshot Packet Builder</h3>
-            <small>Choose how the standard AI packet is shaped before copying it to external models</small>
+            <h3>Compact Packet Builder</h3>
+            <small>Generate the Phase 26 copy-ready JSON packet for external AI review</small>
           </div>
         </div>
         <div className="experiment-packet-form">
           <label>
-            <span>AI Target</span>
+            <span>Reviewer Target</span>
             <select onChange={(event) => onProjectSnapshotTargetAgentChange(event.target.value)} value={projectSnapshotTargetAgent}>
               <option value="all">all</option>
               <option value="deepseek">deepseek</option>
@@ -165,7 +185,7 @@ export function AIPacketsWorkspace({
             </select>
           </label>
           <label>
-            <span>Snapshot Profile</span>
+            <span>Packet Profile</span>
             <select onChange={(event) => onProjectSnapshotProfileChange(event.target.value)} value={projectSnapshotProfile}>
               <option value="overview">overview</option>
               <option value="stability">stability</option>
@@ -176,7 +196,7 @@ export function AIPacketsWorkspace({
             </select>
           </label>
           <label>
-            <span>Response Format</span>
+            <span>Output Contract</span>
             <select onChange={(event) => onProjectSnapshotOutputModeChange(event.target.value)} value={projectSnapshotOutputMode}>
               <option value="top_findings">top_findings</option>
               <option value="decision_only">decision_only</option>
@@ -185,7 +205,7 @@ export function AIPacketsWorkspace({
             </select>
           </label>
           <label>
-            <span>Review Question</span>
+            <span>Question</span>
             <textarea
               onChange={(event) => onProjectSnapshotFocusChange(event.target.value)}
               placeholder="Optional. Leave empty to use the profile default."
@@ -194,16 +214,18 @@ export function AIPacketsWorkspace({
             />
           </label>
           <button onClick={onApplyProjectSnapshotStandardizationPreset} type="button">
-            Standardization focus
+            Phase 26 review focus
           </button>
           <label>
-            <span>Delta From Packet</span>
+            <span>Previous Packet ID</span>
             <input onChange={(event) => onProjectSnapshotSincePacketIdChange(event.target.value)} placeholder="snapshot_..." value={projectSnapshotSincePacketId} />
           </label>
-          <label className="inline-toggle">
-            <input checked={projectSnapshotQualityAcknowledged} onChange={(event) => onProjectSnapshotQualityAcknowledgedChange(event.target.checked)} type="checkbox" />
-            <span>Acknowledge quality warnings</span>
-          </label>
+          {projectSnapshotQualityAcknowledged ? (
+            <label className="inline-toggle">
+              <input checked={projectSnapshotQualityAcknowledged} onChange={(event) => onProjectSnapshotQualityAcknowledgedChange(event.target.checked)} type="checkbox" />
+              <span>Quality warnings acknowledged</span>
+            </label>
+          ) : null}
         </div>
       </section>
       <section className="experiment-packet-panel">
