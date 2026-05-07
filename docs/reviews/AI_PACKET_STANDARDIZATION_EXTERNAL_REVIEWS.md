@@ -1260,3 +1260,120 @@ post-Phase 26 trim candidates across reviews are now:
 The `fresh_install` idea is useful because multiple AI reviews have reacted to
 the empty project state as a potential quality problem. A small explicit flag
 could reduce mistaken findings without adding much weight.
+
+## 2026-05-07 Z.ai Review After Phase 26 Compact Packet
+
+Reviewer: Z.ai  
+Focus: Phase 26 compact external AI packet  
+Packet: `snapshot_20f26adeab6e`  
+Score: 86/100  
+Verdict: enough for now / ship it
+
+### Summary
+
+Z.ai says the Phase 26 packet is a well-calibrated compact v1 packet. It
+highlights the 5,906-character size, one canonical contract reference,
+`packet_integrity`, and per-signal `required_context` as the main improvements.
+It explicitly says the packet is production-ready for multi-AI consumption and
+that the remaining changes are optimizations, not blockers.
+
+### Scoring Notes
+
+Z.ai's score breakdown:
+
+```txt
+Size compliance: +25
+Signal clarity: +20
+No redundancy: +18
+Import readiness: +15
+Trace/provenance: +8
+Minor deductions: -14
+```
+
+Phase 20 to Phase 26 comparison:
+
+```txt
+size: 20,468 chars -> 5,906 chars
+reduction: 71%
+score: 62/100 -> 86/100
+```
+
+### Top Concrete Changes
+
+1. Deduplicate `ai_state_quality`.
+
+   Z.ai points out that the same information appears in:
+
+   ```txt
+   signals[0].params.summary
+   top-level ai_state_quality
+   ```
+
+   Recommendation: keep the signal version and remove the top-level block.
+
+2. Trim empty/noise fields.
+
+   Z.ai specifically calls out:
+
+   ```txt
+   source_manifest without sources
+   links.content duplicated with self
+   preflight with only zero values already represented in signals
+   ```
+
+3. Standardize schema references to HTTP(S) URI.
+
+   Z.ai says relative paths are less useful when packets are consumed offline,
+   cached, forwarded, or validated by standalone tooling. It suggests:
+
+   ```json
+   {
+     "schema_ref": "https://knownet.dev/api/schemas/packet/p26.v1",
+     "contract_ref": "https://knownet.dev/api/schemas/packet/p26.v1"
+   }
+   ```
+
+   This should be weighed against the local-first nature of KnowNet and the
+   fact that current copy-paste review does not fetch the schema.
+
+### Do Not Change
+
+Z.ai specifically says to keep:
+
+- `role_boundaries` triad
+- `signals[].required_context`
+- W3C `traceparent`
+- `packet_integrity`
+- `do_not_suggest`
+- evidence quality taxonomy
+- `contract_hash`
+
+### Standard Patterns
+
+Z.ai recommends:
+
+- RFC 7807 Problem Details for future signal alignment
+- JSON:API links for navigation if links remain
+- OpenTelemetry semantic conventions for trace attributes
+- SARIF for future findings output only
+
+### Codex Notes
+
+Z.ai reinforces the strongest consensus:
+
+```txt
+Ship Phase 26.
+Remaining changes are optimizations.
+```
+
+Its overlap with other reviewers:
+
+```txt
+ai_state_quality removal: DeepSeek, Claude, Kimi, Z.ai
+preflight/noise trimming: DeepSeek, Kimi, Z.ai
+links trimming: DeepSeek, Kimi, MiniMax, Z.ai
+role_boundaries.narrative removal: Claude, Qwen, Kimi, MiniMax
+```
+
+The HTTP(S) schema reference suggestion is useful for future public docs but
+should not block the current local-first packet workflow.
