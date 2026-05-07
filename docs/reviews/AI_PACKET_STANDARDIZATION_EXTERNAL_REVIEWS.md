@@ -632,9 +632,145 @@ characters and reducing default findings to `3`. That is useful as a speed
 target, but should be weighed against Kimi's `required_context` idea so compact
 packets do not become too thin to produce importable findings.
 
+## 2026-05-07 Z.ai Review
+
+Reviewer: Z.ai  
+Focus: packet/snapshot standardization review  
+Score: 62/100  
+Verdict: overbuilt for stated scope
+
+### Summary
+
+Z.ai gave one of the harshest reviews. It praised the security boundaries, W3C
+trace context, and MCP-aligned shapes, but argued that the packet is enterprise
+weight for a small local-first project. Its short recommendation is: stop
+building new packet surface, start cutting.
+
+### Score Breakdown
+
+```txt
+Security boundaries: +20
+Trace context: +15
+MCP alignment: +10
+Size compliance: -15
+Redundancy: -12
+Complexity vs local-first: -16
+Inconsistencies: -10
+```
+
+### Top 5 Recommended Changes
+
+1. Fix the size crisis immediately.
+
+   Current packet size:
+
+   ```txt
+   20,468 characters
+   170% of a 12,000 character budget
+   ```
+
+   Recommended cuts:
+
+   ```txt
+   Remove contract_shape
+   Collapse health to overall_status, issue_codes, checked_at
+   Delete empty node_cards and source_manifest.sources
+   Delete all null fields
+   Target overview profile below 8,000 characters
+   ```
+
+2. Eliminate triple contract redundancy.
+
+   Z.ai identified three parallel contract representations:
+
+   ```txt
+   ## Packet Contract
+   contract JSON key
+   contract_shape metadata key
+   ```
+
+   Recommendation: keep only the structured `contract` JSON as the source of
+   truth. Move human-readable contract text to optional docs or appendix.
+
+3. Resolve conflicting limit definitions.
+
+   Z.ai called out competing values:
+
+   ```json
+   {
+     "hard_limits": {"max_findings": 3},
+     "output_contract": {"max_findings": 5},
+     "profile_hard_limits": {"max_findings": 3}
+   }
+   ```
+
+   Recommendation: replace this with one `limits` object and one explicit merge
+   strategy for profile overrides.
+
+4. Replace custom `knownet://` URIs with standard URI patterns.
+
+   Z.ai recommends HTTP(S) JSON Schema `$id` or repository-hosted schema URLs:
+
+   ```txt
+   https://knownet.dev/schemas/packet/p20.v1
+   https://github.com/knownetproject/schemas/blob/main/packet/p20.v1.schema.json
+   ```
+
+   The concern is that custom URI schemes break validators, linters, IDEs, and
+   generic tooling.
+
+5. Adopt SARIF for findings.
+
+   Z.ai recommends mapping KnowNet findings to SARIF:
+
+   ```txt
+   area -> ruleId
+   severity -> level
+   title -> message.text
+   evidence_quality -> properties.evidence_quality
+   proposed_change -> properties.knownet.proposed_change
+   ```
+
+   Benefit: VS Code, GitHub, and GitLab can already render SARIF-like findings.
+
+### Do Not Change
+
+- Keep W3C Trace Context; the `traceparent` format is correct.
+- Keep MCP tool naming, such as `knownet.propose_finding`.
+- Keep the role boundary model: `allowed`, `refused`, `escalate_on`.
+- Keep the evidence quality taxonomy:
+  `direct_access | context_limited | inferred | operator_verified`.
+- Keep stale context suppression simple.
+
+### Open Source / Standard Patterns To Absorb
+
+Z.ai recommended:
+
+- OpenAPI 3.1 for tool definitions, with `paths` and `components` instead of
+  ad-hoc embedded input schemas.
+- RFC 9457 Problem Details for `issues`.
+- JSON-LD `@context` for future semantic interoperability.
+- in-toto provenance for future reproducible snapshot/build provenance.
+- SARIF for portable findings.
+
+### Codex Notes
+
+Z.ai is useful because it names the product risk clearly: KnowNet is carrying
+some v0.9 enterprise specification weight before proving the v0.1 external AI
+handoff loop. Its standard recommendations are valuable, but not all should be
+implemented immediately. The near-term lesson is narrower:
+
+```txt
+Trim first, then standardize only the remaining stable shapes.
+```
+
+OpenAPI, SARIF, and RFC 9457 are stronger candidates than JSON-LD or in-toto
+for the next compact packet iteration because they directly affect tools,
+issues, and importable findings.
+
 ## Cross-Review Synthesis
 
-Common findings from Claude, Gemini, DeepSeek, Qwen, Kimi, and MiniMax:
+Common findings from Claude, Gemini, DeepSeek, Qwen, Kimi, MiniMax, and Z.ai:
 
 1. The packet is too large and overbuilt.
 2. Markdown/JSON or contract duplication should be reduced or eliminated.
@@ -646,6 +782,8 @@ Common findings from Claude, Gemini, DeepSeek, Qwen, Kimi, and MiniMax:
 8. Guardrails should remain explicit.
 9. The default profile should be compact; detailed/provider views should be
    opt-in.
+10. Custom URI and finding shapes should move toward standard, tool-friendly
+    formats once the compact shape is stable.
 
 Likely next implementation direction:
 
@@ -663,6 +801,8 @@ Create a compact external-AI packet mode:
 - unified max_findings
 - unified metadata and limits object
 - schema/tool references instead of schema bodies
+- HTTP(S) or resolvable schema references over custom-only URI schemes
+- SARIF/OpenAPI/RFC 9457 alignment where it reduces custom parsing
 - role/access/output guardrails preserved
 ```
 
@@ -700,4 +840,11 @@ Fifth open question:
 ```txt
 Should the compact overview target remain 12,000 characters, or should KnowNet
 adopt an 8,000 character target and move more detail into opt-in profiles?
+```
+
+Sixth open question:
+
+```txt
+Should KnowNet findings remain a compact custom import shape for now, or should
+the next stable import format map directly to SARIF fields?
 ```
