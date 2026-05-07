@@ -934,3 +934,79 @@ contract redesign. The highest-signal follow-up candidates are:
 3. Consider whether links belong only in stored API responses, not copy-ready
    content.
 ```
+
+## 2026-05-07 Claude Review After Phase 26 Compact Packet
+
+Reviewer: Claude  
+Focus: Phase 26 compact external AI packet  
+Packet: `snapshot_20f26adeab6e`  
+Score: 81/100  
+Verdict: enough for now
+
+### Summary
+
+Claude also rates the current Phase 26 packet as sufficient for active use. Its
+review is slightly higher than DeepSeek's and recommends only small trimming.
+Claude's strongest overlap with DeepSeek is the removal of redundant
+`ai_state_quality`.
+
+### Top Concrete Changes
+
+1. Remove top-level `ai_state_quality`.
+
+   Claude says the same information already exists inside `signals[].params`
+   and that the standalone block is pure duplication. Estimated saving: about
+   300 characters.
+
+2. Collapse `trace` to one `traceparent` field.
+
+   Claude keeps the W3C standard but recommends dropping `trace_id`, `span_id`,
+   and `attributes` from the copy-ready packet because external AIs do not read
+   them. Suggested compact shape:
+
+   ```json
+   {
+     "traceparent": "00-a7b832d0752da0916ca8e6dfe8e3530b-c4608ab51eba21f1-01"
+   }
+   ```
+
+3. Remove `role_boundaries.narrative`.
+
+   Claude says `allowed`, `refused`, and `escalate_on` are already clear enough.
+   The narrative repeats the same meaning in sentence form and can be removed
+   from the compact body.
+
+### Do Not Change
+
+Claude specifically says to keep:
+
+- `signals[].required_context`
+- single `limits` block
+- `contract_ref`
+- `packet_integrity`
+
+### Standard Pattern
+
+Claude does not recommend adding another standard immediately. It says the
+packet is already standard enough for now, and RFC 9457 can be revisited later
+if real findings accumulate and `signals` need a more formal problem-details
+shape.
+
+### Codex Notes
+
+Claude and DeepSeek now agree that Phase 26 is sufficient. Their common
+implementation candidate is:
+
+```txt
+Remove top-level ai_state_quality from copy-ready content.
+```
+
+The remaining suggestions differ:
+
+```txt
+DeepSeek: improve compact health reasons and maybe remove links.
+Claude: collapse trace and remove role_boundaries.narrative.
+```
+
+Because the packet is already below the 8,000-character target, these should be
+treated as small polish work, not a new phase-sized redesign.
