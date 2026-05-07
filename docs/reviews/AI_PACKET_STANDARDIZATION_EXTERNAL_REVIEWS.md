@@ -219,15 +219,108 @@ metadata, but consider removing or greatly shortening them in copy-paste
 external AI packet text. This preserves auditability without spending external
 AI context budget on telemetry.
 
+## 2026-05-07 DeepSeek Review
+
+Reviewer: DeepSeek  
+Focus: packet/snapshot standardization review  
+Score: 65/100  
+Verdict: overbuilt
+
+### Summary
+
+DeepSeek also rated the packet as overbuilt. Its recommendations overlap
+strongly with Claude and Gemini: remove duplicated human/machine-readable
+content, move validation out of the packet, simplify health, and reference
+schemas instead of embedding them.
+
+### Top 5 Recommended Changes
+
+1. Collapse human-readable/machine-readable duplication.
+
+   DeepSeek recommends a single compact JSON payload and removing top-level text
+   blocks. Its position is stronger than Claude's: instead of keeping Markdown
+   plus references, DeepSeek prefers one compact machine-readable packet format.
+
+2. Unify `max_findings`.
+
+   Use a single value, for example `5`, across:
+
+   ```txt
+   output_contract
+   hard_limits
+   profile_hard_limits
+   ```
+
+   This avoids conflicting limits inside the same packet contract.
+
+3. Strip `health` to minimal fields.
+
+   Keep only:
+
+   ```txt
+   overall_status
+   short reasons array
+   degraded flag
+   ```
+
+   Remove per-service details from the AI-facing snapshot packet.
+
+4. Reference MCP tool input schemas.
+
+   Move MCP tool input schemas to referenced JSON Schema URIs instead of
+   inlining full definitions. Keep only required fields and short descriptions
+   inline.
+
+5. Move self-test/quality blocks out of the packet.
+
+   Replace embedded `snapshot_self_test` and quality blocks with a separate
+   validation endpoint or pre-generation check.
+
+### Do Not Change
+
+- Keep W3C trace context integration.
+- Keep MCP alignment.
+- Keep output/import contracts.
+- Keep `node_card_contract`.
+- Keep role boundaries.
+
+DeepSeek agrees with Claude that trace context is valuable, which conflicts
+with Gemini's recommendation to remove telemetry from AI-facing packets.
+
+### Open Source / Standard Patterns To Absorb
+
+Use a single JSON Schema document as the sole source of truth for packet
+structure and validation:
+
+```txt
+knownet://schemas/packet/p20.v1
+```
+
+Do not put schema checks inside every packet. For tool input shapes, reference
+standard JSON Schema definitions that external AI and Codex can consume without
+parsing the whole packet.
+
+### Codex Notes
+
+DeepSeek creates a stronger consensus around JSON Schema references. After
+three reviews, schema bodies and validation diagnostics inside the packet look
+clearly too heavy. The remaining design question is not whether to compact the
+packet, but what the copy-paste handoff format should be:
+
+- compact JSON only
+- compact Markdown with JSON references
+- MCP resources/tools as the primary path, with copy-paste as fallback
+
 ## Cross-Review Synthesis
 
-Common findings from Claude and Gemini:
+Common findings from Claude, Gemini, and DeepSeek:
 
 1. The packet is too large and overbuilt.
-2. Markdown/JSON or contract duplication should be reduced.
+2. Markdown/JSON or contract duplication should be reduced or eliminated.
 3. `snapshot_self_test` should not be in AI-facing packet text.
-4. Inline action schemas are too heavy for external review.
-5. Guardrails should remain explicit.
+4. Inline action/tool schemas are too heavy for external review.
+5. Health should be compact and abnormal-detail-only.
+6. Guardrails should remain explicit.
 
 Likely next implementation direction:
 
@@ -238,6 +331,8 @@ Create a compact external-AI packet mode:
 - no snapshot_self_test
 - no inline action_input_schema
 - no duplicated provider_matrix
+- compact health summary only
+- unified max_findings
 - schema/tool references instead of schema bodies
 - role/access/output guardrails preserved
 ```
@@ -247,4 +342,11 @@ Open question:
 ```txt
 Should copy-paste packets keep a small trace reference, or should trace data
 exist only in stored packet metadata and MCP/API responses?
+```
+
+Second open question:
+
+```txt
+Should the external handoff format be compact JSON only, or compact Markdown
+with JSON references for human copy-paste ergonomics?
 ```
