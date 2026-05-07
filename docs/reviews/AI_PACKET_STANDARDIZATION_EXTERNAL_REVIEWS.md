@@ -1166,3 +1166,97 @@ The current practical trim list is:
 ```
 
 These are small enough to implement as Phase 26 polish rather than a new phase.
+
+## 2026-05-07 MiniMax Review After Phase 26 Compact Packet
+
+Reviewer: MiniMax  
+Focus: Phase 26 compact external AI packet  
+Packet: `snapshot_20f26adeab6e`  
+Score: 85/100  
+Verdict: enough
+
+### Summary
+
+MiniMax rates the p26 packet as sufficient and emphasizes the improvement from
+the older p20 packet:
+
+```txt
+p20.v1: 20,468 chars
+p26.v1: 5,906 chars
+reduction: about 71%
+```
+
+MiniMax says the packet is now below both the 12,000-character warning line and
+the 8,000-character optimization target.
+
+### Top Concrete Changes
+
+1. Remove or profile-gate `links`.
+
+   MiniMax says `self`, `content`, and `storage` links may not be used by
+   external AI copy-paste reviewers. If unused, removing them could save a few
+   hundred characters.
+
+2. Remove `role_boundaries.narrative`.
+
+   This matches Claude, Qwen, and Kimi. The structured arrays are enough.
+
+3. Replace empty `snapshot_diff_summary` with a boolean.
+
+   MiniMax recommends using a compact flag such as:
+
+   ```json
+   {
+     "delta_detected": false
+   }
+   ```
+
+   This is more relevant if the field is empty. The current packet normally
+   omits empty arrays through `omit_empty`, but the idea is useful for future
+   delta packet shape review.
+
+### Do Not Change
+
+MiniMax specifically says to keep:
+
+- `packet_integrity`
+- `signals[].required_context`
+- `limits`
+- `contract_hash`
+
+### Standard Patterns
+
+MiniMax suggests possible future alignment with:
+
+- ETag/cache-validation patterns around `content_hash` or `contract_hash`
+- OpenTelemetry span status terminology
+- IETF health check response shape
+- JSON Schema `$id`
+
+### Finding
+
+```txt
+Title: p26.v1 packet size is excellent; next optimization is signal depth
+Severity: low
+Area: Data
+Evidence: packet_integrity.content_chars is 5906, below the 8K optimization
+target. Signals contain two items with required_context asking for operator
+input.
+Proposed change: Omit signals when there are none. When preflight.pages = 0,
+add fresh_install: true so reviewers know whether empty context is intentional.
+```
+
+### Codex Notes
+
+MiniMax further confirms that the compact packet is usable now. The most common
+post-Phase 26 trim candidates across reviews are now:
+
+```txt
+1. Remove role_boundaries.narrative.
+2. Remove or shrink links in copy-ready content.
+3. Remove ai_state_quality/preflight duplication.
+```
+
+The `fresh_install` idea is useful because multiple AI reviews have reacted to
+the empty project state as a potential quality problem. A small explicit flag
+could reduce mistaken findings without adding much weight.
