@@ -44,6 +44,8 @@ Implemented surface:
 - AI Packets UI now presents Phase 26 compact packet size, signals,
   signal-level required_context, and contract_ref instead of foregrounding
   legacy quality-warning controls.
+- External follow-up reviews now agree that Phase 26 is enough for active use;
+  remaining work is semantic trim, not another packet redesign.
 ```
 
 Operator decision after external reviews:
@@ -404,6 +406,95 @@ Done when:
 - Any adopted standard makes the packet smaller or easier for AI/Codex to use.
 - Standards do not add new mandatory sections to overview.
 
+## P26-008 Semantic Trim After External Review
+
+Problem:
+
+Post-implementation external reviews rated the Phase 26 packet as enough for
+active use, but they repeatedly identified the same small redundancies. The goal
+is not to chase a smaller number of characters. The goal is to remove duplicated
+or low-signal fields while making empty-state meaning clearer.
+
+This is a polish task, not a new architecture phase.
+
+Implementation shape:
+
+1. Reduce `ai_state_quality` / `preflight` duplication in copy-ready content.
+
+   The packet should not repeat the same zero or summary counts in multiple
+   places. Prefer one source of truth, usually the highest-priority `signals`
+   item or `packet_summary`.
+
+   Keep richer state in the API response or stored metadata if operators need
+   it, but avoid repeating it inside the AI-facing copy-ready JSON.
+
+2. Remove `role_boundaries.narrative` from copy-ready content.
+
+   Keep the structured boundary arrays:
+
+   ```json
+   {
+     "allowed": [],
+     "refused": [],
+     "escalate_on": []
+   }
+   ```
+
+   The prose narrative is useful for documentation, but it duplicates the
+   machine-readable arrays inside compact handoff packets.
+
+3. Shrink `links` in copy-ready content while preserving API response links.
+
+   External copy-paste reviewers consume the packet body directly. They rarely
+   resolve nested API links. The API response can keep full `links`, but
+   copy-ready `content` should either omit links or use one compact pointer such
+   as `packet_url`.
+
+4. Add an explicit empty-state meaning signal.
+
+   If the graph/page state is empty, distinguish between:
+
+   ```txt
+   fresh install / intentionally empty
+   data not indexed yet
+   data missing or failed to load
+   ```
+
+   Candidate compact fields:
+
+   ```json
+   {
+     "empty_state": {
+       "active": true,
+       "reason": "fresh_install_or_no_pages",
+       "operator_question": "Is this a fresh install, or should pages already exist?"
+     }
+   }
+   ```
+
+   Keep this compact. It should reduce false findings from external AI, not add
+   a new diagnostic dump.
+
+Rules:
+
+- Do not make 5K or lower a target.
+- Do not remove `signals[].required_context`.
+- Do not remove `packet_integrity`, `limits`, `contract_ref`, or
+  `do_not_suggest`.
+- Do not inline new standards or schema bodies.
+- Keep detailed state available through API/stored metadata when needed.
+
+Done when:
+
+- Copy-ready overview content no longer repeats `ai_state_quality` and
+  `preflight` summaries.
+- `role_boundaries` keeps structured arrays but omits narrative in copy-ready
+  content.
+- Copy-ready content does not carry nested duplicate links.
+- Empty state is explicitly labeled so external AI does not confuse a fresh
+  install with data loss.
+- The resulting packet remains accurate first and compact second.
+
 ## Acceptance
 
 ```txt
@@ -432,6 +523,7 @@ P26-004 Single Effective Limits
 P26-005 Compact Overview Budget
 P26-006 Opt-In Detail Profiles And Schema References
 P26-007 Standard Alignment Without New Weight
+P26-008 Semantic Trim After External Review
 ```
 
 ## Out Of Scope
