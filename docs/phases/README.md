@@ -24,4 +24,8 @@ PHASE_25_TASKS.md - verification, ignore policy, and agent contract:
   verify FTS, centralize forbidden path/secret policy, expose
   `knownet.agent.v1`, align packet source manifests, and add snapshot integrity
   smoke checks without redesigning the DB.
+PHASE_26_TASKS.md - compact external AI packet:
+  default compact overview handoff, one canonical contract, no empty/null
+  scaffolding, prioritized signals, opt-in detail profiles, and required context
+  prompts for shorter external AI follow-up.
 ```
