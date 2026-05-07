@@ -30,8 +30,10 @@ $targets = @(
   ".pytest_cache",
   "apps/api/.pytest_cache",
   "apps/api/knownet_api.egg-info",
+  "apps/mcp/.pytest_cache",
+  "apps/mcp/src/knownet_mcp.egg-info",
   "packages/knownet-agent-py/.pytest_cache",
-  "packages/knownet-agent-py/knownet_agent.egg-info",
+  "packages/knownet-agent-py/src/knownet_agent.egg-info",
   "apps/web/.next",
   "data/experiment-packets",
   "data/project-snapshot-packets"

@@ -868,7 +868,7 @@ fn delete_page_graph(
     page_id: &str,
 ) -> Result<usize, CoreError> {
     let page_prefix = format!("section:{}:", page_id);
-    let audit_prefix = format!("citation_audit:%");
+    let audit_prefix = "citation_audit:%".to_string();
     let mut owned_nodes = vec![format!("page:{}", page_id)];
     let mut statement = tx
         .prepare(
@@ -1141,6 +1141,7 @@ fn update_graph_signals(tx: &Transaction<'_>, vault_id: &str, now: &str) -> Resu
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn upsert_node(
     tx: &Transaction<'_>,
     id: &str,
@@ -1177,6 +1178,7 @@ fn upsert_node(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn upsert_edge(
     tx: &Transaction<'_>,
     vault_id: &str,
@@ -1347,11 +1349,9 @@ fn normalize_link_target(value: &str) -> String {
         if ch.is_ascii_alphanumeric() {
             normalized.push(ch.to_ascii_lowercase());
             last_dash = false;
-        } else if ch.is_whitespace() || ch == '-' || ch == '_' {
-            if !last_dash && !normalized.is_empty() {
-                normalized.push('-');
-                last_dash = true;
-            }
+        } else if (ch.is_whitespace() || ch == '-' || ch == '_') && !last_dash && !normalized.is_empty() {
+            normalized.push('-');
+            last_dash = true;
         }
     }
     normalized.trim_matches('-').to_string()

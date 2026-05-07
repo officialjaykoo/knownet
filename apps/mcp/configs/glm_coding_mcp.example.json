@@ -6,7 +6,7 @@
     "knownet": {
       "command": "C:\\knownet\\apps\\api\\.venv\\Scripts\\python.exe",
       "args": [
-        "C:\\knownet\\apps\\mcp\\knownet_mcp\\server.py"
+        "C:\\knownet\\apps\\mcp\\src\\knownet_mcp\\server.py"
       ],
       "env": {
         "KNOWNET_BASE_URL": "http://127.0.0.1:8000",

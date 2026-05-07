@@ -93,12 +93,12 @@ async def packet_preflight(sqlite_path: Path, vault_id: str) -> dict:
         sqlite_path,
         "SELECT "
         "(SELECT COUNT(*) FROM pages WHERE vault_id = ? AND status = 'active') AS pages, "
-        "(SELECT COUNT(*) FROM ai_state_pages WHERE vault_id = ?) AS ai_state_pages, "
+        "0 AS structured_state_pages, "
         "(SELECT COUNT(*) FROM graph_nodes WHERE vault_id = ? AND node_type = 'unresolved') AS unresolved_nodes, "
-        "(SELECT COUNT(*) FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id WHERE r.vault_id = ? AND f.status IN ('pending','needs_more_context')) AS pending_findings",
-        (vault_id, vault_id, vault_id, vault_id),
+        "(SELECT COUNT(*) FROM findings f JOIN reviews r ON r.id = f.review_id WHERE r.vault_id = ? AND f.status IN ('pending','needs_more_context')) AS pending_findings",
+        (vault_id, vault_id, vault_id),
     )
-    return rows or {"pages": 0, "ai_state_pages": 0, "unresolved_nodes": 0, "pending_findings": 0}
+    return rows or {"pages": 0, "structured_state_pages": 0, "unresolved_nodes": 0, "pending_findings": 0}
 
 
 async def project_snapshot_delta(sqlite_path: Path, vault_id: str, since: str | None) -> dict | None:
@@ -111,22 +111,23 @@ async def project_snapshot_delta(sqlite_path: Path, vault_id: str, since: str | 
     pages = await fetch_all(sqlite_path, "SELECT id, slug, title, status, updated_at FROM pages WHERE vault_id = ? AND updated_at > ? ORDER BY updated_at DESC LIMIT 25", (vault_id, since))
     findings = await fetch_all(
         sqlite_path,
-        "SELECT f.id, f.severity, f.area, f.title, f.status, f.evidence_quality, f.updated_at, r.source_agent "
-        "FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
+        "SELECT f.id, f.severity, f.area, f.title, f.status, COALESCE(fe.evidence_quality, 'unspecified') AS evidence_quality, f.updated_at, r.source_agent "
+        "FROM findings f JOIN reviews r ON r.id = f.review_id "
+        "LEFT JOIN finding_evidence fe ON fe.finding_id = f.id "
         "WHERE r.vault_id = ? AND f.updated_at > ? ORDER BY f.updated_at DESC LIMIT 25",
         (vault_id, since),
     )
     tasks = await fetch_all(
         sqlite_path,
         "SELECT t.id, t.finding_id, t.status, t.priority, t.updated_at, f.title "
-        "FROM finding_tasks t JOIN collaboration_findings f ON f.id = t.finding_id "
-        "JOIN collaboration_reviews r ON r.id = f.review_id "
+        "FROM tasks t JOIN findings f ON f.id = t.finding_id "
+        "JOIN reviews r ON r.id = f.review_id "
         "WHERE r.vault_id = ? AND t.updated_at > ? ORDER BY t.updated_at DESC LIMIT 25",
         (vault_id, since),
     )
     runs = await fetch_all(
         sqlite_path,
-        "SELECT id, provider, model, status, response_json, trace_id, packet_trace_id, updated_at FROM model_review_runs WHERE vault_id = ? AND updated_at > ? ORDER BY updated_at DESC LIMIT 25",
+        "SELECT pr.id, pr.provider, pr.model, pr.status, COALESCE((SELECT payload_json FROM provider_run_artifacts a WHERE a.run_id = pr.id AND a.artifact_type = 'response' ORDER BY a.created_at DESC LIMIT 1), '{}') AS response_json, pr.trace_id, pr.packet_trace_id, pr.updated_at FROM provider_runs pr WHERE pr.vault_id = ? AND pr.updated_at > ? ORDER BY pr.updated_at DESC LIMIT 25",
         (vault_id, since),
     )
     failed_runs = [row for row in runs if row.get("status") == "failed"]
@@ -134,7 +135,7 @@ async def project_snapshot_delta(sqlite_path: Path, vault_id: str, since: str | 
         "since": since,
         "pages": pages,
         "findings": findings,
-        "finding_tasks": tasks,
+        "tasks": tasks,
         "model_runs": runs,
         "summary": {
             "changed_nodes": len(pages),
@@ -151,7 +152,7 @@ async def resolve_snapshot_since(settings: Any, payload: Any, profile: str) -> t
     since = payload.since
     since_packet = None
     if payload.since_packet_id:
-        since_packet = await fetch_one(settings.sqlite_path, "SELECT * FROM project_snapshot_packets WHERE id = ? AND vault_id = ?", (payload.since_packet_id, payload.vault_id))
+        since_packet = await fetch_one(settings.sqlite_path, "SELECT * FROM packets WHERE id = ? AND vault_id = ?", (payload.since_packet_id, payload.vault_id))
         if not since_packet:
             if not payload.allow_since_packet_fallback:
                 raise HTTPException(status_code=404, detail={"code": "project_snapshot_since_packet_not_found", "message": "since_packet_id was not found", "details": {"since_packet_id": payload.since_packet_id}})
@@ -180,7 +181,7 @@ def snapshot_quality(*, content: str, profile: str, warnings: list[str], preflig
     char_budget = profile_char_budget(profile)
     if len(content) > char_budget:
         quality_warnings.append("oversized_packet")
-    if delta is not None and not any(delta[key] for key in ("pages", "findings", "finding_tasks", "model_runs")):
+    if delta is not None and not any(delta[key] for key in ("pages", "findings", "tasks", "model_runs")):
         quality_warnings.append("stale_delta")
     unique = []
     seen = set()
@@ -196,7 +197,7 @@ def snapshot_quality(*, content: str, profile: str, warnings: list[str], preflig
         "content_chars": len(content),
         "profile": profile,
         "profile_char_budget": char_budget,
-        "delta_empty": bool(delta is not None and not any(delta[key] for key in ("pages", "findings", "finding_tasks", "model_runs"))),
+        "delta_empty": bool(delta is not None and not any(delta[key] for key in ("pages", "findings", "tasks", "model_runs"))),
     }
     warning_details = {
         "too_many_pending_findings": f"{pending} pending/needs-more-context findings",
@@ -222,7 +223,7 @@ def profile_allows(profile: str, section: str) -> bool:
 
 
 async def packet_row(sqlite_path: Path, packet_id: str) -> dict:
-    packet = await fetch_one(sqlite_path, "SELECT * FROM experiment_packets WHERE id = ?", (packet_id,))
+    packet = await fetch_one(sqlite_path, "SELECT * FROM packets WHERE id = ?", (packet_id,))
     if not packet:
         raise HTTPException(status_code=404, detail={"code": "experiment_packet_not_found", "message": "Experiment packet not found", "details": {"packet_id": packet_id}})
     return packet
@@ -266,19 +267,19 @@ def standard_delta(delta: dict | None) -> dict | None:
         "summary": delta.get("summary", {}),
         "added": {
             "findings": [row for row in delta.get("findings", []) if str(row.get("status") or "") in {"pending", "needs_more_context", "accepted"}],
-            "finding_tasks": [row for row in delta.get("finding_tasks", []) if str(row.get("status") or "") in {"open", "todo", "pending"}],
+            "tasks": [row for row in delta.get("tasks", []) if str(row.get("status") or "") in {"open", "todo", "pending"}],
             "model_runs": delta.get("model_runs", []),
         },
         "changed": {
             "nodes": delta.get("pages", []),
             "findings": delta.get("findings", []),
-            "finding_tasks": delta.get("finding_tasks", []),
+            "tasks": delta.get("tasks", []),
             "model_runs": delta.get("model_runs", []),
         },
         "removed": {
             "nodes": [row for row in delta.get("pages", []) if row.get("status") in {"archived", "deleted"}],
             "findings": [row for row in delta.get("findings", []) if row.get("status") in {"rejected", "deleted"}],
-            "finding_tasks": [row for row in delta.get("finding_tasks", []) if row.get("status") in {"cancelled", "deleted"}],
+            "tasks": [row for row in delta.get("tasks", []) if row.get("status") in {"cancelled", "deleted"}],
             "model_runs": [],
         },
     }

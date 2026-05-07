@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::commands::{failure, opt_str_param, str_param, success};
+use crate::commands::{failure, opt_i64_param, opt_str_param, str_param, success};
 use crate::protocol::{Request, Response};
 use crate::storage;
 
@@ -101,6 +101,11 @@ fn create_collaboration_finding(request: &Request) -> Response {
     let raw_text = opt_str_param(request, "raw_text");
     let evidence_quality = str_param(request, "evidence_quality", "unspecified");
     let status = str_param(request, "status", "pending");
+    let source_path = opt_str_param(request, "source_path");
+    let source_start_line = opt_i64_param(request, "source_start_line");
+    let source_end_line = opt_i64_param(request, "source_end_line");
+    let source_snippet = opt_str_param(request, "source_snippet");
+    let source_location_status = str_param(request, "source_location_status", "omitted");
     let created_at = str_param(request, "created_at", "");
     match storage::create_collaboration_finding(storage::CreateCollaborationFindingInput {
         sqlite_path,
@@ -114,6 +119,11 @@ fn create_collaboration_finding(request: &Request) -> Response {
         raw_text,
         evidence_quality,
         status,
+        source_path,
+        source_start_line,
+        source_end_line,
+        source_snippet,
+        source_location_status,
         created_at,
     }) {
         Ok(()) => success(
@@ -129,6 +139,11 @@ fn create_collaboration_finding(request: &Request) -> Response {
                 "raw_text": raw_text,
                 "evidence_quality": evidence_quality,
                 "status": status,
+                "source_path": source_path,
+                "source_start_line": source_start_line,
+                "source_end_line": source_end_line,
+                "source_snippet": source_snippet,
+                "source_location_status": source_location_status,
                 "created_at": created_at,
                 "updated_at": created_at
             }),

@@ -11,13 +11,13 @@ evidence.
 - [Security Plan](SECURITY_PLAN.md)
 - [Release Checklist](RELEASE_CHECKLIST.md)
 - [Release Evidence](RELEASE_EVIDENCE.md)
-- [Architecture Hardening Log](ARCHITECTURE_HARDENING_LOG.md)
 - [Phase Archive](phases/README.md)
+- [Local Environment](LOCAL_ENVIRONMENT.md)
+- [DB Design](db/README.md)
 
 ## AI And Agent Access
 
-- [AI-Centered Design](AI_CENTERED_DESIGN.md)
-- [AI Collaboration Concept](AI_COLLABORATION_CONCEPT.md)
+- [AI Design](AI_DESIGN.md)
 - [Agent Access Contract](AGENT_ACCESS_CONTRACT.md)
 - [MCP Client Setup](MCP_CLIENTS.md)
 - [SDK Client Setup](SDK_CLIENTS.md)
@@ -25,5 +25,4 @@ evidence.
 
 ## Deployment Notes
 
-- [Cloudflare Tunnel](CLOUDFLARE_TUNNEL.md)
 - [Docker](DOCKER.md)

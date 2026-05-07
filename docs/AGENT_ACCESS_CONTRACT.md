@@ -256,8 +256,9 @@ Each row includes:
 }
 ```
 
-Markdown remains the narrative source attachment. `ai_state_pages.state_json` is
-the indexed JSON row that agents should prefer for quick state reads.
+Markdown remains the narrative source attachment. In DB v2, agent APIs expose
+derived page state as `structured_state_pages`; agents should prefer that
+compact API payload for quick state reads instead of raw page files.
 
 ## Forbidden Data
 
@@ -302,7 +303,7 @@ maintenance state that grants control
 KnowNet includes a stdio MCP server at:
 
 ```txt
-apps/mcp/knownet_mcp/server.py
+apps/mcp/src/knownet_mcp/server.py
 ```
 
 Set configuration through environment variables:
@@ -359,6 +360,7 @@ KnowNet includes a Python SDK at:
 
 ```txt
 packages/knownet-agent-py/
+  src/knownet_agent/
 ```
 
 Use environment variables for tokens:

@@ -1,29 +1,31 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 import uuid
 from functools import lru_cache
 from pathlib import Path
-from pathlib import PurePosixPath
 from typing import Any
 
 import attr
 from jsonschema import Draft202012Validator
 from sarif_om import (
+    ArtifactContent,
     ArtifactLocation,
     Location,
     Message,
     PhysicalLocation,
     ReportingDescriptor,
     Result,
+    Region,
     Run,
     SarifLog,
     Tool,
     ToolComponent,
 )
 
-from .ignore_policy import classify_path
+from .source_locations import normalize_source_location, parse_source_location_ref, safe_source_path
 
 
 SARIF_SCHEMA_URI = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json"
@@ -95,21 +97,38 @@ def guid_for_finding(finding: dict[str, Any]) -> str:
 
 
 def safe_sarif_path(path: str | None) -> tuple[str | None, str | None]:
-    if not path:
-        return None, None
-    raw = str(path).strip().replace("\\", "/")
-    if not raw or re.match(r"^[A-Za-z]:/", raw) or raw.startswith("/"):
-        return None, "absolute_path"
-    normalized = str(PurePosixPath(raw))
-    if normalized.startswith("../") or "/../" in normalized or normalized == "..":
-        return None, "parent_reference"
-    classified = classify_path(normalized)
-    if classified.get("blocked"):
-        return None, str(classified.get("reason") or "blocked_path")
-    return str(classified.get("path") or normalized), None
+    return safe_source_path(path)
 
 
-def changed_files_from_row(row: dict[str, Any]) -> tuple[list[str], list[dict[str, str]]]:
+def _append_unique_location(locations: list[dict[str, Any]], location: dict[str, Any]) -> None:
+    key = (location.get("path"), location.get("start_line"), location.get("end_line"))
+    if key not in {(item.get("path"), item.get("start_line"), item.get("end_line")) for item in locations}:
+        locations.append(location)
+
+
+def source_locations_from_row(row: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
+    locations: list[dict[str, Any]] = []
+    omitted: list[dict[str, str]] = []
+    explicit = normalize_source_location(
+        path=row.get("source_path"),
+        start_line=row.get("source_start_line"),
+        end_line=row.get("source_end_line"),
+        snippet=row.get("source_snippet"),
+    )
+    if explicit.get("source_location_status") == "accepted" and explicit.get("source_path"):
+        _append_unique_location(
+            locations,
+            {
+                "path": explicit["source_path"],
+                "start_line": explicit.get("source_start_line"),
+                "end_line": explicit.get("source_end_line"),
+                "snippet": explicit.get("source_snippet"),
+                "source": "finding",
+            },
+        )
+    elif row.get("source_path"):
+        omitted.append({"path": str(row.get("source_path")), "reason": explicit.get("source_location_status") or "unsafe_source_location"})
+
     raw_values: list[Any] = []
     if row.get("changed_files_values"):
         raw_values.extend(row.get("changed_files_values") or [])
@@ -132,27 +151,98 @@ def changed_files_from_row(row: dict[str, Any]) -> tuple[list[str], list[dict[st
             except Exception:
                 candidates = [raw]
         for candidate in candidates:
-            safe_path, reason = safe_sarif_path(str(candidate))
-            if safe_path:
-                if safe_path not in paths:
-                    paths.append(safe_path)
+            parsed = parse_source_location_ref(str(candidate))
+            if parsed.get("status") == "accepted" and parsed.get("path"):
+                _append_unique_location(
+                    locations,
+                    {
+                        "path": parsed["path"],
+                        "start_line": parsed.get("start_line"),
+                        "end_line": parsed.get("end_line"),
+                        "snippet": None,
+                        "source": "implementation",
+                    },
+                )
             else:
-                omitted.append({"path": str(candidate), "reason": reason or "unsafe_path"})
+                omitted.append({"path": str(candidate), "reason": str(parsed.get("reason") or "unsafe_path")})
+    return locations, omitted
+
+
+def changed_files_from_row(row: dict[str, Any]) -> tuple[list[str], list[dict[str, str]]]:
+    locations, omitted = source_locations_from_row(row)
+    paths: list[str] = []
+    for location in locations:
+        path = str(location.get("path") or "")
+        if path and path not in paths:
+            paths.append(path)
     return paths, omitted
 
 
-def _locations_for_paths(paths: list[str]) -> list[Location]:
-    return [
-        Location(
-            physical_location=PhysicalLocation(
-                artifact_location=ArtifactLocation(uri=path),
+def _locations_for_source_locations(locations: list[dict[str, Any]]) -> list[Location]:
+    result: list[Location] = []
+    for location in locations:
+        region = None
+        if location.get("start_line"):
+            region = Region(
+                start_line=int(location["start_line"]),
+                end_line=int(location.get("end_line") or location["start_line"]),
+                snippet=ArtifactContent(text=str(location["snippet"])) if location.get("snippet") else None,
+            )
+        result.append(
+            Location(
+                physical_location=PhysicalLocation(
+                    artifact_location=ArtifactLocation(uri=str(location["path"])),
+                    region=region,
+                )
             )
         )
-        for path in paths
+    return result
+
+
+def _stable_text(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def content_fingerprint(finding: dict[str, Any], locations: list[dict[str, Any]] | None = None) -> str:
+    first_location = (locations or [{}])[0] if locations else {}
+    components = [
+        _stable_text(finding.get("title")),
+        _stable_text(finding.get("area")),
+        _stable_text(finding.get("evidence")),
+        _stable_text(first_location.get("path") or finding.get("source_path")),
+        _stable_text(first_location.get("start_line") or finding.get("source_start_line")),
+        _stable_text(first_location.get("end_line") or finding.get("source_end_line")),
     ]
+    return "sha256:" + hashlib.sha256("|".join(components).encode("utf-8")).hexdigest()
 
 
-def _knownet_properties(finding: dict[str, Any], *, omitted_locations: list[dict[str, str]]) -> dict[str, Any]:
+def code_scanning_readiness(finding: dict[str, Any], locations: list[dict[str, Any]]) -> dict[str, Any]:
+    reasons_pass: list[str] = []
+    reasons_fail: list[str] = []
+    if str(finding.get("evidence_quality") or "unspecified") in TRUSTED_DEFAULT_EVIDENCE:
+        reasons_pass.append("trusted_evidence")
+    else:
+        reasons_fail.append("untrusted_evidence_quality")
+    if locations:
+        reasons_pass.append("safe_location")
+    else:
+        reasons_fail.append("missing_source_path")
+    if any(location.get("start_line") for location in locations):
+        reasons_pass.append("line_range_present")
+    else:
+        reasons_fail.append("missing_line_range")
+    return {
+        "code_scanning_ready": not reasons_fail,
+        "code_scanning_ready_reasons": reasons_pass if not reasons_fail else reasons_fail,
+    }
+
+
+def _knownet_properties(
+    finding: dict[str, Any],
+    *,
+    omitted_locations: list[dict[str, str]],
+    readiness: dict[str, Any],
+) -> dict[str, Any]:
     implementation = {}
     if finding.get("commit_sha"):
         implementation["commit"] = finding.get("commit_sha")
@@ -172,6 +262,14 @@ def _knownet_properties(finding: dict[str, Any], *, omitted_locations: list[dict
                 "agent": finding.get("source_agent"),
                 "model": finding.get("source_model"),
             },
+            "source_location": {
+                "path": finding.get("source_path"),
+                "start_line": finding.get("source_start_line"),
+                "end_line": finding.get("source_end_line"),
+                "status": finding.get("source_location_status") or "omitted",
+            },
+            "code_scanning_ready": readiness["code_scanning_ready"],
+            "code_scanning_ready_reasons": readiness["code_scanning_ready_reasons"],
             "implementation": implementation or None,
             "omitted_locations": omitted_locations or None,
         }
@@ -197,6 +295,8 @@ def build_sarif_log(findings: list[dict[str, Any]], *, run_id: str, generated_at
     rules_by_id: dict[str, ReportingDescriptor] = {}
     results: list[Result] = []
     omitted_location_count = 0
+    code_scanning_ready_count = 0
+    not_ready_reasons: dict[str, int] = {}
     for finding in findings:
         rule_id = rule_id_for_finding(finding)
         if rule_id not in rules_by_id:
@@ -210,16 +310,25 @@ def build_sarif_log(findings: list[dict[str, Any]], *, run_id: str, generated_at
                     }
                 },
             )
-        paths, omitted_locations = changed_files_from_row(finding)
+        locations, omitted_locations = source_locations_from_row(finding)
+        readiness = code_scanning_readiness(finding, locations)
+        if readiness["code_scanning_ready"]:
+            code_scanning_ready_count += 1
+        else:
+            for reason in readiness["code_scanning_ready_reasons"]:
+                not_ready_reasons[reason] = not_ready_reasons.get(reason, 0) + 1
         omitted_location_count += len(omitted_locations)
         result = Result(
             guid=guid_for_finding(finding),
             rule_id=rule_id,
             level=sarif_level(str(finding.get("severity") or "info")),
             message=Message(text=str(finding.get("title") or "KnowNet finding")),
-            locations=_locations_for_paths(paths) or None,
-            partial_fingerprints={"knownetFindingId": str(finding.get("id") or finding.get("finding_id") or "")},
-            properties=_knownet_properties(finding, omitted_locations=omitted_locations),
+            locations=_locations_for_source_locations(locations) or None,
+            partial_fingerprints={
+                "knownetFindingId": str(finding.get("id") or finding.get("finding_id") or ""),
+                "knownetContentFingerprint": content_fingerprint(finding, locations),
+            },
+            properties=_knownet_properties(finding, omitted_locations=omitted_locations, readiness=readiness),
         )
         results.append(result)
     log = SarifLog(
@@ -241,6 +350,11 @@ def build_sarif_log(findings: list[dict[str, Any]], *, run_id: str, generated_at
                         "generated_at": generated_at,
                         "finding_count": len(results),
                         "omitted_location_count": omitted_location_count,
+                        "code_scanning_ready_summary": {
+                            "total_results": len(results),
+                            "ready": code_scanning_ready_count,
+                            "not_ready_reasons": not_ready_reasons,
+                        },
                     }
                 },
             )

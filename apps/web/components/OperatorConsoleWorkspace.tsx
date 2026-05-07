@@ -87,7 +87,7 @@ export function OperatorConsoleWorkspace({
         <article className={`operator-tile ${aiStateQuality?.overall_status || "unknown"}`}>
           <span><ShieldCheck aria-hidden size={16} /> AI State</span>
           <strong>{aiStateQuality?.overall_status || "unknown"}</strong>
-          <small>{aiStateQuality?.summary ? `${aiStateQuality.summary.ai_state_pages || 0}/${aiStateQuality.summary.pages || 0} ai_state pages` : "Quality not loaded"}</small>
+          <small>{aiStateQuality?.summary ? `${aiStateQuality.summary.structured_state_pages || 0}/${aiStateQuality.summary.pages || 0} structured state pages` : "Quality not loaded"}</small>
         </article>
         <article className={`operator-tile ${releaseReadiness?.release_ready ? "pass" : "warn"}`}>
           <span><Check aria-hidden size={16} /> Release</span>

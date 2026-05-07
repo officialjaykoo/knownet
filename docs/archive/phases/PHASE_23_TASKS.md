@@ -10,7 +10,7 @@ proposal-only tools.
 
 Reference:
 
-- `docs/MCP_SCOPE.md`
+- `docs/MCP_CLIENTS.md` MCP Scope section
 
 ## Fixed Rules
 

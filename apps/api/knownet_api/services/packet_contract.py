@@ -65,7 +65,7 @@ OUTPUT_MODES: dict[str, dict[str, Any]] = {
 
 PROFILE_SECTION_RULES: dict[str, dict[str, list[str]]] = {
     "overview": {
-        "include": ["current_state", "accepted_findings", "finding_tasks", "model_runs"],
+        "include": ["current_state", "accepted_findings", "tasks", "model_runs"],
         "exclude": ["raw page bodies", "raw DB paths", "secrets", "backup contents"],
     },
     "stability": {
@@ -81,7 +81,7 @@ PROFILE_SECTION_RULES: dict[str, dict[str, list[str]]] = {
         "exclude": ["provider benchmarking detail", "performance-only findings", "raw tokens"],
     },
     "implementation": {
-        "include": ["implementation_work", "finding_tasks"],
+        "include": ["implementation_work", "tasks"],
         "exclude": ["pending low-confidence advice", "broad provider matrix detail", "release speculation"],
     },
     "provider_review": {
@@ -142,7 +142,7 @@ MCP_RESOURCE_CATALOG: list[dict[str, Any]] = [
     {"uri": "knownet://snapshot/{profile}", "name": "Project snapshot", "mimeType": "application/json", "description": "Compact project snapshot packet by profile.", "read_endpoint": "/api/collaboration/project-snapshot-packets"},
     {"uri": "knownet://node/{slug}", "name": "Node card", "mimeType": "application/json", "description": "Compact node card and safe detail URL.", "read_endpoint": "/api/pages/{slug}"},
     {"uri": "knownet://finding/{finding_id}", "name": "Finding detail", "mimeType": "application/json", "description": "Scoped collaboration finding detail.", "read_endpoint": "/api/collaboration/findings/{finding_id}"},
-    {"uri": "knownet://task/{task_id}", "name": "Task detail", "mimeType": "application/json", "description": "Scoped finding-task detail.", "read_endpoint": "/api/collaboration/finding-tasks/{task_id}"},
+    {"uri": "knownet://task/{task_id}", "name": "Task detail", "mimeType": "application/json", "description": "Scoped implementation task detail.", "read_endpoint": "/api/collaboration/tasks/{task_id}"},
     {"uri": "knownet://model-run/{run_id}/observation", "name": "Model run observation", "mimeType": "application/json", "description": "Trace-compatible model-run observation summary.", "read_endpoint": "/api/model-runs/observations"},
 ]
 

@@ -45,7 +45,7 @@ pub struct CitationAuditSummary {
     pub warnings: Vec<Value>,
 }
 
-pub fn ensure_phase4_schema(sqlite_path: &str) -> Result<(), CoreError> {
+pub fn ensure_citation_audit_schema(sqlite_path: &str) -> Result<(), CoreError> {
     let connection = open_connection(sqlite_path)?;
     connection
         .execute_batch(
@@ -107,7 +107,7 @@ pub fn rebuild_citation_audits_for_page(
     input: RebuildCitationAuditsInput<'_>,
 ) -> Result<CitationAuditSummary, CoreError> {
     validate_id(input.page_id)?;
-    ensure_phase4_schema(input.sqlite_path)?;
+    ensure_citation_audit_schema(input.sqlite_path)?;
     let parsed = markdown::parse_file(input.path)?;
     let citations = parsed
         .get("citations")
@@ -272,7 +272,7 @@ pub fn update_citation_audit_status(
     input: UpdateCitationAuditStatusInput<'_>,
 ) -> Result<(), CoreError> {
     validate_id(input.audit_id)?;
-    ensure_phase4_schema(input.sqlite_path)?;
+    ensure_citation_audit_schema(input.sqlite_path)?;
     let connection = open_connection(input.sqlite_path)?;
     let tx = connection
         .unchecked_transaction()

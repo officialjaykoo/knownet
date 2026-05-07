@@ -1,5 +1,5 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection, TransactionBehavior};
 use serde_json::Value;
@@ -23,6 +23,19 @@ pub struct RestoreRevisionInput<'a> {
     pub slug: &'a str,
     pub revision_id: &'a str,
     pub restored_at: &'a str,
+}
+
+pub struct TombstonePageInput<'a> {
+    pub data_dir: &'a str,
+    pub sqlite_path: &'a str,
+    pub slug: &'a str,
+    pub tombstoned_at: &'a str,
+}
+
+pub struct RecoverPageInput<'a> {
+    pub sqlite_path: &'a str,
+    pub slug: &'a str,
+    pub recovered_at: &'a str,
 }
 
 pub struct CreatePageResult {
@@ -201,6 +214,95 @@ pub fn restore_revision(input: RestoreRevisionInput<'_>) -> Result<String, CoreE
     Ok(page_path)
 }
 
+pub fn tombstone_page(input: TombstonePageInput<'_>) -> Result<String, CoreError> {
+    let mut connection = Connection::open(input.sqlite_path)
+        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
+    connection
+        .busy_timeout(std::time::Duration::from_millis(5000))
+        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
+    let (page_id, page_path, status): (String, String, String) = tx
+        .query_row(
+            "SELECT id, path, status FROM pages WHERE slug = ?1",
+            params![input.slug],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|err| CoreError::new("page_not_found", err.to_string()))?;
+    if status == "tombstone" {
+        return Err(CoreError::new(
+            "page_already_tombstoned",
+            "page is already tombstoned",
+        ));
+    }
+
+    let source_path = Path::new(&page_path);
+    if !source_path.exists() {
+        return Err(CoreError::new(
+            "file_not_found",
+            "page markdown file not found",
+        ));
+    }
+    let tombstone_dir = Path::new(input.data_dir).join("revisions").join(&page_id);
+    fs::create_dir_all(&tombstone_dir)
+        .map_err(|err| CoreError::new("io_error", err.to_string()))?;
+    let tombstone_path = tombstone_dir.join(format!(
+        "tombstone-{}.md",
+        sanitize_timestamp(input.tombstoned_at)
+    ));
+    fs::rename(source_path, &tombstone_path)
+        .map_err(|err| CoreError::new("io_error", err.to_string()))?;
+
+    tx.execute(
+        "UPDATE pages SET status = 'tombstone', updated_at = ?1 WHERE id = ?2",
+        params![input.tombstoned_at, page_id],
+    )
+    .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
+    tx.commit()
+        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
+    Ok(tombstone_path.to_string_lossy().replace('\\', "/"))
+}
+
+pub fn recover_page(input: RecoverPageInput<'_>) -> Result<String, CoreError> {
+    let mut connection = Connection::open(input.sqlite_path)
+        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
+    connection
+        .busy_timeout(std::time::Duration::from_millis(5000))
+        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
+    let tx = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
+    let (page_id, page_path, status): (String, String, String) = tx
+        .query_row(
+            "SELECT id, path, status FROM pages WHERE slug = ?1",
+            params![input.slug],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .map_err(|err| CoreError::new("page_not_found", err.to_string()))?;
+    if status != "tombstone" {
+        return Err(CoreError::new(
+            "page_not_tombstoned",
+            "page is not tombstoned",
+        ));
+    }
+    let tombstone_path = latest_tombstone_path(&page_id, Path::new(&page_path))?;
+    let restore_path = Path::new(&page_path);
+    if let Some(parent) = restore_path.parent() {
+        fs::create_dir_all(parent).map_err(|err| CoreError::new("io_error", err.to_string()))?;
+    }
+    fs::rename(&tombstone_path, restore_path)
+        .map_err(|err| CoreError::new("io_error", err.to_string()))?;
+    tx.execute(
+        "UPDATE pages SET status = 'active', updated_at = ?1 WHERE id = ?2",
+        params![input.recovered_at, page_id],
+    )
+    .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
+    tx.commit()
+        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
+    Ok(page_path)
+}
+
 pub fn index_page_file(
     sqlite_path: &str,
     path: &str,
@@ -294,4 +396,44 @@ pub fn index_page_file(
     tx.commit()
         .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
     Ok(())
+}
+
+fn latest_tombstone_path(page_id: &str, page_path: &Path) -> Result<PathBuf, CoreError> {
+    let revisions_dir = page_path
+        .parent()
+        .and_then(|pages_dir| pages_dir.parent())
+        .ok_or_else(|| CoreError::new("io_error", "page path has no data root"))?
+        .join("revisions")
+        .join(page_id);
+    let mut candidates = Vec::new();
+    for entry in
+        fs::read_dir(&revisions_dir).map_err(|err| CoreError::new("io_error", err.to_string()))?
+    {
+        let path = entry
+            .map_err(|err| CoreError::new("io_error", err.to_string()))?
+            .path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if name.starts_with("tombstone-") && name.ends_with(".md") {
+            candidates.push(path);
+        }
+    }
+    candidates.sort();
+    candidates
+        .pop()
+        .ok_or_else(|| CoreError::new("tombstone_not_found", "no tombstone markdown found"))
+}
+
+fn sanitize_timestamp(timestamp: &str) -> String {
+    timestamp
+        .chars()
+        .map(|value| {
+            if value.is_ascii_alphanumeric() {
+                value
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }

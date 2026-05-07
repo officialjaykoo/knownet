@@ -4,6 +4,7 @@ import json
 import re
 from typing import Any
 
+from ..services.source_locations import normalize_source_location
 from ..services.packet_contract import OUTPUT_MODES
 
 
@@ -62,6 +63,16 @@ def section(block: str, start: str, end: str | None = None) -> str | None:
     return value or None
 
 
+def section_until_any(block: str, start: str, stop_labels: list[str]) -> str | None:
+    stop = "|".join(re.escape(label) for label in stop_labels)
+    pattern = rf"(?is)^\s*(?:\*\*)?{re.escape(start)}\s*:\s*(?:\*\*)?\s*\n(.*?)(?=^\s*(?:\*\*)?(?:{stop})\s*:\s*(?:\*\*)?\s*$|\Z)"
+    match = re.search(pattern, block, re.MULTILINE)
+    if not match:
+        return None
+    value = match.group(1).strip()
+    return value or None
+
+
 def normalize_area(value: str | None) -> str:
     if not value:
         return "Docs"
@@ -77,6 +88,44 @@ def normalize_evidence_quality(value: str | None) -> str:
 
 def finding_dedupe_key(value: str | None) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (value or "").lower()).strip()
+
+
+def empty_source_location() -> dict[str, Any]:
+    return {
+        "source_path": None,
+        "source_start_line": None,
+        "source_end_line": None,
+        "source_snippet": None,
+        "source_location_status": "omitted",
+    }
+
+
+def source_location_from_compact(item: dict[str, Any]) -> dict[str, Any]:
+    raw = item.get("source_location")
+    if isinstance(raw, dict):
+        return normalize_source_location(
+            path=raw.get("path"),
+            start_line=raw.get("start_line"),
+            end_line=raw.get("end_line"),
+            snippet=raw.get("snippet"),
+        )
+    return normalize_source_location(
+        path=item.get("source_path"),
+        start_line=item.get("source_start_line"),
+        end_line=item.get("source_end_line"),
+        snippet=item.get("source_snippet"),
+    )
+
+
+def source_location_from_block(block: str) -> dict[str, Any]:
+    source_path = field(block, "Source path") or field(block, "Source Path")
+    source_lines = field(block, "Source lines") or field(block, "Source Lines")
+    source_snippet = section_until_any(
+        block,
+        "Source snippet",
+        ["Title", "Severity", "Area", "Evidence quality", "Evidence Quality", "Evidence", "Proposed change"],
+    )
+    return normalize_source_location(path=source_path, lines=source_lines, snippet=source_snippet)
 
 
 def extract_json_payload(text: str) -> dict | None:
@@ -175,6 +224,7 @@ def parse_compact_review_json(data: dict, metadata: dict) -> tuple[list[dict], l
                 "raw_text": None,
                 "evidence_quality": normalize_evidence_quality(str(item.get("evidence_quality") or metadata.get("evidence_quality"))),
                 "status": "pending",
+                **source_location_from_compact(item),
             }
         )
     unsupported_sections = data.get("unsupported_sections") or data.get("extra_sections") or []
@@ -229,6 +279,7 @@ def parse_review_markdown(markdown: str) -> tuple[dict, list[dict], list[str]]:
                 "raw_text": body.strip() or markdown,
                 "evidence_quality": metadata["evidence_quality"],
                 "status": "needs_more_context",
+                **empty_source_location(),
             }
         ], errors
     findings: list[dict] = []
@@ -261,6 +312,7 @@ def parse_review_markdown(markdown: str) -> tuple[dict, list[dict], list[str]]:
                 "raw_text": raw_text,
                 "evidence_quality": normalize_evidence_quality(field(block, "Evidence quality") or field(block, "Evidence Quality") or metadata.get("evidence_quality")),
                 "status": status,
+                **source_location_from_block(block),
             }
         )
     return metadata, findings, errors

@@ -26,14 +26,14 @@ pub fn validate_slug(slug: &str) -> Result<(), CoreError> {
 }
 
 pub fn strip_frontmatter(markdown: &str) -> &str {
-    if markdown.starts_with("---\n") {
-        let Some(end) = markdown[4..].find("\n---\n") else {
+    if let Some(stripped) = markdown.strip_prefix("---\n") {
+        let Some(end) = stripped.find("\n---\n") else {
             return markdown;
         };
         return &markdown[end + 9..];
     }
-    if markdown.starts_with("---\r\n") {
-        let Some(end) = markdown[5..].find("\r\n---\r\n") else {
+    if let Some(stripped) = markdown.strip_prefix("---\r\n") {
+        let Some(end) = stripped.find("\r\n---\r\n") else {
             return markdown;
         };
         return &markdown[end + 12..];

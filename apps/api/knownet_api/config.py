@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +20,7 @@ class Settings(BaseSettings):
     auth_lockout_seconds: int = 900
     data_dir: Path = REPO_ROOT / "data"
     sqlite_path: Path = REPO_ROOT / "data" / "knownet.db"
+    knownet_db_version: str = Field(default="v2", validation_alias="KNOWNET_DB_VERSION")
     rust_core_path: Path = REPO_ROOT / ".local" / "cargo-target" / "debug" / "knownet-core.exe"
     sqlite_busy_timeout_ms: int = 5000
     sse_event_retention_hours: int = 24

@@ -38,6 +38,13 @@ def _fallback_title(citation_key: str) -> str:
 
 
 async def backfill_citation_display_titles(sqlite_path: Path) -> int:
+    table_rows = await fetch_all(
+        sqlite_path,
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('citations', 'messages')",
+        (),
+    )
+    if {row["name"] for row in table_rows} != {"citations", "messages"}:
+        return 0
     rows = await fetch_all(
         sqlite_path,
         "SELECT c.citation_key, m.path AS message_path "

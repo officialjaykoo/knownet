@@ -5,17 +5,27 @@ use rusqlite::Connection;
 
 use crate::error::CoreError;
 
+pub mod access;
+pub mod citation_audits;
 pub mod collaboration;
 pub mod embeddings;
 pub mod graph;
 pub mod jobs;
 pub mod messages;
 pub mod pages;
-pub mod phase3;
-pub mod phase4;
+pub mod submissions;
 pub mod suggestions;
 pub mod util;
 
+pub use access::{
+    assign_vault_member, create_session, create_user, create_vault, revoke_session,
+    AssignVaultMemberInput, CreateSessionInput, CreateUserInput, CreateVaultInput,
+};
+pub use citation_audits::{
+    ensure_citation_audit_schema, rebuild_citation_audits_for_page,
+    update_citation_audit_status, update_citation_validation_status, RebuildCitationAuditsInput,
+    UpdateCitationAuditStatusInput, UpdateCitationValidationStatusInput,
+};
 pub use collaboration::{
     create_collaboration_finding, create_collaboration_review, create_context_bundle_manifest,
     create_implementation_record, update_collaboration_review_status, update_finding_decision,
@@ -34,18 +44,11 @@ pub use messages::{
     write_message, write_pending_message, WriteMessageInput, WritePendingMessageInput,
 };
 pub use pages::{
-    create_page, index_page_file, restore_revision, CreatePageInput, RestoreRevisionInput,
+    create_page, index_page_file, recover_page, restore_revision, tombstone_page, CreatePageInput,
+    RecoverPageInput, RestoreRevisionInput, TombstonePageInput,
 };
-pub use phase3::{
-    assign_vault_member, create_session, create_submission, create_user, create_vault,
-    recover_page, revoke_session, tombstone_page, update_submission_status,
-    AssignVaultMemberInput, CreateSessionInput, CreateSubmissionInput, CreateUserInput,
-    CreateVaultInput, RecoverPageInput, TombstonePageInput, UpdateSubmissionStatusInput,
-};
-pub use phase4::{
-    ensure_phase4_schema, rebuild_citation_audits_for_page, update_citation_audit_status,
-    update_citation_validation_status, RebuildCitationAuditsInput, UpdateCitationAuditStatusInput,
-    UpdateCitationValidationStatusInput,
+pub use submissions::{
+    create_submission, update_submission_status, CreateSubmissionInput, UpdateSubmissionStatusInput,
 };
 pub use suggestions::{
     apply_suggestion, complete_draft_job, reject_suggestion, ApplySuggestionInput,

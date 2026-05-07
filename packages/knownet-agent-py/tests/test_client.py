@@ -5,6 +5,7 @@ import threading
 import time
 import urllib.request
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
@@ -193,7 +194,8 @@ def test_sdk_end_to_end_against_knownet_api(tmp_path, monkeypatch):
     monkeypatch.setenv("PUBLIC_MODE", "false")
     monkeypatch.setenv("ADMIN_TOKEN", "")
     monkeypatch.setenv("CLOUDFLARE_ACCESS_REQUIRED", "false")
-    sys.path.insert(0, "apps/api")
+    repo_root = Path(__file__).resolve().parents[3]
+    sys.path.insert(0, str(repo_root / "apps" / "api"))
     import uvicorn
     from knownet_api.config import get_settings
     from knownet_api.main import app

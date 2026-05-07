@@ -1,31 +1,34 @@
-# Current Phase Documents
+﻿# Current Phase Documents
 
-This folder keeps only the current standardization and integration phase
-documents. Older completed phase records live in `docs/archive/phases/` for
-traceability without making the active docs folder noisy.
+This folder keeps only phase files that are still active planning or near-term implementation references.
+Completed phase records live in `docs/archive/phases/` for traceability without making the active docs folder noisy.
 
-Current operation should start from the top-level README, runbook, security
-plan, model-run guide, release evidence, and these current phase files.
+Current operation should start from the top-level README, runbook, security plan, model-run guide, release evidence, and these current phase files.
 
-Current active planning set:
+## Active Planning Set
 
 ```txt
-PHASE_19_TASKS.md - snapshot profiles and packet foundation
-PHASE_20_TASKS.md - packet standardization
-PHASE_21_TASKS.md - trace and schema validation
-PHASE_22_TASKS.md - standard absorption
-PHASE_23_TASKS.md - Standard MCP baseline:
-  standard KnowNet MCP resource URIs, proposal-only tools, prompt names, and
-  tests that keep raw/admin surfaces out.
-PHASE_24_TASKS.md - lightweight SQLite FTS5 page search:
-  page-level `pages_fts`, rebuild endpoint, FTS-first keyword search, and
-  compact health/packet search status without adding a search server.
-PHASE_25_TASKS.md - verification, ignore policy, and agent contract:
-  verify FTS, centralize forbidden path/secret policy, expose
-  `knownet.agent.v1`, align packet source manifests, and add snapshot integrity
-  smoke checks without redesigning the DB.
-PHASE_26_TASKS.md - compact external AI packet:
-  default compact overview handoff, one canonical contract, no empty/null
-  scaffolding, prioritized signals, opt-in detail profiles, and required context
-  prompts for shorter external AI follow-up.
+PHASE_29_TASKS.md - DB v2 design:
+  current schema inventory, entity boundary design, reset/migration strategy,
+  migration policy, and next-phase recommendation without rewriting the DB yet.
+
+PHASE_30_TASKS.md - source structure cleanup:
+  Rust core storage/command naming, Python API layout, SDK/MCP src layouts,
+  seed ownership, scripts pruning, and docs reduction without changing product behavior.
+
+PHASE_31_TASKS.md - DB v2 runtime adoption:
+  reconnect API, packet, SARIF, provider-run, agent/operator, and maintenance
+  paths to the clean v2 SQLite schema before promoting data/knownet-v2.db.
 ```
+
+## Archive Rule
+
+Move a phase file to `docs/archive/phases/` when:
+
+```txt
+- implementation is complete, and
+- its decisions are reflected in code, tests, schemas, README, runbook, or another active phase, and
+- it is no longer needed as the next implementation reference.
+```
+
+Keep only the next DB/modeling phase and the current cleanup phase here.

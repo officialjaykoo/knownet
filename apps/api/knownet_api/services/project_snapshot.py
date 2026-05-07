@@ -75,8 +75,8 @@ def detail_url(kind: str, item_id: str | None) -> str | None:
         return None
     if kind == "finding":
         return f"/api/collaboration/findings/{item_id}"
-    if kind == "finding_task":
-        return f"/api/collaboration/finding-tasks/{item_id}"
+    if kind == "task":
+        return f"/api/collaboration/tasks/{item_id}"
     if kind == "model_run":
         return f"/api/model-runs/{item_id}"
     if kind == "page":
@@ -110,7 +110,7 @@ def finding_summary(row: dict[str, Any]) -> dict[str, Any]:
 def task_summary(row: dict[str, Any]) -> dict[str, Any]:
     task_id = row.get("id") or row.get("task_id")
     provenance = compact_provenance(
-        source_type="finding_task",
+        source_type="task",
         source_id=task_id,
         source_finding_id=row.get("finding_id"),
         evidence_quality=row.get("evidence_quality"),
@@ -125,7 +125,7 @@ def task_summary(row: dict[str, Any]) -> dict[str, Any]:
         "owner": row.get("owner") or row.get("task_owner"),
         "evidence_quality": row.get("evidence_quality"),
         "action_route": row.get("action_route") or action_route(row),
-        "detail_url": detail_url("finding_task", task_id),
+        "detail_url": detail_url("task", task_id),
         "provenance": provenance,
     }
 
@@ -189,7 +189,7 @@ def packet_summary(
 ) -> dict[str, Any]:
     return {
         "accepted_findings": [finding_summary(row) for row in accepted_rows],
-        "finding_tasks": [task_summary(row) for row in task_rows],
+        "tasks": [task_summary(row) for row in task_rows],
         "model_runs": [model_run_summary(row) for row in run_rows],
         "important_findings": [finding_summary(row) for row in important.get("high_severity_findings", [])],
         "important_tasks": [task_summary(row) for row in important.get("actionable_tasks", [])],
@@ -402,12 +402,12 @@ def compact_role_boundaries(boundaries: dict[str, Any]) -> dict[str, Any]:
 
 def empty_state_signal(*, preflight: dict[str, Any], quality: dict[str, Any], health: dict | None = None) -> dict[str, Any] | None:
     pages = int(preflight.get("pages") or 0)
-    ai_state_pages = int(preflight.get("ai_state_pages") or 0)
+    structured_state_pages = int(preflight.get("structured_state_pages") or 0)
     unresolved = int(preflight.get("unresolved_nodes") or 0)
     health_codes = set(compact_health(health).get("issue_codes") or [])
-    if pages > 0 and ai_state_pages == 0:
+    if pages > 0 and structured_state_pages == 0:
         reason = "indexing_pending"
-    elif pages == 0 and ai_state_pages == 0:
+    elif pages == 0 and structured_state_pages == 0:
         reason = "unknown_empty_state"
         if health_codes & {"data.load_failed", "pages.load_failed", "index.load_failed"}:
             reason = "data_load_failed"
@@ -455,7 +455,7 @@ def packet_fitness_score(
 ) -> dict[str, Any]:
     required_context_count = sum(1 for signal in signals if signal.get("required_context"))
     actionable_count = sum(1 for signal in signals if signal.get("action"))
-    evidence_items = sum(len(packet_summary_payload.get(key) or []) for key in ("accepted_findings", "finding_tasks", "model_runs", "node_cards"))
+    evidence_items = sum(len(packet_summary_payload.get(key) or []) for key in ("accepted_findings", "tasks", "model_runs", "node_cards"))
     size_penalty = 0
     if content_chars > char_budget:
         size_penalty = min(25, int(((content_chars - char_budget) / max(char_budget, 1)) * 25) + 5)
@@ -638,15 +638,16 @@ def action_route(row: dict[str, Any]) -> str:
 async def do_not_reopen(sqlite_path: Path, *, vault_id: str, limit: int = 12) -> dict[str, Any]:
     implemented = await fetch_all(
         sqlite_path,
-        "SELECT f.id, f.title, f.severity, f.area, f.evidence_quality, f.updated_at "
-        "FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
+        "SELECT f.id, f.title, f.severity, f.area, COALESCE(fe.evidence_quality, 'unspecified') AS evidence_quality, f.updated_at "
+        "FROM findings f JOIN reviews r ON r.id = f.review_id "
+        "LEFT JOIN finding_evidence fe ON fe.finding_id = f.id "
         "WHERE r.vault_id = ? AND f.status = 'implemented' ORDER BY f.updated_at DESC LIMIT ?",
         (vault_id, limit),
     )
     resolved = await fetch_all(
         sqlite_path,
-        "SELECT f.id, f.title, f.status, f.decision_note, f.updated_at "
-        "FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
+        "SELECT f.id, f.title, f.status, NULL AS decision_note, f.updated_at "
+        "FROM findings f JOIN reviews r ON r.id = f.review_id "
         "WHERE r.vault_id = ? AND f.status IN ('rejected','deferred') ORDER BY f.updated_at DESC LIMIT ?",
         (vault_id, limit),
     )
@@ -656,7 +657,7 @@ async def do_not_reopen(sqlite_path: Path, *, vault_id: str, limit: int = 12) ->
 def snapshot_diff_summary(important: dict[str, Any], delta: dict[str, Any] | None) -> list[str]:
     summary: list[str] = []
     if delta:
-        counts = {key: len(delta.get(key) or []) for key in ("pages", "findings", "finding_tasks", "model_runs")}
+        counts = {key: len(delta.get(key) or []) for key in ("pages", "findings", "tasks", "model_runs")}
         changed = ", ".join(f"{key}={value}" for key, value in counts.items() if value)
         summary.append(f"Delta contains {changed or 'no changed state'} since {delta['since']}.")
     important_summary = important.get("summary") or {}
@@ -709,8 +710,9 @@ async def important_changes(sqlite_path: Path, *, vault_id: str, since: str | No
     finding_params: tuple[Any, ...] = (vault_id, since, limit) if since else (vault_id, limit)
     findings = await fetch_all(
         sqlite_path,
-        "SELECT f.id, f.severity, f.area, f.title, f.status, f.evidence_quality, f.updated_at, r.source_agent "
-        "FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
+        "SELECT f.id, f.severity, f.area, f.title, f.status, COALESCE(fe.evidence_quality, 'unspecified') AS evidence_quality, f.updated_at, r.source_agent "
+        "FROM findings f JOIN reviews r ON r.id = f.review_id "
+        "LEFT JOIN finding_evidence fe ON fe.finding_id = f.id "
         f"WHERE r.vault_id = ? AND f.severity IN ('critical','high') AND f.status IN ('pending','needs_more_context','accepted','deferred') {finding_filter} "
         "ORDER BY f.updated_at DESC LIMIT ?",
         finding_params,
@@ -722,9 +724,10 @@ async def important_changes(sqlite_path: Path, *, vault_id: str, since: str | No
 
     tasks = await fetch_all(
         sqlite_path,
-        "SELECT t.id, t.finding_id, t.status, t.priority, t.updated_at, f.title, f.severity, f.evidence_quality "
-        "FROM finding_tasks t JOIN collaboration_findings f ON f.id = t.finding_id "
-        "JOIN collaboration_reviews r ON r.id = f.review_id "
+        "SELECT t.id, t.finding_id, t.status, t.priority, t.updated_at, f.title, f.severity, COALESCE(fe.evidence_quality, 'unspecified') AS evidence_quality "
+        "FROM tasks t JOIN findings f ON f.id = t.finding_id "
+        "JOIN reviews r ON r.id = f.review_id "
+        "LEFT JOIN finding_evidence fe ON fe.finding_id = f.id "
         f"WHERE r.vault_id = ? AND t.status IN ('open','in_progress','blocked') {task_filter} "
         "ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 ELSE 3 END, t.updated_at DESC LIMIT ?",
         task_params,
@@ -734,7 +737,7 @@ async def important_changes(sqlite_path: Path, *, vault_id: str, since: str | No
     run_params: tuple[Any, ...] = (vault_id, since, limit) if since else (vault_id, limit)
     failed_runs = await fetch_all(
         sqlite_path,
-        f"SELECT id, provider, model, status, error_code, error_message, trace_id, packet_trace_id, updated_at FROM model_review_runs WHERE vault_id = ? AND status = 'failed' {run_filter} ORDER BY updated_at DESC LIMIT ?",
+        f"SELECT id, provider, model, status, error_code, error_message, trace_id, packet_trace_id, updated_at FROM provider_runs WHERE vault_id = ? AND status = 'failed' {run_filter} ORDER BY updated_at DESC LIMIT ?",
         run_params,
     )
 
@@ -743,8 +746,8 @@ async def important_changes(sqlite_path: Path, *, vault_id: str, since: str | No
     implementation_evidence = await fetch_all(
         sqlite_path,
         "SELECT i.id, i.finding_id, i.commit_sha, i.changed_files, i.verification, i.created_at, f.title "
-        "FROM implementation_records i LEFT JOIN collaboration_findings f ON f.id = i.finding_id "
-        "LEFT JOIN collaboration_reviews r ON r.id = f.review_id "
+        "FROM implementation_records i LEFT JOIN findings f ON f.id = i.finding_id "
+        "LEFT JOIN reviews r ON r.id = f.review_id "
         f"WHERE COALESCE(r.vault_id, ?) = ? {evidence_filter} ORDER BY i.created_at DESC LIMIT ?",
         (vault_id, *evidence_params),
     )

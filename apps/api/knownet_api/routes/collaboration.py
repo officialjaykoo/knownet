@@ -9,7 +9,6 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from ..audit import write_audit_event
@@ -90,6 +89,7 @@ from ..services.project_snapshot import (
     packet_integrity_summary,
     packet_signals,
     packet_summary,
+    action_route,
     profile_char_budget,
     profile_hard_limits,
     source_manifest,
@@ -97,8 +97,8 @@ from ..services.project_snapshot import (
     snapshot_diff_summary,
     target_agent_policy,
 )
-from ..services.sarif_export import DEFAULT_EXPORT_STATUSES, TRUSTED_DEFAULT_EVIDENCE, build_sarif_log, validate_sarif_log
 from ..services.ai_review_comparator import compare_ai_reviews
+from ..services import collaboration_v2
 from ..services.rust_core import RustCoreError
 
 router = APIRouter(prefix="/api/collaboration", tags=["collaboration"])
@@ -227,8 +227,9 @@ async def _finding_duplicate_groups(sqlite_path: Path, *, vault_id: str, statuse
     placeholders = ",".join("?" for _ in statuses)
     rows = await fetch_all(
         sqlite_path,
-        "SELECT f.id, f.review_id, f.severity, f.area, f.title, f.status, f.evidence_quality, f.updated_at, r.source_agent, r.title AS review_title "
-        "FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
+        "SELECT f.id, f.review_id, f.severity, f.area, f.title, f.status, COALESCE(fe.evidence_quality, 'unspecified') AS evidence_quality, f.updated_at, r.source_agent, r.title AS review_title "
+        "FROM findings f JOIN reviews r ON r.id = f.review_id "
+        "LEFT JOIN finding_evidence fe ON fe.finding_id = f.id "
         f"WHERE r.vault_id = ? AND f.status IN ({placeholders}) "
         "ORDER BY f.updated_at DESC LIMIT ?",
         (vault_id, *sorted(statuses), limit),
@@ -259,10 +260,15 @@ async def _finding_duplicate_groups(sqlite_path: Path, *, vault_id: str, statuse
     return sorted(result, key=lambda group: (-group["count"], group.get("highest_severity") or "", group.get("title") or ""))
 
 
-async def _finding_duplicate_candidates(sqlite_path: Path, *, vault_id: str, findings: list[dict]) -> list[dict]:
+async def _finding_duplicate_groups_for_settings(settings, *, vault_id: str, statuses: set[str] | None = None, limit: int = 500) -> list[dict]:
+    statuses = statuses or {"pending", "needs_more_context", "accepted", "deferred"}
+    return await collaboration_v2.duplicate_groups(settings.sqlite_path, vault_id=vault_id, statuses=statuses, limit=limit, dedupe_key=_finding_dedupe_key)
+
+
+async def _finding_duplicate_candidates_for_settings(settings, *, vault_id: str, findings: list[dict]) -> list[dict]:
     if not findings:
         return []
-    groups = await _finding_duplicate_groups(sqlite_path, vault_id=vault_id)
+    groups = await _finding_duplicate_groups_for_settings(settings, vault_id=vault_id)
     by_key = {group["dedupe_key"]: group for group in groups}
     candidates = []
     for finding in findings:
@@ -272,56 +278,13 @@ async def _finding_duplicate_candidates(sqlite_path: Path, *, vault_id: str, fin
     return candidates
 
 
-async def ensure_collaboration_schema(sqlite_path: Path) -> None:
-    from ..db.sqlite import execute
-
-    await execute(
-        sqlite_path,
-        "CREATE TABLE IF NOT EXISTS finding_tasks ("
-        "id TEXT PRIMARY KEY, finding_id TEXT NOT NULL UNIQUE, status TEXT NOT NULL DEFAULT 'open', "
-        "priority TEXT NOT NULL DEFAULT 'normal', owner TEXT, task_prompt TEXT NOT NULL, expected_verification TEXT, "
-        "notes TEXT, created_by TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, "
-        "FOREIGN KEY(finding_id) REFERENCES collaboration_findings(id))",
-        (),
-    )
-    await execute(sqlite_path, "CREATE INDEX IF NOT EXISTS idx_finding_tasks_status ON finding_tasks(status, priority, updated_at)", ())
-    await execute(
-        sqlite_path,
-        "CREATE TABLE IF NOT EXISTS experiment_packets ("
-        "id TEXT PRIMARY KEY, vault_id TEXT NOT NULL DEFAULT 'local-default', experiment_name TEXT NOT NULL, "
-        "target_agent TEXT NOT NULL, content_hash TEXT NOT NULL, content_path TEXT NOT NULL, node_slugs TEXT NOT NULL DEFAULT '[]', "
-        "scenarios TEXT NOT NULL DEFAULT '[]', preflight_json TEXT NOT NULL DEFAULT '{}', created_by TEXT, created_at TEXT NOT NULL)",
-        (),
-    )
-    await execute(
-        sqlite_path,
-        "CREATE TABLE IF NOT EXISTS experiment_packet_responses ("
-        "id TEXT PRIMARY KEY, packet_id TEXT NOT NULL, source_agent TEXT NOT NULL, source_model TEXT, response_markdown TEXT NOT NULL, "
-        "dry_run_json TEXT NOT NULL DEFAULT '{}', imported_review_id TEXT, created_at TEXT NOT NULL)",
-        (),
-    )
-    await execute(sqlite_path, "CREATE INDEX IF NOT EXISTS idx_experiment_packets_vault_created ON experiment_packets(vault_id, created_at)", ())
-    await execute(sqlite_path, "CREATE INDEX IF NOT EXISTS idx_experiment_packet_responses_packet ON experiment_packet_responses(packet_id, created_at)", ())
-    await execute(
-        sqlite_path,
-        "CREATE TABLE IF NOT EXISTS project_snapshot_packets ("
-        "id TEXT PRIMARY KEY, vault_id TEXT NOT NULL DEFAULT 'local-default', target_agent TEXT NOT NULL, "
-        "profile TEXT NOT NULL DEFAULT 'overview', output_mode TEXT NOT NULL DEFAULT 'top_findings', focus TEXT NOT NULL, "
-        "content_hash TEXT NOT NULL, content_path TEXT NOT NULL, warnings_json TEXT NOT NULL DEFAULT '[]', "
-        "snapshot_quality_json TEXT NOT NULL DEFAULT '{}', contract_version TEXT NOT NULL DEFAULT 'p26.v1', "
-        "created_by TEXT, created_at TEXT NOT NULL)",
-        (),
-    )
-    await execute(sqlite_path, "CREATE INDEX IF NOT EXISTS idx_project_snapshot_packets_vault_created ON project_snapshot_packets(vault_id, created_at)", ())
-
-
 def _http_from_rust(error: RustCoreError) -> HTTPException:
     status = 404 if error.code.endswith("_not_found") else 409 if "invalid_status" in error.code else 500
     return HTTPException(status_code=status, detail={"code": error.code, "message": error.message, "details": error.details})
 
 
-async def _upsert_finding_task(
-    sqlite_path: Path,
+async def _upsert_task_for_settings(
+    settings,
     *,
     finding: dict,
     actor: Actor,
@@ -331,26 +294,17 @@ async def _upsert_finding_task(
     expected_verification: str,
     notes: str | None,
 ) -> dict:
-    from ..db.sqlite import execute
-
-    existing = await fetch_one(sqlite_path, "SELECT id FROM finding_tasks WHERE finding_id = ?", (finding["id"],))
-    task_id = existing["id"] if existing else f"task_{uuid4().hex[:12]}"
-    now = utc_now()
-    if existing:
-        await execute(
-            sqlite_path,
-            "UPDATE finding_tasks SET priority = ?, owner = ?, task_prompt = ?, expected_verification = ?, notes = ?, updated_at = ? WHERE finding_id = ?",
-            (priority, owner, task_prompt, expected_verification, notes, now, finding["id"]),
-        )
-    else:
-        await execute(
-            sqlite_path,
-            "INSERT INTO finding_tasks (id, finding_id, status, priority, owner, task_prompt, expected_verification, notes, created_by, created_at, updated_at) "
-            "VALUES (?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)",
-            (task_id, finding["id"], priority, owner, task_prompt, expected_verification, notes, actor.actor_id, now, now),
-        )
-    task = await fetch_one(sqlite_path, "SELECT * FROM finding_tasks WHERE id = ?", (task_id,))
-    return task
+    return await collaboration_v2.upsert_task(
+        settings.sqlite_path,
+        finding=finding,
+        actor_id=actor.actor_id,
+        priority=priority,
+        owner=owner,
+        task_prompt=task_prompt,
+        expected_verification=expected_verification,
+        notes=notes,
+        updated_at=utc_now(),
+    )
 
 
 def _repo_root() -> Path:
@@ -408,17 +362,11 @@ def _git_changed_files() -> list[str]:
     return _clean_changed_files(files[:100])
 
 
-async def _review_with_findings(sqlite_path: Path, review_id: str) -> dict:
-    review = await fetch_one(sqlite_path, "SELECT * FROM collaboration_reviews WHERE id = ?", (review_id,))
-    if not review:
+async def _review_with_findings_for_settings(settings, review_id: str) -> dict:
+    detail = await collaboration_v2.review_detail(settings.sqlite_path, review_id)
+    if not detail:
         raise HTTPException(status_code=404, detail={"code": "collaboration_review_not_found", "message": "Review not found", "details": {"review_id": review_id}})
-    findings = await fetch_all(sqlite_path, "SELECT * FROM collaboration_findings WHERE review_id = ? ORDER BY created_at, id", (review_id,))
-    records = await fetch_all(
-        sqlite_path,
-        "SELECT * FROM implementation_records WHERE finding_id IN (SELECT id FROM collaboration_findings WHERE review_id = ?) ORDER BY created_at",
-        (review_id,),
-    )
-    return {"review": review, "findings": findings, "implementation_records": records}
+    return detail
 
 
 async def _rebuild_collaboration_graph(request: Request, vault_id: str) -> dict:
@@ -523,7 +471,7 @@ async def import_review(payload: ImportReviewRequest, request: Request, dry_run:
         }
     if not findings:
         raise HTTPException(status_code=422, detail={"code": "collaboration_no_findings", "message": "No findings found", "details": {}})
-    duplicate_candidates = await _finding_duplicate_candidates(settings.sqlite_path, vault_id=payload.vault_id or actor.vault_id, findings=findings)
+    duplicate_candidates = await _finding_duplicate_candidates_for_settings(settings, vault_id=payload.vault_id or actor.vault_id, findings=findings)
     if dry_run:
         if agent:
             await record_agent_access(
@@ -557,41 +505,22 @@ async def import_review(payload: ImportReviewRequest, request: Request, dry_run:
         "parser_errors": parser_errors,
         "markdown_path": f"data/pages/reviews/{review_id}.md",
     }
-    try:
-        review = await request.app.state.rust_core.request(
-            "create_collaboration_review",
-            {
-                "data_dir": str(settings.data_dir),
-                "sqlite_path": str(settings.sqlite_path),
-                "review_id": review_id,
-                "vault_id": payload.vault_id or actor.vault_id,
-                "title": title,
-                "source_agent": source_agent,
-                "source_model": source_model,
-                "review_type": "agent_review",
-                "page_id": payload.page_id,
-                "markdown": payload.markdown,
-                "meta": json.dumps(meta, ensure_ascii=True, sort_keys=True),
-                "created_at": now,
-            },
-        )
-        created_findings = []
-        for finding in findings:
-            created = await request.app.state.rust_core.request(
-                "create_collaboration_finding",
-                {
-                    "sqlite_path": str(settings.sqlite_path),
-                    "finding_id": f"finding_{uuid4().hex[:12]}",
-                    "review_id": review_id,
-                    "created_at": now,
-                    **finding,
-                },
-            )
-            created_findings.append(created)
-    except RustCoreError as error:
-        raise _http_from_rust(error) from error
-
-    graph_rebuild = await _rebuild_collaboration_graph(request, payload.vault_id or actor.vault_id)
+    review, created_findings = await collaboration_v2.create_review(
+        settings.sqlite_path,
+        data_dir=settings.data_dir,
+        review_id=review_id,
+        vault_id=payload.vault_id or actor.vault_id,
+        title=title,
+        source_agent=source_agent,
+        source_model=source_model,
+        review_type="agent_review",
+        page_id=payload.page_id,
+        markdown=payload.markdown,
+        meta=meta,
+        findings=findings,
+        created_at=now,
+    )
+    graph_rebuild = collaboration_v2.skipped_v2_graph_rebuild()
     await write_audit_event(
         settings.sqlite_path,
         action="review.import",
@@ -617,31 +546,20 @@ async def list_reviews(
 ):
     settings = request.app.state.settings
     limit = min(max(limit, 1), 200)
-    where = ["r.vault_id = ?"]
-    params: list = [vault_id]
-    if status:
-        where.append("r.status = ?")
-        params.append(status)
-    if source_agent:
-        where.append("r.source_agent = ?")
-        params.append(source_agent)
-    if area:
-        where.append("EXISTS (SELECT 1 FROM collaboration_findings f WHERE f.review_id = r.id AND f.area = ?)")
-        params.append(area)
-    rows = await fetch_all(
+    rows = await collaboration_v2.list_reviews(
         settings.sqlite_path,
-        "SELECT r.*, "
-        "(SELECT COUNT(*) FROM collaboration_findings f WHERE f.review_id = r.id) AS finding_count, "
-        "(SELECT COUNT(*) FROM collaboration_findings f WHERE f.review_id = r.id AND f.status = 'pending') AS pending_count "
-        f"FROM collaboration_reviews r WHERE {' AND '.join(where)} ORDER BY r.updated_at DESC LIMIT ?",
-        (*params, limit),
+        vault_id=vault_id,
+        status=status,
+        source_agent=source_agent,
+        area=area,
+        limit=limit,
     )
     return {"ok": True, "data": {"reviews": rows, "actor_role": actor.role}}
 
 
 @router.get("/reviews/{review_id}")
 async def get_review(review_id: str, request: Request, actor: Actor = Depends(require_review_access)):
-    return {"ok": True, "data": await _review_with_findings(request.app.state.settings.sqlite_path, review_id)}
+    return {"ok": True, "data": await _review_with_findings_for_settings(request.app.state.settings, review_id)}
 
 
 @router.post("/findings/{finding_id}/decision")
@@ -654,50 +572,23 @@ async def decide_finding(
     if payload.status not in DECISION_STATUSES:
         raise HTTPException(status_code=409, detail={"code": "collaboration_invalid_status", "message": "Invalid finding status", "details": {"status": payload.status}})
     settings = request.app.state.settings
-    existing = await fetch_one(settings.sqlite_path, "SELECT id, review_id FROM collaboration_findings WHERE id = ?", (finding_id,))
-    if not existing:
+    result = await collaboration_v2.decide_finding(
+        settings.sqlite_path,
+        finding_id=finding_id,
+        status=payload.status,
+        decision_note=payload.decision_note,
+        decided_by=actor.actor_id,
+        decided_at=utc_now(),
+    )
+    if not result:
         raise HTTPException(status_code=404, detail={"code": "collaboration_finding_not_found", "message": "Finding not found", "details": {"finding_id": finding_id}})
-    try:
-        result = await request.app.state.rust_core.request(
-            "update_finding_decision",
-            {
-                "sqlite_path": str(settings.sqlite_path),
-                "finding_id": finding_id,
-                "status": payload.status,
-                "decision_note": payload.decision_note,
-                "decided_by": actor.actor_id,
-                "decided_at": utc_now(),
-            },
-        )
-        pending = await fetch_one(
-            settings.sqlite_path,
-            "SELECT COUNT(*) AS count FROM collaboration_findings WHERE review_id = ? AND status = 'pending'",
-            (existing["review_id"],),
-        )
-        review_status = "triaged" if pending and pending["count"] == 0 else "pending_review"
-        await request.app.state.rust_core.request(
-            "update_collaboration_review_status",
-            {
-                "sqlite_path": str(settings.sqlite_path),
-                "review_id": existing["review_id"],
-                "status": review_status,
-                "updated_at": utc_now(),
-            },
-        )
-    except RustCoreError as error:
-        raise _http_from_rust(error) from error
     auto_task = None
     if payload.status == "accepted":
-        accepted_finding = await fetch_one(
-            settings.sqlite_path,
-            "SELECT f.*, r.vault_id, r.title AS review_title, r.source_agent, r.source_model "
-            "FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id WHERE f.id = ?",
-            (finding_id,),
-        )
+        accepted_finding = await collaboration_v2.finding(settings.sqlite_path, finding_id)
         if accepted_finding and _should_auto_create_task(accepted_finding):
             priority = _priority_from_finding(accepted_finding)
-            auto_task = await _upsert_finding_task(
-                settings.sqlite_path,
+            auto_task = await _upsert_task_for_settings(
+                settings,
                 finding=accepted_finding,
                 actor=actor,
                 priority=priority,
@@ -706,7 +597,7 @@ async def decide_finding(
                 expected_verification=_verification_from_finding(accepted_finding),
                 notes="Auto-created when the finding was accepted.",
             )
-    graph_rebuild = await _rebuild_collaboration_graph(request, actor.vault_id)
+    graph_rebuild = collaboration_v2.skipped_v2_graph_rebuild()
     await write_audit_event(
         settings.sqlite_path,
         action=f"finding.{payload.status}",
@@ -753,27 +644,37 @@ async def _record_implementation_result(
     cleaned_files = _clean_changed_files(changed_files)
     settings = request.app.state.settings
     record_id = f"impl_{uuid4().hex[:12]}"
-    try:
-        result = await request.app.state.rust_core.request(
-            "create_implementation_record",
-            {
-                "sqlite_path": str(settings.sqlite_path),
-                "record_id": record_id,
-                "finding_id": finding_id,
-                "commit_sha": commit_sha,
-                "changed_files": json.dumps(cleaned_files, ensure_ascii=True),
-                "verification": verification,
-                "notes": notes,
-                "created_at": utc_now(),
-            },
-        )
-    except RustCoreError as error:
-        raise _http_from_rust(error) from error
+    if collaboration_v2.v2_enabled(settings):
+        from ..db.sqlite import transaction
+
+        now = utc_now()
+        existing = await fetch_one(settings.sqlite_path, "SELECT id FROM findings WHERE id = ?", (finding_id,))
+        if not existing:
+            raise HTTPException(status_code=404, detail={"code": "collaboration_finding_not_found", "message": "Finding not found", "details": {"finding_id": finding_id}})
+        async with transaction(settings.sqlite_path) as connection:
+            await connection.execute(
+                "INSERT INTO implementation_records (id, finding_id, commit_sha, changed_files, verification, notes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (record_id, finding_id, commit_sha, json.dumps(cleaned_files, ensure_ascii=True), verification, notes, now),
+            )
+            await connection.execute("UPDATE findings SET status = 'implemented', updated_at = ? WHERE id = ?", (now, finding_id))
+            await connection.execute(
+                "INSERT INTO finding_decisions (id, finding_id, status, decision_note, decided_by, decided_at, created_at) VALUES (?, ?, 'implemented', ?, ?, ?, ?)",
+                (f"decision_{uuid4().hex[:12]}", finding_id, notes or verification, actor.actor_id, now, now),
+            )
+        result = {
+            "id": record_id,
+            "finding_id": finding_id,
+            "commit_sha": commit_sha,
+            "changed_files": json.dumps(cleaned_files, ensure_ascii=True),
+            "verification": verification,
+            "notes": notes,
+            "created_at": now,
+        }
     now = utc_now()
-    task = await fetch_one(settings.sqlite_path, "SELECT id FROM finding_tasks WHERE finding_id = ?", (finding_id,))
+    task = await fetch_one(settings.sqlite_path, "SELECT id FROM tasks WHERE finding_id = ?", (finding_id,))
     if task:
-        await execute(settings.sqlite_path, "UPDATE finding_tasks SET status = 'done', updated_at = ? WHERE finding_id = ?", (now, finding_id))
-    graph_rebuild = await _rebuild_collaboration_graph(request, actor.vault_id)
+        await execute(settings.sqlite_path, "UPDATE tasks SET status = 'done', updated_at = ? WHERE finding_id = ?", (now, finding_id))
+    graph_rebuild = collaboration_v2.skipped_v2_graph_rebuild()
     await write_audit_event(
         settings.sqlite_path,
         action="implementation.record",
@@ -793,14 +694,14 @@ async def record_implementation_evidence(
     actor: Actor = Depends(require_write_access),
 ):
     settings = request.app.state.settings
-    finding = await fetch_one(settings.sqlite_path, "SELECT id, status, title FROM collaboration_findings WHERE id = ?", (finding_id,))
+    finding = await fetch_one(settings.sqlite_path, "SELECT id, status, title FROM findings WHERE id = ?", (finding_id,))
     if not finding:
         raise HTTPException(status_code=404, detail={"code": "collaboration_finding_not_found", "message": "Finding not found", "details": {"finding_id": finding_id}})
     changed_files = payload.changed_files or (_git_changed_files() if payload.include_git_status else [])
     cleaned_files = _clean_changed_files(changed_files)
     if payload.commit_sha and not re.match(r"^[A-Fa-f0-9]{7,40}$", payload.commit_sha):
         raise HTTPException(status_code=422, detail={"code": "implementation_record_invalid_commit", "message": "Invalid commit hash", "details": {}})
-    task = await fetch_one(settings.sqlite_path, "SELECT * FROM finding_tasks WHERE finding_id = ?", (finding_id,))
+    task = await fetch_one(settings.sqlite_path, "SELECT * FROM tasks WHERE finding_id = ?", (finding_id,))
     draft = {
         "finding_id": finding_id,
         "finding_status": finding["status"],
@@ -869,13 +770,15 @@ async def list_finding_queue(
     limit = max(1, min(limit, 100))
     rows = await fetch_all(
         request.app.state.settings.sqlite_path,
-        "SELECT f.*, r.vault_id, r.title AS review_title, r.source_agent, r.source_model, "
+        "SELECT f.*, fe.evidence, fe.proposed_change, COALESCE(fe.evidence_quality, 'unspecified') AS evidence_quality, "
+        "r.vault_id, r.title AS review_title, r.source_agent, r.source_model, "
         "t.id AS task_id, t.status AS task_status, t.priority AS task_priority, t.owner AS task_owner, "
         "t.task_prompt, t.expected_verification, t.updated_at AS task_updated_at, "
         "(SELECT COUNT(*) FROM implementation_records i WHERE i.finding_id = f.id) AS implementation_count "
-        "FROM collaboration_findings f "
-        "JOIN collaboration_reviews r ON r.id = f.review_id "
-        "LEFT JOIN finding_tasks t ON t.finding_id = f.id "
+        "FROM findings f "
+        "JOIN reviews r ON r.id = f.review_id "
+        "LEFT JOIN finding_evidence fe ON fe.finding_id = f.id "
+        "LEFT JOIN tasks t ON t.finding_id = f.id "
         "WHERE r.vault_id = ? AND f.status = ? "
         "ORDER BY CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, f.updated_at DESC "
         "LIMIT ?",
@@ -913,7 +816,7 @@ async def list_finding_duplicates(
         statuses = {"accepted"}
     else:
         raise HTTPException(status_code=409, detail={"code": "finding_duplicates_invalid_scope", "message": "Invalid duplicate scope", "details": {"status_scope": status_scope}})
-    groups = await _finding_duplicate_groups(request.app.state.settings.sqlite_path, vault_id=vault_id, statuses=statuses, limit=max(20, min(limit, 1000)))
+    groups = await _finding_duplicate_groups_for_settings(request.app.state.settings, vault_id=vault_id, statuses=statuses, limit=max(20, min(limit, 1000)))
     return {
         "ok": True,
         "data": {
@@ -926,123 +829,43 @@ async def list_finding_duplicates(
     }
 
 
-def _csv_filter(value: str | None, *, allowed: set[str], default: set[str]) -> set[str]:
-    if not value:
-        return set(default)
-    if value.strip().lower() == "all":
-        return set(allowed)
-    parsed = {item.strip().lower() for item in value.split(",") if item.strip()}
-    invalid = parsed - allowed
-    if invalid:
-        raise HTTPException(status_code=422, detail={"code": "sarif_export_invalid_filter", "message": "Invalid SARIF export filter", "details": {"invalid": sorted(invalid), "allowed": sorted(allowed)}})
-    return parsed or set(default)
-
-
-@router.get("/findings.sarif")
-async def export_findings_sarif(
-    request: Request,
-    vault_id: str = "local-default",
-    status: str | None = None,
-    severity: str | None = None,
-    evidence_quality: str | None = None,
-    limit: int = 100,
-    actor: Actor = Depends(require_review_access),
-):
-    statuses = _csv_filter(status, allowed={"pending", "needs_more_context", "accepted", "deferred", "implemented", "rejected"}, default=DEFAULT_EXPORT_STATUSES)
-    severities = _csv_filter(severity, allowed={"critical", "high", "medium", "low", "info"}, default={"critical", "high", "medium", "low", "info"})
-    qualities = _csv_filter(
-        evidence_quality,
-        allowed={"direct_access", "operator_verified", "context_limited", "inferred", "unspecified"},
-        default=TRUSTED_DEFAULT_EVIDENCE,
-    )
-    limit = max(1, min(limit, 500))
-    status_placeholders = ",".join("?" for _ in statuses)
-    severity_placeholders = ",".join("?" for _ in severities)
-    quality_placeholders = ",".join("?" for _ in qualities)
-    rows = await fetch_all(
-        request.app.state.settings.sqlite_path,
-        "SELECT f.*, r.vault_id, r.source_agent, r.source_model, "
-        "GROUP_CONCAT(i.commit_sha, '|') AS commit_shas, GROUP_CONCAT(i.changed_files, '||') AS changed_files_json "
-        "FROM collaboration_findings f "
-        "JOIN collaboration_reviews r ON r.id = f.review_id "
-        "LEFT JOIN implementation_records i ON i.finding_id = f.id "
-        f"WHERE r.vault_id = ? AND f.status IN ({status_placeholders}) AND f.severity IN ({severity_placeholders}) "
-        f"AND f.evidence_quality IN ({quality_placeholders}) "
-        "GROUP BY f.id "
-        "ORDER BY CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, f.updated_at DESC "
-        "LIMIT ?",
-        (vault_id, *sorted(statuses), *sorted(severities), *sorted(qualities), limit),
-    )
-    generated_at = utc_now()
-    sarif = build_sarif_log(rows, run_id=f"knownet-sarif-{generated_at}", generated_at=generated_at)
-    validation_errors = validate_sarif_log(sarif)
-    if validation_errors:
-        raise HTTPException(status_code=500, detail={"code": "sarif_export_invalid", "message": "Generated SARIF failed schema validation", "details": {"errors": validation_errors}})
-    return JSONResponse(content=sarif, media_type="application/sarif+json")
-
-
 @router.get("/findings/{finding_id}")
 async def get_finding(
     finding_id: str,
     request: Request,
     actor: Actor = Depends(require_review_access),
 ):
-    row = await fetch_one(
-        request.app.state.settings.sqlite_path,
-        "SELECT f.*, r.vault_id, r.title AS review_title, r.source_agent, r.source_model "
-        "FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id WHERE f.id = ?",
-        (finding_id,),
-    )
+    settings = request.app.state.settings
+    row = await collaboration_v2.finding(settings.sqlite_path, finding_id)
     if not row:
         raise HTTPException(status_code=404, detail={"code": "collaboration_finding_not_found", "message": "Finding not found", "details": {"finding_id": finding_id}})
     return {"ok": True, "data": {"finding": row, "actor_role": actor.role}}
 
 
-@router.get("/finding-tasks")
-async def list_finding_tasks(
+@router.get("/tasks")
+async def list_tasks(
     request: Request,
     status: str = "open",
     limit: int = 50,
     actor: Actor = Depends(require_review_access),
 ):
     if status not in {"open", "in_progress", "done", "blocked", "all"}:
-        raise HTTPException(status_code=409, detail={"code": "finding_task_invalid_status", "message": "Invalid task status", "details": {"status": status}})
+        raise HTTPException(status_code=409, detail={"code": "task_invalid_status", "message": "Invalid task status", "details": {"status": status}})
     limit = max(1, min(limit, 100))
-    where = "" if status == "all" else "WHERE t.status = ?"
-    params: tuple = (limit,) if status == "all" else (status, limit)
-    rows = await fetch_all(
-        request.app.state.settings.sqlite_path,
-        "SELECT t.*, f.review_id, f.severity, f.area, f.title, f.evidence_quality, f.status AS finding_status, "
-        "r.title AS review_title, r.source_agent, r.source_model "
-        "FROM finding_tasks t "
-        "JOIN collaboration_findings f ON f.id = t.finding_id "
-        "JOIN collaboration_reviews r ON r.id = f.review_id "
-        f"{where} "
-        "ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, t.updated_at DESC "
-        "LIMIT ?",
-        params,
-    )
+    rows = await collaboration_v2.list_tasks(request.app.state.settings.sqlite_path, status=status, limit=limit)
     return {"ok": True, "data": {"tasks": rows, "actor_role": actor.role}}
 
 
-@router.get("/finding-tasks/{task_id}")
-async def get_finding_task(
+@router.get("/tasks/{task_id}")
+async def get_task(
     task_id: str,
     request: Request,
     actor: Actor = Depends(require_review_access),
 ):
-    row = await fetch_one(
-        request.app.state.settings.sqlite_path,
-        "SELECT t.*, f.review_id, f.severity, f.area, f.title, f.evidence_quality, f.status AS finding_status, "
-        "r.title AS review_title, r.source_agent, r.source_model "
-        "FROM finding_tasks t "
-        "JOIN collaboration_findings f ON f.id = t.finding_id "
-        "JOIN collaboration_reviews r ON r.id = f.review_id "
-        "WHERE t.id = ?",
-        (task_id,),
-    )
+    settings = request.app.state.settings
+    row = await collaboration_v2.task(settings.sqlite_path, task_id)
     if not row:
-        raise HTTPException(status_code=404, detail={"code": "finding_task_not_found", "message": "Finding task not found", "details": {"task_id": task_id}})
+        raise HTTPException(status_code=404, detail={"code": "task_not_found", "message": "Task not found", "details": {"task_id": task_id}})
     return {"ok": True, "data": {"task": row, "actor_role": actor.role}}
 
 
@@ -1052,7 +875,8 @@ async def patch_suggestion(
     request: Request,
     actor: Actor = Depends(require_review_access),
 ):
-    finding = await fetch_one(request.app.state.settings.sqlite_path, "SELECT id, title, status FROM collaboration_findings WHERE id = ?", (finding_id,))
+    settings = request.app.state.settings
+    finding = await fetch_one(settings.sqlite_path, "SELECT id, title, status FROM findings WHERE id = ?", (finding_id,))
     if not finding:
         raise HTTPException(status_code=404, detail={"code": "collaboration_finding_not_found", "message": "Finding not found", "details": {"finding_id": finding_id}})
     return {
@@ -1080,11 +904,14 @@ async def next_action(
     settings = request.app.state.settings
     task = await fetch_one(
         settings.sqlite_path,
-        "SELECT t.*, f.review_id, f.severity, f.area, f.title, f.evidence, f.proposed_change, f.evidence_quality, f.status AS finding_status, "
+        "SELECT t.*, f.review_id, f.severity, f.area, f.title, "
+        "COALESCE(fe.evidence, '') AS evidence, COALESCE(fe.proposed_change, '') AS proposed_change, "
+        "COALESCE(fe.evidence_quality, 'unspecified') AS evidence_quality, f.status AS finding_status, "
         "r.title AS review_title, r.source_agent, r.source_model "
-        "FROM finding_tasks t "
-        "JOIN collaboration_findings f ON f.id = t.finding_id "
-        "JOIN collaboration_reviews r ON r.id = f.review_id "
+        "FROM tasks t "
+        "JOIN findings f ON f.id = t.finding_id "
+        "JOIN reviews r ON r.id = f.review_id "
+        "LEFT JOIN finding_evidence fe ON fe.finding_id = f.id "
         "WHERE r.vault_id = ? AND t.status IN ('open','in_progress') "
         "ORDER BY CASE t.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'normal' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, "
         "CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, t.updated_at DESC LIMIT 1",
@@ -1094,7 +921,7 @@ async def next_action(
         return {
             "ok": True,
             "data": {
-                "action_type": "implement_finding_task",
+                "action_type": "implement_task",
                 "priority": task["priority"],
                 "finding_id": task["finding_id"],
                 "task_id": task["id"],
@@ -1117,9 +944,9 @@ async def next_action(
     counts = await fetch_one(
         settings.sqlite_path,
         "SELECT "
-        "(SELECT COUNT(*) FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id WHERE r.vault_id = ? AND f.status IN ('pending','needs_more_context')) AS pending_findings, "
-        "(SELECT COUNT(*) FROM collaboration_reviews WHERE vault_id = ? AND status = 'pending_review') AS pending_reviews, "
-        "(SELECT COUNT(*) FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id WHERE r.vault_id = ? AND f.status = 'accepted') AS accepted_findings",
+        "(SELECT COUNT(*) FROM findings f JOIN reviews r ON r.id = f.review_id WHERE r.vault_id = ? AND f.status IN ('pending','needs_more_context')) AS pending_findings, "
+        "(SELECT COUNT(*) FROM reviews WHERE vault_id = ? AND status = 'pending_review') AS pending_reviews, "
+        "(SELECT COUNT(*) FROM findings f JOIN reviews r ON r.id = f.review_id WHERE r.vault_id = ? AND f.status = 'accepted') AS accepted_findings",
         (vault_id, vault_id, vault_id),
     )
     pending_findings = int(counts["pending_findings"] or 0) if counts else 0
@@ -1128,9 +955,12 @@ async def next_action(
 
     finding = await fetch_one(
         settings.sqlite_path,
-        "SELECT f.*, r.vault_id, r.title AS review_title, r.source_agent, r.source_model, "
+        "SELECT f.*, COALESCE(fe.evidence, '') AS evidence, COALESCE(fe.proposed_change, '') AS proposed_change, "
+        "COALESCE(fe.evidence_quality, 'unspecified') AS evidence_quality, "
+        "r.vault_id, r.title AS review_title, r.source_agent, r.source_model, "
         "(SELECT COUNT(*) FROM implementation_records i WHERE i.finding_id = f.id) AS implementation_count "
-        "FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
+        "FROM findings f JOIN reviews r ON r.id = f.review_id "
+        "LEFT JOIN finding_evidence fe ON fe.finding_id = f.id "
         "WHERE r.vault_id = ? AND f.status = 'accepted' "
         "ORDER BY CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, f.updated_at DESC LIMIT 1",
         (vault_id,),
@@ -1155,7 +985,7 @@ async def next_action(
             },
         }
 
-    duplicate_groups = await _finding_duplicate_groups(settings.sqlite_path, vault_id=vault_id, statuses={"pending", "needs_more_context", "accepted", "deferred"}, limit=500)
+    duplicate_groups = await _finding_duplicate_groups_for_settings(settings, vault_id=vault_id, statuses={"pending", "needs_more_context", "accepted", "deferred"}, limit=500)
     if duplicate_groups or pending_findings >= 10 or pending_reviews >= 5:
         return {
             "ok": True,
@@ -1246,34 +1076,28 @@ async def next_action(
 
 
 @router.post("/findings/{finding_id}/task")
-async def create_finding_task(
+async def create_task_from_finding(
     finding_id: str,
     payload: FindingTaskRequest,
     request: Request,
     actor: Actor = Depends(require_write_access),
 ):
     settings = request.app.state.settings
-    await ensure_collaboration_schema(settings.sqlite_path)
-    finding = await fetch_one(
-        settings.sqlite_path,
-        "SELECT f.*, r.vault_id, r.title AS review_title, r.source_agent, r.source_model "
-        "FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id WHERE f.id = ?",
-        (finding_id,),
-    )
+    finding = await collaboration_v2.finding(settings.sqlite_path, finding_id)
     if not finding:
         raise HTTPException(status_code=404, detail={"code": "collaboration_finding_not_found", "message": "Finding not found", "details": {"finding_id": finding_id}})
     if finding["status"] != "accepted":
         raise HTTPException(
             status_code=409,
-            detail={"code": "finding_task_requires_accepted", "message": "Only accepted findings can become implementation tasks", "details": {"status": finding["status"]}},
+            detail={"code": "task_requires_accepted_finding", "message": "Only accepted findings can become implementation tasks", "details": {"status": finding["status"]}},
         )
     priority = payload.priority.strip().lower() if payload.priority else "normal"
     if priority not in {"urgent", "high", "normal", "low"}:
-        raise HTTPException(status_code=409, detail={"code": "finding_task_invalid_priority", "message": "Invalid task priority", "details": {"priority": payload.priority}})
+        raise HTTPException(status_code=409, detail={"code": "task_invalid_priority", "message": "Invalid task priority", "details": {"priority": payload.priority}})
     task_prompt = payload.task_prompt.strip() if payload.task_prompt else _task_prompt_from_finding(finding)
     expected_verification = payload.expected_verification.strip() if payload.expected_verification else _verification_from_finding(finding)
-    task = await _upsert_finding_task(
-        settings.sqlite_path,
+    task = await _upsert_task_for_settings(
+        settings,
         finding=finding,
         actor=actor,
         priority=priority,
@@ -1296,7 +1120,6 @@ async def create_finding_task(
 @router.post("/project-snapshot-packets")
 async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, request: Request, actor: Actor = Depends(require_review_access)):
     settings = request.app.state.settings
-    await ensure_collaboration_schema(settings.sqlite_path)
     profile = payload.profile.strip().lower() or "overview"
     if profile not in SNAPSHOT_PROFILES:
         raise HTTPException(status_code=422, detail={"code": "project_snapshot_invalid_profile", "message": "Unknown project snapshot profile", "details": {"profile": payload.profile, "allowed": sorted(SNAPSHOT_PROFILES)}})
@@ -1309,65 +1132,36 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
     task_limit = min(payload.include_recent_tasks, int(target_policy["max_recent_tasks"]), int(hard_limits["max_recent_tasks"]))
     run_limit = min(payload.include_recent_runs, int(target_policy["max_recent_runs"]), int(hard_limits["max_recent_runs"]))
     health = await request.app.state.app_health_payload() if hasattr(request.app.state, "app_health_payload") else None
-    quality = await build_ai_state_quality(settings, vault_id=payload.vault_id)
-    matrix = await build_provider_matrix(settings)
-    preflight = await _packet_preflight(settings.sqlite_path, payload.vault_id)
-    since, since_packet, delta_warnings = await _resolve_snapshot_since(settings, payload, profile)
-    delta = await _project_snapshot_delta(settings.sqlite_path, payload.vault_id, since)
-    high_open = await fetch_one(
+    quality = await collaboration_v2.ai_state_quality(settings.sqlite_path, payload.vault_id)
+    matrix = await collaboration_v2.provider_matrix_summary(settings.sqlite_path)
+    preflight = await collaboration_v2.packet_preflight(settings.sqlite_path, payload.vault_id)
+    since, since_packet, delta_warnings = await collaboration_v2.resolve_snapshot_since(
         settings.sqlite_path,
-        "SELECT COUNT(*) AS count FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
-        "WHERE r.vault_id = ? AND f.status IN ('pending','needs_more_context','accepted','deferred') AND f.severity IN ('critical','high')",
-        (payload.vault_id,),
+        packet_id=payload.since_packet_id,
+        vault_id=payload.vault_id,
+        profile=profile,
+        allow_fallback=payload.allow_since_packet_fallback,
     )
-    task_rows = await fetch_all(
-        settings.sqlite_path,
-        "SELECT t.id, t.finding_id, t.status, t.priority, t.owner, f.severity, f.area, f.title, f.evidence_quality "
-        "FROM finding_tasks t JOIN collaboration_findings f ON f.id = t.finding_id "
-        "JOIN collaboration_reviews r ON r.id = f.review_id "
-        "WHERE r.vault_id = ? ORDER BY t.updated_at DESC LIMIT ?",
-        (payload.vault_id, task_limit),
-    )
-    accepted_rows = await fetch_all(
-        settings.sqlite_path,
-        "SELECT f.id, f.severity, f.area, f.title, f.evidence_quality, f.status, r.source_agent "
-        "FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
-        "WHERE r.vault_id = ? AND f.status = 'accepted' ORDER BY f.updated_at DESC LIMIT ?",
-        (payload.vault_id, task_limit),
-    )
-    run_rows = await fetch_all(
-        settings.sqlite_path,
-        "SELECT id, provider, model, prompt_profile, status, review_id, input_tokens, output_tokens, trace_id, packet_trace_id, updated_at "
-        "FROM model_review_runs ORDER BY updated_at DESC LIMIT ?",
-        (run_limit,),
-    )
-    if delta and delta.get("pages"):
-        delta_page_ids = [row["id"] for row in delta["pages"][:5]]
-        placeholders = ",".join("?" for _ in delta_page_ids)
-        node_rows = await fetch_all(
-            settings.sqlite_path,
-            f"SELECT p.id, p.slug, p.title, p.updated_at, a.content_hash, sp.kind AS system_kind "
-            f"FROM pages p LEFT JOIN system_pages sp ON sp.page_id = p.id "
-            f"LEFT JOIN ai_state_pages a ON a.page_id = p.id "
-            f"WHERE p.vault_id = ? AND p.id IN ({placeholders})",
-            (payload.vault_id, *delta_page_ids),
-        )
-    else:
-        node_rows = await fetch_all(
-            settings.sqlite_path,
-            "SELECT p.id, p.slug, p.title, p.updated_at, a.content_hash, sp.kind AS system_kind "
-            "FROM pages p LEFT JOIN system_pages sp ON sp.page_id = p.id "
-            "LEFT JOIN ai_state_pages a ON a.page_id = p.id "
-            "WHERE p.vault_id = ? AND p.status = 'active' "
-            "ORDER BY p.updated_at DESC LIMIT 5",
-            (payload.vault_id,),
-        )
+    since = payload.since or since
+    delta = await collaboration_v2.project_snapshot_delta(settings.sqlite_path, payload.vault_id, since)
+    high_open_count = await collaboration_v2.high_open_count(settings.sqlite_path, payload.vault_id)
+    source_rows = await collaboration_v2.packet_source_rows(settings.sqlite_path, vault_id=payload.vault_id, task_limit=task_limit, run_limit=run_limit)
+    task_rows = source_rows["tasks"]
+    accepted_rows = source_rows["accepted"]
+    run_rows = source_rows["runs"]
+    node_rows = await collaboration_v2.node_rows(settings.sqlite_path, vault_id=payload.vault_id, delta=delta)
     snapshot_node_cards = [node_card(row, short_summary=f"Recent {row.get('system_kind') or 'page'} node for {profile} packet.") for row in node_rows]
-    duplicate_groups = await _finding_duplicate_groups(settings.sqlite_path, vault_id=payload.vault_id, statuses={"pending", "needs_more_context", "accepted", "deferred"}, limit=500)
-    warnings = _packet_warning_list(health, quality, preflight, int(high_open["count"] or 0) if high_open else 0) + delta_warnings
-    important = await important_changes(settings.sqlite_path, vault_id=payload.vault_id, since=since, limit=min(int(target_policy["max_important_changes"]), int(hard_limits["max_important_changes"])))
+    duplicate_groups = await _finding_duplicate_groups_for_settings(settings, vault_id=payload.vault_id, statuses={"pending", "needs_more_context", "accepted", "deferred"}, limit=500)
+    warnings = _packet_warning_list(health, quality, preflight, high_open_count) + delta_warnings
+    important = await collaboration_v2.important_changes(
+        settings.sqlite_path,
+        vault_id=payload.vault_id,
+        since=since,
+        limit=min(int(target_policy["max_important_changes"]), int(hard_limits["max_important_changes"])),
+        action_route=action_route,
+    )
     diff_summary = snapshot_diff_summary(important, delta)
-    no_reopen = await do_not_reopen(settings.sqlite_path, vault_id=payload.vault_id)
+    no_reopen = await collaboration_v2.do_not_reopen(settings.sqlite_path, vault_id=payload.vault_id)
     do_not_suggest = do_not_suggest_rules(profile)
     summary_payload = packet_summary(accepted_rows=accepted_rows, task_rows=task_rows, run_rows=run_rows, important=important)
     ai_context_payload = ai_context(profile=profile, target_agent=payload.target_agent, focus=focus, output_mode=output_mode)
@@ -1475,7 +1269,7 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
         health=health,
         quality=quality,
         preflight=preflight,
-        high_open_findings=int(high_open["count"] or 0) if high_open else 0,
+        high_open_findings=high_open_count,
         provider_matrix=matrix.get("summary", {}),
     )
     signals = packet_signals(issues, max_signals=int(effective_limits["max_signals"]))
@@ -1528,25 +1322,22 @@ async def create_project_snapshot_packet(payload: ProjectSnapshotPacketRequest, 
     packet_path.write_text(content, encoding="utf-8")
     from ..db.sqlite import execute
 
-    await execute(
+    await collaboration_v2.store_project_packet(
         settings.sqlite_path,
-        "INSERT INTO project_snapshot_packets (id, vault_id, target_agent, profile, output_mode, focus, content_hash, content_path, warnings_json, snapshot_quality_json, contract_version, created_by, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            packet_id,
-            payload.vault_id,
-            payload.target_agent,
-            profile,
-            output_mode,
-            focus,
-            content_hash,
-            str(packet_path).replace("\\", "/"),
-            json.dumps(warnings, ensure_ascii=True),
-            json.dumps(snapshot_quality, ensure_ascii=True),
-            PACKET_CONTRACT_VERSION,
-            actor.actor_id,
-            generated_at,
-        ),
+        snapshot_id=f"snapshot_state_{uuid4().hex[:12]}",
+        packet_id=packet_id,
+        vault_id=payload.vault_id,
+        target_agent=payload.target_agent,
+        profile=profile,
+        output_mode=output_mode,
+        focus=focus,
+        content_hash=content_hash,
+        content_path=str(packet_path).replace("\\", "/"),
+        contract_version=PACKET_CONTRACT_VERSION,
+        created_by=actor.actor_id,
+        created_at=generated_at,
+        summary={"warnings": warnings, "snapshot_quality": snapshot_quality, "packet_fitness": packet_fitness},
+        node_cards=snapshot_node_cards,
     )
     await write_audit_event(
         settings.sqlite_path,
@@ -1657,483 +1448,38 @@ async def compare_external_ai_reviews(payload: AIReviewComparisonRequest, actor:
 
 @router.post("/experiment-packets")
 async def create_experiment_packet(payload: ExperimentPacketRequest, request: Request, actor: Actor = Depends(require_admin_access)):
-    settings = request.app.state.settings
-    output_mode = payload.output_mode.strip().lower() or "top_findings"
-    if output_mode not in OUTPUT_MODES:
-        raise HTTPException(status_code=422, detail={"code": "experiment_packet_invalid_output_mode", "message": "Unknown packet output mode", "details": {"output_mode": payload.output_mode, "allowed": sorted(OUTPUT_MODES)}})
-    slugs = _validate_packet_slugs(payload.node_slugs or DEFAULT_EXPERIMENT_PACKET_SLUGS)
-    if not slugs:
-        raise HTTPException(status_code=422, detail={"code": "experiment_packet_empty_nodes", "message": "Select at least one node", "details": {}})
-    placeholders = ",".join("?" for _ in slugs)
-    rows = await fetch_all(
-        settings.sqlite_path,
-        f"SELECT p.id, p.slug, p.title, p.path, sp.kind AS system_kind FROM pages p LEFT JOIN system_pages sp ON sp.page_id = p.id WHERE p.vault_id = ? AND p.status = 'active' AND p.slug IN ({placeholders})",
-        (payload.vault_id, *slugs),
-    )
-    by_slug = {row["slug"]: row for row in rows}
-    missing = [slug for slug in slugs if slug not in by_slug]
-    if missing:
-        raise HTTPException(status_code=404, detail={"code": "experiment_packet_node_missing", "message": "Selected node was not found", "details": {"missing_slugs": missing}})
-
-    preflight = await _packet_preflight(settings.sqlite_path, payload.vault_id)
-    packet_id = f"packet_{uuid4().hex[:12]}"
-    generated_at = utc_now()
-    trace_payload = packet_trace(
-        trace_id=packet_id,
-        name="knownet.experiment_packet",
-        attributes={
-            "knownet.packet.kind": "experiment_packet",
-            "knownet.packet.target_agent": payload.target_agent,
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "experiment_packets_retired",
+            "message": "Experiment packets were retired in DB v2. Use project snapshot packets with node_cards and context_questions.",
+            "details": {"replacement_endpoint": "/api/collaboration/project-snapshot-packets"},
         },
     )
-    contract = build_packet_contract(
-        packet_kind="experiment_packet",
-        target_agent=payload.target_agent,
-        operator_question=payload.task,
-        output_mode=output_mode,
-        profile="overview",
-    )
-    contract_validation_errors = validate_packet_contract(contract)
-    if contract_validation_errors:
-        raise HTTPException(status_code=500, detail={"code": "experiment_packet_contract_invalid", "message": "Generated packet contract is invalid", "details": {"errors": contract_validation_errors}})
-    sections = [
-        f"# {payload.experiment_name}",
-        "",
-        "## Packet Metadata",
-        "",
-        f"- id: {packet_id}",
-        f"- contract_version: {PACKET_CONTRACT_VERSION}",
-        f"- protocol_version: {PACKET_PROTOCOL_VERSION}",
-        f"- schema_ref: {PACKET_SCHEMA_REF}",
-        f"- generated_at: {generated_at}",
-        f"- generated_for: {payload.target_agent}",
-        f"- vault_id: {payload.vault_id}",
-        f"- output_mode: {output_mode}",
-        f"- evidence_quality_default: context_limited unless live KnowNet access succeeds",
-        f"- preflight_pages: {preflight['pages']}",
-        f"- preflight_ai_state_pages: {preflight['ai_state_pages']}",
-        f"- preflight_unresolved_nodes: {preflight['unresolved_nodes']}",
-        f"- preflight_pending_findings: {preflight['pending_findings']}",
-        "",
-        "## Task",
-        "",
-        payload.task.strip(),
-        "",
-        *packet_contract_markdown(contract),
-        "",
-        "## AI Context",
-        "",
-        f"- role: experiment_reviewer",
-        f"- task: {payload.task.strip()}",
-        f"- output_mode: {output_mode}",
-        "- read_order: [\"ai_context\", \"node_cards\", \"inline_core_context\", \"response_contract\"]",
-        "",
-        "## Node Cards",
-        "",
-        "computed_after_node_read",
-        "",
-        "## Inline Core Context",
-        "",
-    ]
-    if payload.minimum_inline_context and payload.minimum_inline_context.strip():
-        _assert_no_secret_text(payload.minimum_inline_context, settings)
-        sections.extend(
-            [
-                "### Operator-Supplied Minimum Inline Context",
-                "",
-                payload.minimum_inline_context.strip(),
-                "",
-            ]
-        )
-    included_nodes: list[dict] = []
-    node_cards: list[dict] = []
-    for slug in slugs:
-        row = by_slug[slug]
-        path = Path(row["path"]).resolve()
-        data_dir = settings.data_dir.resolve()
-        if data_dir not in path.parents:
-            raise HTTPException(status_code=400, detail={"code": "experiment_packet_forbidden_path", "message": "Node path is outside data directory", "details": {"slug": slug}})
-        _assert_allowed_bundle_path(str(path.relative_to(data_dir)), page_id=row["id"])
-        raw_content = path.read_text(encoding="utf-8")
-        content = _packet_excerpt_for_slug(slug, raw_content, max_chars=payload.max_node_chars)
-        _assert_no_secret_text(content, settings, page_id=row["id"])
-        card = node_card(row, short_summary=re.sub(r"\s+", " ", content).strip()[:240])
-        node_cards.append(card)
-        included_nodes.append({"page_id": row["id"], "slug": slug, "title": row["title"], "node_card": card})
-        sections.extend([f"### Node: {row['title']}", "", f"slug: {slug}", "", content, ""])
-
-    node_card_lines = ["```json", json.dumps(node_cards, ensure_ascii=False, indent=2), "```"]
-    marker = sections.index("computed_after_node_read")
-    sections[marker : marker + 1] = node_card_lines
-
-    if payload.scenarios:
-        sections.extend(["## Scenarios", ""])
-        for index, scenario in enumerate(payload.scenarios, start=1):
-            sections.append(f"{index}. {scenario.strip()}")
-        sections.append("")
-
-    sections.extend(
-        [
-            "## Response Contract",
-            "",
-            payload.output_schema.strip()
-            if payload.output_schema
-            else "Return the requested schema only. Keep decision tables separate from importable findings. Use parser-ready Finding blocks only for items that should be imported.",
-            "",
-            "## Importable Finding Format",
-            "",
-            "```txt",
-            "### Finding",
-            "",
-            "Title: <specific title>",
-            "Severity: low|medium|high|critical",
-            "Area: API|UI|Rust|Security|Data|Ops|Docs",
-            "Evidence quality: direct_access|context_limited|inferred|operator_verified",
-            "",
-            "Evidence:",
-            "<observed evidence and access limitation>",
-            "",
-            "Proposed change:",
-            "<one concrete change>",
-            "```",
-            "",
-        ]
-    )
-    content = "\n".join(sections).strip() + "\n"
-    _assert_no_secret_text(content, settings)
-    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    packet_dir = settings.data_dir / "experiment-packets"
-    packet_dir.mkdir(parents=True, exist_ok=True)
-    packet_path = packet_dir / f"{packet_id}.md"
-    packet_path.write_text(content, encoding="utf-8")
-    from ..db.sqlite import execute
-
-    await execute(
-        settings.sqlite_path,
-        "INSERT INTO experiment_packets (id, vault_id, experiment_name, target_agent, content_hash, content_path, node_slugs, scenarios, preflight_json, created_by, created_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            packet_id,
-            payload.vault_id,
-            payload.experiment_name,
-            payload.target_agent,
-            content_hash,
-            str(packet_path).replace("\\", "/"),
-            json.dumps(slugs, ensure_ascii=True),
-            json.dumps(payload.scenarios, ensure_ascii=False),
-            json.dumps(preflight, ensure_ascii=True),
-            actor.actor_id,
-            utc_now(),
-        ),
-    )
-    await write_audit_event(
-        settings.sqlite_path,
-        action="experiment_packet.create",
-        actor=actor,
-        target_type="experiment_packet",
-        target_id=packet_id,
-        metadata={"experiment_name": payload.experiment_name, "node_slugs": slugs, "scenario_count": len(payload.scenarios), "content_hash": content_hash},
-    )
-    self_href = f"/api/collaboration/experiment-packets/{packet_id}"
-    storage_href = str(packet_path).replace("\\", "/")
-    response_data = {
-            "id": packet_id,
-            "type": "experiment_packet",
-            "generated_at": generated_at,
-            "links": _resource_links(self_href=self_href, content_href=self_href, storage_href=storage_href),
-            "content": content,
-            "content_hash": content_hash,
-            "included_nodes": included_nodes,
-            "preflight": preflight,
-            "contract_version": PACKET_CONTRACT_VERSION,
-            "protocol_version": PACKET_PROTOCOL_VERSION,
-            "schema_ref": PACKET_SCHEMA_REF,
-            "trace": trace_payload,
-            "contract": contract,
-            "contract_shape": contract_shape(contract),
-            "ai_context": {
-                "role": "experiment_reviewer",
-                "target_agent": payload.target_agent,
-                "task": payload.task.strip(),
-                "output_mode": output_mode,
-                "read_order": ["ai_context", "node_cards", "inline_core_context", "response_contract"],
-            },
-            "node_cards": node_cards,
-            "copy_ready": True,
-    }
-    schema_errors = validate_packet_schema_core(response_data)
-    if schema_errors:
-        raise HTTPException(status_code=500, detail={"code": "experiment_packet_schema_invalid", "message": "Generated experiment packet failed packet schema validation", "details": {"errors": schema_errors}})
-    return {"ok": True, "data": response_data}
 
 
 @router.get("/experiment-packets/{packet_id}")
 async def get_experiment_packet(packet_id: str, request: Request, actor: Actor = Depends(require_review_access)):
-    packet = await _packet_row(request.app.state.settings.sqlite_path, packet_id)
-    path = Path(packet["content_path"])
-    if not path.exists():
-        raise HTTPException(status_code=404, detail={"code": "experiment_packet_file_missing", "message": "Experiment packet file is missing", "details": {"packet_id": packet_id}})
-    return {
-        "ok": True,
-        "data": {
-            "id": packet["id"],
-            "type": "experiment_packet",
-            "vault_id": packet["vault_id"],
-            "experiment_name": packet["experiment_name"],
-            "target_agent": packet["target_agent"],
-            "content_hash": packet["content_hash"],
-            "created_by": packet["created_by"],
-            "created_at": packet["created_at"],
-            "node_slugs": json.loads(packet["node_slugs"] or "[]"),
-            "scenarios": json.loads(packet["scenarios"] or "[]"),
-            "preflight": json.loads(packet["preflight_json"] or "{}"),
-            "content": path.read_text(encoding="utf-8"),
-            "links": _resource_links(self_href=f"/api/collaboration/experiment-packets/{packet_id}", content_href=f"/api/collaboration/experiment-packets/{packet_id}", storage_href=packet["content_path"]),
-        },
-    }
+    raise HTTPException(status_code=410, detail={"code": "experiment_packets_retired", "message": "Experiment packets were retired in DB v2.", "details": {"replacement_endpoint": "/api/collaboration/project-snapshot-packets"}})
 
 
 @router.post("/experiment-packets/{packet_id}/responses/dry-run")
 async def dry_run_experiment_packet_response(packet_id: str, payload: ExperimentPacketResponseRequest, request: Request, actor: Actor = Depends(require_admin_access)):
-    settings = request.app.state.settings
-    await _packet_row(settings.sqlite_path, packet_id)
-    ensure_text_size(payload.response_markdown, MAX_REVIEW_BYTES, "response_markdown")
-    dry_run = _review_dry_run_result(payload.response_markdown)
-    response_id = f"packetresp_{uuid4().hex[:12]}"
-    from ..db.sqlite import execute
-
-    await execute(
-        settings.sqlite_path,
-        "INSERT INTO experiment_packet_responses (id, packet_id, source_agent, source_model, response_markdown, dry_run_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (response_id, packet_id, payload.source_agent, payload.source_model, payload.response_markdown, json.dumps(dry_run, ensure_ascii=True), utc_now()),
-    )
-    await write_audit_event(
-        settings.sqlite_path,
-        action="experiment_packet_response.dry_run",
-        actor=actor,
-        target_type="experiment_packet",
-        target_id=packet_id,
-        metadata={"response_id": response_id, "finding_count": dry_run["finding_count"], "parser_errors": dry_run["parser_errors"], "import_ready": dry_run["import_ready"]},
-    )
-    return {"ok": True, "data": {"response_id": response_id, "packet": {"id": packet_id, "type": "experiment_packet"}, **dry_run}}
+    raise HTTPException(status_code=410, detail={"code": "experiment_packets_retired", "message": "Experiment packet responses were retired in DB v2.", "details": {"replacement_endpoint": "/api/collaboration/reviews/import"}})
 
 
 @router.post("/experiment-packets/{packet_id}/responses/{response_id}/import")
 async def import_experiment_packet_response(packet_id: str, response_id: str, request: Request, actor: Actor = Depends(require_admin_access)):
-    settings = request.app.state.settings
-    packet = await _packet_row(settings.sqlite_path, packet_id)
-    response = await fetch_one(settings.sqlite_path, "SELECT * FROM experiment_packet_responses WHERE id = ? AND packet_id = ?", (response_id, packet_id))
-    if not response:
-        raise HTTPException(status_code=404, detail={"code": "experiment_packet_response_not_found", "message": "Experiment packet response not found", "details": {"response_id": response_id}})
-    if response.get("imported_review_id"):
-        raise HTTPException(status_code=409, detail={"code": "experiment_packet_response_already_imported", "message": "Experiment packet response is already imported", "details": {"review_id": response["imported_review_id"]}})
-
-    markdown = response["response_markdown"]
-    dry_run = _review_dry_run_result(markdown)
-    metadata = dry_run["metadata"]
-    findings = dry_run["findings"]
-    parser_errors = dry_run["parser_errors"]
-    if parser_errors:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "experiment_packet_response_parser_errors",
-                "message": "Response must pass dry-run parser before import",
-                "details": {
-                    "parser_errors": parser_errors,
-                    "ai_feedback_prompt": dry_run.get("ai_feedback_prompt"),
-                },
-            },
-        )
-    if not findings:
-        raise HTTPException(status_code=422, detail={"code": "collaboration_no_findings", "message": "No findings found", "details": {}})
-    review_id = f"review_{uuid4().hex[:12]}"
-    now = utc_now()
-    source_agent = response["source_agent"] or str(metadata.get("source_agent") or "unknown")
-    source_model = response.get("source_model") or metadata.get("source_model")
-    meta = {
-        "frontmatter": metadata,
-        "parser_errors": parser_errors,
-        "markdown_path": f"data/pages/reviews/{review_id}.md",
-        "experiment_packet": {
-            "id": packet_id,
-            "type": "experiment_packet",
-            "response_id": response_id,
-            "content_hash": packet["content_hash"],
-            "experiment_name": packet["experiment_name"],
-        },
-    }
-    try:
-        review = await request.app.state.rust_core.request(
-            "create_collaboration_review",
-            {
-                "data_dir": str(settings.data_dir),
-                "sqlite_path": str(settings.sqlite_path),
-                "review_id": review_id,
-                "vault_id": packet["vault_id"] or actor.vault_id,
-                "title": _title_from_markdown(markdown, f"Experiment response: {packet['experiment_name']}"),
-                "source_agent": source_agent,
-                "source_model": source_model,
-                "review_type": "agent_review",
-                "page_id": None,
-                "markdown": markdown,
-                "meta": json.dumps(meta, ensure_ascii=True, sort_keys=True),
-                "created_at": now,
-            },
-        )
-        created_findings = []
-        for finding in findings:
-            created = await request.app.state.rust_core.request(
-                "create_collaboration_finding",
-                {
-                    "sqlite_path": str(settings.sqlite_path),
-                    "finding_id": f"finding_{uuid4().hex[:12]}",
-                    "review_id": review_id,
-                    "created_at": now,
-                    **finding,
-                },
-            )
-            created_findings.append(created)
-    except RustCoreError as error:
-        raise _http_from_rust(error) from error
-
-    from ..db.sqlite import execute
-
-    await execute(settings.sqlite_path, "UPDATE experiment_packet_responses SET imported_review_id = ? WHERE id = ?", (review_id, response_id))
-    graph_rebuild = await _rebuild_collaboration_graph(request, packet["vault_id"] or actor.vault_id)
-    await write_audit_event(
-        settings.sqlite_path,
-        action="experiment_packet_response.import",
-        actor=actor,
-        target_type="experiment_packet",
-        target_id=packet_id,
-        metadata={"response_id": response_id, "review_id": review_id, "finding_count": len(created_findings), "parser_errors": parser_errors, "graph_rebuild": graph_rebuild},
-    )
-    return {"ok": True, "data": {"review": review, "findings": created_findings, "graph_rebuild": graph_rebuild}}
+    raise HTTPException(status_code=410, detail={"code": "experiment_packets_retired", "message": "Experiment packet imports were retired in DB v2.", "details": {"replacement_endpoint": "/api/collaboration/reviews/import"}})
 
 
 @router.post("/context-bundles")
 async def create_context_bundle(payload: ContextBundleRequest, request: Request, actor: Actor = Depends(require_admin_access)):
-    if not payload.page_ids:
-        raise HTTPException(status_code=422, detail={"code": "context_bundle_empty_selection", "message": "Select at least one page", "details": {}})
-    settings = request.app.state.settings
-    placeholders = ",".join("?" for _ in payload.page_ids)
-    rows = await fetch_all(
-        settings.sqlite_path,
-        f"SELECT id, slug, title, path FROM pages WHERE vault_id = ? AND status = 'active' AND id IN ({placeholders}) ORDER BY title",
-        (payload.vault_id, *payload.page_ids),
+    raise HTTPException(
+        status_code=410,
+        detail={
+            "code": "context_bundles_retired",
+            "message": "Context bundles were retired in DB v2. Use compact project snapshot packets instead.",
+            "details": {"replacement_endpoint": "/api/collaboration/project-snapshot-packets"},
+        },
     )
-    if not rows:
-        raise HTTPException(status_code=422, detail={"code": "context_bundle_empty_selection", "message": "No active pages selected", "details": {}})
-    _assert_no_forbidden_json_keys({"vault_id": payload.vault_id, "page_ids": payload.page_ids, "include_graph_summary": payload.include_graph_summary})
-
-    sections = [
-        "# KnowNet Context Bundle",
-        f"generated_at: {utc_now()}",
-        f"pages_included: {len(rows)}",
-        "generated_for: external AI review",
-        "warning: Do not include secrets in this bundle.",
-        "",
-    ]
-    collaboration_summary = await fetch_all(
-        settings.sqlite_path,
-        "SELECT r.id AS review_id, r.title AS review_title, r.status AS review_status, "
-        "f.id AS finding_id, f.severity, f.area, f.status AS finding_status, "
-        "ir.id AS implementation_record_id "
-        "FROM collaboration_reviews r "
-        "LEFT JOIN collaboration_findings f ON f.review_id = r.id "
-        "LEFT JOIN implementation_records ir ON ir.finding_id = f.id "
-        "WHERE r.vault_id = ? "
-        "ORDER BY r.updated_at DESC, f.updated_at DESC LIMIT 50",
-        (payload.vault_id,),
-    )
-    if collaboration_summary:
-        summary_rows = [dict(row) for row in collaboration_summary]
-        _assert_no_forbidden_json_keys({"structured_records": summary_rows})
-        sections.extend(
-            [
-                "## Structured Collaboration Summary",
-                "",
-                "```json",
-                json.dumps(summary_rows, ensure_ascii=False, indent=2),
-                "```",
-                "",
-            ]
-        )
-    for row in rows:
-        path = Path(row["path"]).resolve()
-        data_dir = settings.data_dir.resolve()
-        if data_dir not in path.parents:
-            raise HTTPException(status_code=400, detail={"code": "context_bundle_forbidden_path", "message": "Page path is outside data directory", "details": {"page_id": row["id"]}})
-        _assert_allowed_bundle_path(str(path.relative_to(data_dir)), page_id=row["id"])
-        content = _strip_frontmatter(path.read_text(encoding="utf-8"))
-        _assert_no_secret_text(content, settings, page_id=row["id"])
-        sections.extend(["---", "", f"## Page: {row['title']}", f"slug: {row['slug']}", "", content.strip(), ""])
-
-        audits = await fetch_all(
-            settings.sqlite_path,
-            "SELECT citation_key, status, verifier_type, reason FROM citation_audits WHERE page_id = ? ORDER BY updated_at DESC LIMIT 20",
-            (row["id"],),
-        )
-        if audits:
-            sections.extend(["### Citation Audit Summary"])
-            for audit in audits:
-                reason = (audit["reason"] or "").replace("\n", " ")[:160]
-                sections.append(f"- {audit['citation_key']}: {audit['status']} ({audit['verifier_type']}) - {reason}")
-            sections.append("")
-
-    if payload.include_graph_summary:
-        graph_counts = await fetch_one(
-            settings.sqlite_path,
-            "SELECT (SELECT COUNT(*) FROM graph_nodes WHERE vault_id = ?) AS nodes, "
-            "(SELECT COUNT(*) FROM graph_edges WHERE vault_id = ?) AS edges",
-            (payload.vault_id, payload.vault_id),
-        )
-        sections.extend(["---", "", "## Graph Summary", f"nodes: {graph_counts['nodes'] if graph_counts else 0}", f"edges: {graph_counts['edges'] if graph_counts else 0}", ""])
-
-    content = "\n".join(sections).strip() + "\n"
-    _assert_no_secret_text(content, settings)
-    content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
-    filename = f"knownet-context-{datetime.now(timezone.utc).strftime('%Y%m%d')}-{uuid4().hex[:8]}.md"
-    manifest_id = f"bundle_{uuid4().hex[:12]}"
-    try:
-        included_sections = ["pages", "structured_records", "citation_summary", "graph_summary" if payload.include_graph_summary else "no_graph"]
-        manifest_payload = {
-            "manifest_id": manifest_id,
-            "vault_id": payload.vault_id,
-            "filename": filename,
-            "selected_pages": payload.page_ids,
-            "included_sections": included_sections,
-            "excluded_sections": EXCLUDED_SECTIONS,
-            "content_hash": content_hash,
-            "created_by": actor.actor_id,
-        }
-        _assert_no_forbidden_json_keys(manifest_payload)
-        manifest = await request.app.state.rust_core.request(
-            "create_context_bundle_manifest",
-            {
-                "data_dir": str(settings.data_dir),
-                "sqlite_path": str(settings.sqlite_path),
-                "manifest_id": manifest_id,
-                "vault_id": payload.vault_id,
-                "filename": filename,
-                "content": content,
-                "selected_pages": json.dumps(payload.page_ids, ensure_ascii=True),
-                "included_sections": json.dumps(included_sections, ensure_ascii=True),
-                "excluded_sections": json.dumps(EXCLUDED_SECTIONS, ensure_ascii=True),
-                "content_hash": content_hash,
-                "created_by": actor.actor_id,
-                "created_at": utc_now(),
-            },
-        )
-    except RustCoreError as error:
-        raise _http_from_rust(error) from error
-    await write_audit_event(
-        settings.sqlite_path,
-        action="context_bundle.create",
-        actor=actor,
-        target_type="context_bundle",
-        target_id=manifest_id,
-        metadata={"page_count": len(rows), "content_hash": content_hash},
-    )
-    return {"ok": True, "data": {"manifest": manifest, "content": content}}

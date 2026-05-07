@@ -15,7 +15,7 @@ Implemented surface:
 3. Trace metadata uses 32-hex trace_id, 16-hex span_id, uppercase span_kind,
    W3C traceparent, and attributes.
 4. docs/schemas/packet.p20.v1.schema.json defines the concrete packet schema.
-5. docs/STANDARD_ABSORPTION_MAP.md maps KnowNet concepts to MCP, OpenAPI/JSON
+5. Phase 21 absorbed standard MCP, OpenAPI/JSON Schema, and trace concepts into the runtime packet contract
    Schema, OpenTelemetry/OpenInference, Promptfoo, and Langfuse/Agenta.
 6. Parser fixtures cover every current output_mode: top_findings,
    decision_only, implementation_candidates, and provider_risk_check.

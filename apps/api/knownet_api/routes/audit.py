@@ -36,16 +36,16 @@ async def list_audit_events(
         where.append("target_id = ?")
         params.append(query.target_id)
 
+    settings = request.app.state.settings
     sql = (
-        "SELECT id, created_at, action, actor_type, actor_id, session_id, ip_hash, user_agent_hash, "
-        "target_type, target_id, before_revision_id, after_revision_id, "
-        "model_provider, model_name, model_version, prompt_version, metadata_json "
-        "FROM audit_log"
+        "SELECT id, created_at, action, actor_type, actor_id, request_id, "
+        "target_type, target_id, meta "
+        "FROM audit_events"
     )
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY id DESC LIMIT ?"
     params.append(query.limit)
 
-    rows = await fetch_all(request.app.state.settings.sqlite_path, sql, tuple(params))
+    rows = await fetch_all(settings.sqlite_path, sql, tuple(params))
     return {"ok": True, "data": {"events": rows}}

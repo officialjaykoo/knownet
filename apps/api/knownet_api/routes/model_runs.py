@@ -8,9 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ..audit import write_audit_event
-from ..db.sqlite import execute, fetch_all, fetch_one
-from ..routes.collaboration import _rebuild_collaboration_graph, parse_review_markdown
+from ..db.sqlite import fetch_all, fetch_one
+from ..routes.collaboration import parse_review_markdown
 from ..security import Actor, require_admin_access, utc_now
+from ..services import collaboration_v2
 from ..services.model_output import model_output_to_markdown, normalize_model_output, sanitize_error_message
 from ..services.model_providers import (
     DeepSeekApiAdapter,
@@ -23,10 +24,16 @@ from ..services.model_providers import (
     QwenApiAdapter,
 )
 from ..services.model_runner import build_safe_context, estimate_tokens
-from ..services.model_runner_store import assert_no_active_run
+from ..services.model_runner_store import (
+    assert_no_active_run,
+    list_provider_runs_v2,
+    provider_run_v2,
+    store_provider_run_v2,
+    update_provider_run_output_tokens_v2,
+    update_provider_run_v2,
+)
 from ..services.packet_contract import packet_trace
 from ..services.model_observations import model_run_observation, provider_observation_summary
-from ..services.rust_core import RustCoreError
 
 
 router = APIRouter(prefix="/api/model-runs", tags=["model-runs"])
@@ -122,6 +129,14 @@ def _run_row(row: dict) -> dict:
     return data
 
 
+async def _fetch_run(settings, run_id: str) -> dict | None:
+    return await provider_run_v2(settings.sqlite_path, run_id)
+
+
+async def _list_runs(settings, *, provider: str | None = None, status: str | None = None, limit: int = 50) -> list[dict]:
+    return await list_provider_runs_v2(settings.sqlite_path, provider=provider, status=status, limit=limit)
+
+
 async def _store_run(
     settings,
     *,
@@ -141,47 +156,36 @@ async def _store_run(
     created_by: str,
 ) -> None:
     now = utc_now()
-    await execute(
+    await store_provider_run_v2(
         settings.sqlite_path,
-        "INSERT INTO model_review_runs (id, provider, model, prompt_profile, vault_id, status, context_summary_json, request_json, response_json, input_tokens, output_tokens, trace_id, packet_trace_id, created_by, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (
-            run_id,
-            provider,
-            model,
-            prompt_profile,
-            vault_id,
-            status,
-            json.dumps(context_summary, ensure_ascii=True, sort_keys=True),
-            json.dumps(request_json, ensure_ascii=True, sort_keys=True),
-            json.dumps(response_json, ensure_ascii=True, sort_keys=True),
-            input_tokens,
-            output_tokens,
-            trace_id,
-            packet_trace_id,
-            created_by,
-            now,
-            now,
-        ),
+        run_id=run_id,
+        provider=provider,
+        model=model,
+        prompt_profile=prompt_profile,
+        vault_id=vault_id,
+        status=status,
+        context_summary=context_summary,
+        request_json=request_json,
+        response_json=response_json,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        trace_id=trace_id,
+        packet_trace_id=packet_trace_id,
+        created_by=created_by,
+        created_at=now,
     )
 
 
 async def _update_run(settings, run_id: str, *, status: str | None = None, response_json: dict | None = None, review_id: str | None = None, error_code: str | None = None, error_message: str | None = None) -> None:
-    existing = await fetch_one(settings.sqlite_path, "SELECT * FROM model_review_runs WHERE id = ?", (run_id,))
-    if not existing:
-        raise HTTPException(status_code=404, detail={"code": "model_run_not_found", "message": "Model run not found", "details": {"run_id": run_id}})
-    await execute(
+    await update_provider_run_v2(
         settings.sqlite_path,
-        "UPDATE model_review_runs SET status = ?, response_json = ?, review_id = COALESCE(?, review_id), error_code = ?, error_message = ?, updated_at = ? WHERE id = ?",
-        (
-            status or existing["status"],
-            json.dumps(response_json if response_json is not None else _json_loads(existing["response_json"], {}), ensure_ascii=True, sort_keys=True),
-            review_id,
-            error_code,
-            sanitize_error_message(error_message),
-            utc_now(),
-            run_id,
-        ),
+        run_id,
+        status=status,
+        response_json=response_json,
+        review_id=review_id,
+        error_code=error_code,
+        error_message=sanitize_error_message(error_message),
+        updated_at=utc_now(),
     )
 
 
@@ -207,46 +211,28 @@ async def _import_response_as_review(request: Request, run: dict, actor: Actor) 
         "context_summary": run["context_summary"],
         "markdown_path": f"data/pages/reviews/{review_id}.md",
     }
-    try:
-        review = await request.app.state.rust_core.request(
-            "create_collaboration_review",
-            {
-                "data_dir": str(settings.data_dir),
-                "sqlite_path": str(settings.sqlite_path),
-                "review_id": review_id,
-                "vault_id": run["vault_id"] or actor.vault_id,
-                "title": response.get("normalized_output", {}).get("review_title") or "Model review",
-                "source_agent": source_agent,
-                "source_model": source_model,
-                "review_type": "agent_review",
-                "page_id": None,
-                "markdown": markdown,
-                "meta": json.dumps(meta, ensure_ascii=True, sort_keys=True),
-                "created_at": now,
-            },
-        )
-        created_findings = []
-        for finding in findings:
-            created = await request.app.state.rust_core.request(
-                "create_collaboration_finding",
-                {
-                    "sqlite_path": str(settings.sqlite_path),
-                    "finding_id": f"finding_{uuid4().hex[:12]}",
-                    "review_id": review_id,
-                    "created_at": now,
-                    **finding,
-                },
-            )
-            created_findings.append(created)
-    except RustCoreError as error:
-        raise HTTPException(status_code=500, detail={"code": error.code, "message": error.message, "details": error.details}) from error
-    graph_rebuild = await _rebuild_collaboration_graph(request, run["vault_id"] or actor.vault_id)
+    review, created_findings = await collaboration_v2.create_review(
+        settings.sqlite_path,
+        data_dir=settings.data_dir,
+        review_id=review_id,
+        vault_id=run["vault_id"] or actor.vault_id,
+        title=response.get("normalized_output", {}).get("review_title") or "Model review",
+        source_agent=source_agent,
+        source_model=source_model,
+        review_type="agent_review",
+        page_id=None,
+        markdown=markdown,
+        meta=meta,
+        findings=findings,
+        created_at=now,
+    )
+    graph_rebuild = collaboration_v2.skipped_v2_graph_rebuild()
     await _update_run(settings, run["id"], status="imported", response_json={**response, "import": {"review_id": review_id, "finding_count": len(created_findings)}}, review_id=review_id)
     await write_audit_event(
         settings.sqlite_path,
         action="model_run.import",
         actor=actor,
-        target_type="model_review_run",
+        target_type="provider_run",
         target_id=run["id"],
         metadata={"provider": run["provider"], "review_id": review_id, "finding_count": len(created_findings), "graph_rebuild": graph_rebuild},
     )
@@ -264,7 +250,7 @@ async def _create_provider_review_run(
     source_agent: str,
 ) -> dict:
     settings = request.app.state.settings
-    await assert_no_active_run(settings.sqlite_path, provider)
+    await assert_no_active_run(settings.sqlite_path, provider, db_version=getattr(settings, "knownet_db_version", "v1"))
     run_id = f"modelrun_{uuid4().hex[:12]}"
     max_findings = getattr(payload, "max_findings", 20)
     slim_context = getattr(payload, "slim_context", True)
@@ -351,8 +337,8 @@ async def _create_provider_review_run(
         )
         raise
     output_tokens = estimate_tokens(json.dumps(response_json.get("normalized_output", {}), ensure_ascii=False))
-    await execute(settings.sqlite_path, "UPDATE model_review_runs SET output_tokens = ?, updated_at = ? WHERE id = ?", (output_tokens, utc_now(), run_id))
-    run = await fetch_one(settings.sqlite_path, "SELECT * FROM model_review_runs WHERE id = ?", (run_id,))
+    await update_provider_run_output_tokens_v2(settings.sqlite_path, run_id, output_tokens, updated_at=utc_now())
+    run = await _fetch_run(settings, run_id)
     await write_audit_event(
         settings.sqlite_path,
         action="model_run.create",
@@ -556,7 +542,7 @@ async def run_ai_review_now(payload: ReviewNowRequest, request: Request, actor: 
     import_result = None
     if payload.auto_import:
         import_result = await _import_response_as_review(request, run, actor)
-        refreshed = await fetch_one(settings.sqlite_path, "SELECT * FROM model_review_runs WHERE id = ?", (run["id"],))
+        refreshed = await _fetch_run(settings, run["id"])
         run = _run_row(refreshed)
     await write_audit_event(
         settings.sqlite_path,
@@ -585,19 +571,7 @@ async def run_ai_review_now(payload: ReviewNowRequest, request: Request, actor: 
 async def list_model_runs(request: Request, provider: str | None = None, status: str | None = None, limit: int = 50, actor: Actor = Depends(require_admin_access)):
     settings = request.app.state.settings
     limit = min(max(limit, 1), 200)
-    where = []
-    params: list = []
-    if provider:
-        where.append("provider = ?")
-        params.append(provider)
-    if status:
-        where.append("status = ?")
-        params.append(status)
-    sql = "SELECT * FROM model_review_runs"
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY updated_at DESC LIMIT ?"
-    rows = await fetch_all(settings.sqlite_path, sql, (*params, limit))
+    rows = await _list_runs(settings, provider=provider, status=status, limit=limit)
     return {"ok": True, "data": {"runs": [_run_row(row) for row in rows], "actor_role": actor.role}}
 
 
@@ -605,22 +579,13 @@ async def list_model_runs(request: Request, provider: str | None = None, status:
 async def list_model_run_observations(request: Request, provider: str | None = None, limit: int = 50, actor: Actor = Depends(require_admin_access)):
     settings = request.app.state.settings
     limit = min(max(limit, 1), 200)
-    where = []
-    params: list = []
-    if provider:
-        where.append("provider = ?")
-        params.append(provider)
-    sql = "SELECT * FROM model_review_runs"
-    if where:
-        sql += " WHERE " + " AND ".join(where)
-    sql += " ORDER BY updated_at DESC LIMIT ?"
-    rows = await fetch_all(settings.sqlite_path, sql, (*params, limit))
+    rows = await _list_runs(settings, provider=provider, limit=limit)
     return {"ok": True, "data": {"observations": [model_run_observation(row) for row in rows], "summary": provider_observation_summary(rows), "actor_role": actor.role}}
 
 
 @router.get("/{run_id}")
 async def get_model_run(run_id: str, request: Request, actor: Actor = Depends(require_admin_access)):
-    row = await fetch_one(request.app.state.settings.sqlite_path, "SELECT * FROM model_review_runs WHERE id = ?", (run_id,))
+    row = await _fetch_run(request.app.state.settings, run_id)
     if not row:
         raise HTTPException(status_code=404, detail={"code": "model_run_not_found", "message": "Model run not found", "details": {"run_id": run_id}})
     return {"ok": True, "data": {"run": _run_row(row), "actor_role": actor.role}}
@@ -628,7 +593,7 @@ async def get_model_run(run_id: str, request: Request, actor: Actor = Depends(re
 
 @router.post("/{run_id}/dry-run")
 async def dry_run_model_review(run_id: str, request: Request, actor: Actor = Depends(require_admin_access)):
-    row = await fetch_one(request.app.state.settings.sqlite_path, "SELECT * FROM model_review_runs WHERE id = ?", (run_id,))
+    row = await _fetch_run(request.app.state.settings, run_id)
     if not row:
         raise HTTPException(status_code=404, detail={"code": "model_run_not_found", "message": "Model run not found", "details": {"run_id": run_id}})
     run = _run_row(row)
@@ -652,26 +617,26 @@ async def dry_run_model_review(run_id: str, request: Request, actor: Actor = Dep
 
 @router.post("/{run_id}/import")
 async def import_model_review(run_id: str, request: Request, actor: Actor = Depends(require_admin_access)):
-    row = await fetch_one(request.app.state.settings.sqlite_path, "SELECT * FROM model_review_runs WHERE id = ?", (run_id,))
+    row = await _fetch_run(request.app.state.settings, run_id)
     if not row:
         raise HTTPException(status_code=404, detail={"code": "model_run_not_found", "message": "Model run not found", "details": {"run_id": run_id}})
     run = _run_row(row)
     if run["status"] != "dry_run_ready":
         raise HTTPException(status_code=409, detail={"code": "model_run_not_importable", "message": "Only dry_run_ready model runs can be imported", "details": {"run_id": run_id, "status": run["status"]}})
     result = await _import_response_as_review(request, run, actor)
-    refreshed = await fetch_one(request.app.state.settings.sqlite_path, "SELECT * FROM model_review_runs WHERE id = ?", (run_id,))
+    refreshed = await _fetch_run(request.app.state.settings, run_id)
     return {"ok": True, "data": {"run": _run_row(refreshed), **result}}
 
 
 @router.post("/{run_id}/cancel")
 async def cancel_model_run(run_id: str, request: Request, actor: Actor = Depends(require_admin_access)):
     settings = request.app.state.settings
-    row = await fetch_one(settings.sqlite_path, "SELECT * FROM model_review_runs WHERE id = ?", (run_id,))
+    row = await _fetch_run(settings, run_id)
     if not row:
         raise HTTPException(status_code=404, detail={"code": "model_run_not_found", "message": "Model run not found", "details": {"run_id": run_id}})
     if row["status"] not in {"queued", "running", "dry_run_ready"}:
         raise HTTPException(status_code=409, detail={"code": "model_run_not_cancellable", "message": "Model run cannot be cancelled from this status", "details": {"status": row["status"]}})
     await _update_run(settings, run_id, status="cancelled")
-    await write_audit_event(settings.sqlite_path, action="model_run.cancel", actor=actor, target_type="model_review_run", target_id=run_id, metadata={"provider": row["provider"]})
-    refreshed = await fetch_one(settings.sqlite_path, "SELECT * FROM model_review_runs WHERE id = ?", (run_id,))
+    await write_audit_event(settings.sqlite_path, action="model_run.cancel", actor=actor, target_type="provider_run", target_id=run_id, metadata={"provider": row["provider"]})
+    refreshed = await _fetch_run(settings, run_id)
     return {"ok": True, "data": {"run": _run_row(refreshed)}}

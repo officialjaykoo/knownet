@@ -165,23 +165,6 @@ def _token_management(agent: AgentAuth) -> dict | None:
     }
 
 
-def _sanitize_ai_state(state: dict) -> tuple[dict, str]:
-    sanitized = json.loads(json.dumps(state))
-    source = sanitized.get("source")
-    if isinstance(source, dict):
-        source.pop("path", None)
-    headings = {
-        str(section.get("heading", "")).strip().lower()
-        for section in sanitized.get("sections", [])
-        if isinstance(section, dict)
-    }
-    draft_markers = {"question", "claims", "evidence", "next actions", "related pages"}
-    state_status = "draft" if len(headings.intersection(draft_markers)) >= 3 else "published"
-    sanitized["state_status"] = state_status
-    sanitized["source_ref"] = f"pages/{sanitized.get('slug', 'unknown')}.md"
-    return sanitized, state_status
-
-
 def _page_kind(fields: dict) -> str:
     system_kind = fields.get("system_kind")
     system_tier = fields.get("system_tier")
@@ -429,8 +412,9 @@ async def agent_reviews(request: Request, limit: int = 50, offset: int = 0, agen
     _require_scope(agent, "reviews:read")
     limit = min(max(limit, 1), 200)
     offset = max(offset, 0)
-    total = await fetch_one(request.app.state.settings.sqlite_path, "SELECT COUNT(*) AS count FROM collaboration_reviews WHERE vault_id = ?", (agent.vault_id,))
-    rows = await fetch_all(request.app.state.settings.sqlite_path, "SELECT id, title, source_agent, source_model, status, page_id, created_at, updated_at FROM collaboration_reviews WHERE vault_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?", (agent.vault_id, limit, offset))
+    settings = request.app.state.settings
+    total = await fetch_one(settings.sqlite_path, "SELECT COUNT(*) AS count FROM reviews WHERE vault_id = ?", (agent.vault_id,))
+    rows = await fetch_all(settings.sqlite_path, "SELECT id, title, source_agent, source_model, status, page_id, created_at, updated_at FROM reviews WHERE vault_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?", (agent.vault_id, limit, offset))
     await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.reviews", status="ok", meta={"returned_count": len(rows)})
     count = total["count"] if total else 0
     return {"ok": True, "data": {"reviews": rows}, "meta": _meta(agent, total=count, returned=len(rows), truncated=count > offset + len(rows), offset=offset)}
@@ -446,20 +430,21 @@ async def agent_findings(request: Request, limit: int = 100, offset: int = 0, st
     if status:
         filters += " AND f.status = ?"
         params.append(status)
+    settings = request.app.state.settings
     total = await fetch_one(
-        request.app.state.settings.sqlite_path,
-        "SELECT COUNT(*) AS count FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id " + filters,
+        settings.sqlite_path,
+        "SELECT COUNT(*) AS count FROM findings f JOIN reviews r ON r.id = f.review_id " + filters,
         tuple(params),
     )
     rows = await fetch_all(
-        request.app.state.settings.sqlite_path,
+        settings.sqlite_path,
         "SELECT f.id, f.review_id, f.severity, f.area, f.title, f.status, f.created_at, f.updated_at "
-        "FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
+        "FROM findings f JOIN reviews r ON r.id = f.review_id "
         + filters
         + " ORDER BY f.updated_at DESC LIMIT ? OFFSET ?",
         (*params, limit, offset),
     )
-    await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.findings", status="ok", meta={"returned_count": len(rows)})
+    await record_agent_access(settings.sqlite_path, agent=agent, action="agent.findings", status="ok", meta={"returned_count": len(rows)})
     count = total["count"] if total else 0
     return {"ok": True, "data": {"findings": rows}, "meta": _meta(agent, total=count, returned=len(rows), truncated=count > offset + len(rows), offset=offset)}
 
@@ -517,35 +502,18 @@ async def agent_ai_state(request: Request, limit: int = 50, offset: int = 0, inc
     _require_scope(agent, "pages:read")
     limit = min(max(limit, 1), agent.max_pages_per_request)
     offset = max(offset, 0)
-    all_rows = await fetch_all(request.app.state.settings.sqlite_path, "SELECT state_json FROM ai_state_pages WHERE vault_id = ?", (agent.vault_id,))
-    published_total = 0
-    for item in all_rows:
-        try:
-            state = json.loads(item["state_json"] or "{}")
-        except json.JSONDecodeError:
-            state = {}
-        _, state_status = _sanitize_ai_state(state)
-        if state_status != "draft":
-            published_total += 1
-    count = len(all_rows)
+    settings = request.app.state.settings
+    count_row = await fetch_one(settings.sqlite_path, "SELECT COUNT(*) AS count FROM pages WHERE vault_id = ? AND status = 'active'", (agent.vault_id,))
+    count = count_row["count"] if count_row else 0
     rows = await fetch_all(
-        request.app.state.settings.sqlite_path,
-        "SELECT page_id, slug, title, source_path, content_hash, state_json, updated_at "
-        "FROM ai_state_pages WHERE vault_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+        settings.sqlite_path,
+        "SELECT id AS page_id, slug, title, updated_at, current_revision_id FROM pages WHERE vault_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT ? OFFSET ?",
         (agent.vault_id, limit, offset),
     )
-    system_by_page_id = await system_rows_for_page_ids(request.app.state.settings.sqlite_path, [row["page_id"] for row in rows])
+    system_by_page_id = await system_rows_for_page_ids(settings.sqlite_path, [row["page_id"] for row in rows])
     states = []
-    skipped_drafts = 0
     for row in rows:
-        try:
-            state = json.loads(row["state_json"] or "{}")
-        except json.JSONDecodeError:
-            state = {}
-        state, state_status = _sanitize_ai_state(state)
-        if state_status == "draft" and not include_drafts:
-            skipped_drafts += 1
-            continue
+        state = {"schema_version": 2, "summary": row["title"], "status": "active", "source": "pages"}
         fields = system_by_page_id.get(row["page_id"], {"system_kind": None, "system_tier": None, "system_locked": False})
         states.append(
             {
@@ -553,10 +521,10 @@ async def agent_ai_state(request: Request, limit: int = 50, offset: int = 0, inc
                 "slug": row["slug"],
                 "title": row["title"],
                 "source_ref": f"pages/{row['slug']}.md",
-                "content_hash": row["content_hash"],
-                "content_hash_note": "content_hash hashes the source Markdown. state_hash hashes the generated ai_state payload.",
+                "content_hash": row.get("current_revision_id"),
+                "content_hash_note": "v2 state is derived from the page row; content_hash may be a revision id until page state caching is reintroduced.",
                 "state_hash": hashlib.sha256(json.dumps(state, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest(),
-                "state_status": state_status,
+                "state_status": "published",
                 "page_kind": _page_kind(fields),
                 **fields,
                 "state": state,
@@ -564,37 +532,37 @@ async def agent_ai_state(request: Request, limit: int = 50, offset: int = 0, inc
             }
         )
     truncated = count > offset + len(rows)
-    await record_agent_access(request.app.state.settings.sqlite_path, agent=agent, action="agent.ai_state", status="ok", meta={"returned_count": len(states), "skipped_drafts": skipped_drafts, "truncated": truncated})
+    await record_agent_access(settings.sqlite_path, agent=agent, action="agent.ai_state", status="ok", meta={"returned_count": len(states), "truncated": truncated, "v2_runtime": True})
     meta = _meta(agent, total=count, returned=len(states), truncated=truncated, offset=offset)
     meta["has_more"] = truncated
     meta["scanned_count"] = len(rows)
     meta["published_returned_count"] = len(states)
     meta["total_unfiltered_count"] = count
-    meta["total_published_count"] = published_total
-    meta["draft_filtered_count"] = max(0, count - published_total)
+    meta["total_published_count"] = count
+    meta["draft_filtered_count"] = 0
+    meta["include_drafts"] = include_drafts
+    meta["empty_state"] = {"active": count == 0, "reason": "fresh_install" if count == 0 else None}
     if truncated:
         meta["next_offset"] = offset + len(rows)
     else:
         meta.pop("next_offset", None)
-    meta["skipped_drafts"] = skipped_drafts
-    meta["include_drafts"] = include_drafts
-    if rows and not states and skipped_drafts:
-        meta["no_published_in_range"] = True
-        meta["warning"] = "page_range_contains_only_drafts_use_next_offset"
-    return {"ok": True, "data": {"ai_state_pages": states}, "meta": meta}
+    return {"ok": True, "data": {"structured_state_pages": states}, "meta": meta}
 
 
 @router.get("/state-summary")
 async def agent_state_summary(request: Request, agent: AgentAuth = Depends(require_agent)):
+    settings = request.app.state.settings
     summary = {}
-    for name, query in {
+    queries = {
         "pages": "SELECT COUNT(*) AS count FROM pages WHERE vault_id = ? AND status = 'active'",
-        "ai_state_pages": "SELECT COUNT(*) AS count FROM ai_state_pages WHERE vault_id = ?",
-        "reviews": "SELECT COUNT(*) AS count FROM collaboration_reviews WHERE vault_id = ?",
-        "findings": "SELECT COUNT(*) AS count FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id WHERE r.vault_id = ?",
+        "structured_state_pages": "SELECT 0 AS count",
+        "reviews": "SELECT COUNT(*) AS count FROM reviews WHERE vault_id = ?",
+        "findings": "SELECT COUNT(*) AS count FROM findings f JOIN reviews r ON r.id = f.review_id WHERE r.vault_id = ?",
         "graph_nodes": "SELECT COUNT(*) AS count FROM graph_nodes WHERE vault_id = ?",
-    }.items():
-        row = await fetch_one(request.app.state.settings.sqlite_path, query, (agent.vault_id,))
+    }
+    for name, query in queries.items():
+        params = () if query == "SELECT 0 AS count" else (agent.vault_id,)
+        row = await fetch_one(request.app.state.settings.sqlite_path, query, params)
         summary[name] = row["count"] if row else 0
     graph_breakdown_rows = await fetch_all(
         request.app.state.settings.sqlite_path,
@@ -657,7 +625,12 @@ async def agent_state_summary(request: Request, agent: AgentAuth = Depends(requi
             "live MCP bridge initialize/tools/start_here checks",
         ],
     }
-    ai_state_pages_match = summary["pages"] == summary["ai_state_pages"]
+    structured_state_pages_match = summary["pages"] == summary["structured_state_pages"]
+    empty_state = {
+        "active": summary["pages"] == 0 and summary["reviews"] == 0 and summary["findings"] == 0,
+        "reason": "fresh_install" if summary["pages"] == 0 and summary["reviews"] == 0 and summary["findings"] == 0 else None,
+        "operator_question": "Is this a fresh install, or should pages/reviews already exist?" if summary["pages"] == 0 and summary["reviews"] == 0 and summary["findings"] == 0 else None,
+    }
     return {
         "ok": True,
         "data": {
@@ -668,9 +641,10 @@ async def agent_state_summary(request: Request, agent: AgentAuth = Depends(requi
             "conflict_resolution_policy": CONFLICT_RESOLUTION_POLICY,
             "security_boundary_policy": SECURITY_BOUNDARY_POLICY,
             "infrastructure_notice": INFRASTRUCTURE_NOTICE,
-            "ai_state_coverage_note": "ai_state_pages counts structured state rows generated from active pages. It can differ from pages during sync or rebuild drift.",
-            "ai_state_pages_match": ai_state_pages_match,
-            "drift_suspected": not ai_state_pages_match,
+            "structured_state_coverage_note": "structured_state_pages counts structured state rows generated from active pages. It can differ from pages during sync or rebuild drift.",
+            "structured_state_pages_match": structured_state_pages_match,
+            "drift_suspected": not structured_state_pages_match,
+            "empty_state": empty_state,
             "graph_node_breakdown": graph_node_breakdown,
             "collaboration_status": {
                 "ready_for_review": True,

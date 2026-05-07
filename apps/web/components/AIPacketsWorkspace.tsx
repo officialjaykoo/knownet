@@ -263,7 +263,7 @@ export function AIPacketsWorkspace({
           <div className="experiment-packet-preview">
             <div className="model-run-stats">
               <span>{experimentPacket.preflight.pages} pages</span>
-              <span>{experimentPacket.preflight.ai_state_pages} ai_state</span>
+              <span>{experimentPacket.preflight.structured_state_pages} structured state</span>
               <span>{experimentPacket.preflight.unresolved_nodes} unresolved</span>
               <span>{experimentPacket.preflight.pending_findings} pending findings</span>
               <span>{experimentPacket.links.self.href}</span>

@@ -29,7 +29,7 @@ def _send(process: subprocess.Popen[str], message: dict[str, Any]) -> dict[str, 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run a small stdio MCP smoke test against the KnowNet MCP server.")
     parser.add_argument("--python", default=sys.executable, help="Python executable used to start the MCP server.")
-    parser.add_argument("--server", default=str(Path(__file__).resolve().parents[1] / "knownet_mcp" / "server.py"), help="Path to knownet_mcp/server.py.")
+    parser.add_argument("--server", default=str(Path(__file__).resolve().parents[1] / "src" / "knownet_mcp" / "server.py"), help="Path to knownet_mcp/server.py.")
     parser.add_argument("--base-url", default=os.getenv("KNOWNET_BASE_URL", "http://127.0.0.1:8000"))
     parser.add_argument("--token", default=os.getenv("KNOWNET_AGENT_TOKEN"))
     args = parser.parse_args()

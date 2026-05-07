@@ -267,7 +267,7 @@ type ExperimentPacket = {
   content_hash: string;
   links: { self: { href: string }; content?: { href: string }; storage?: { href: string } };
   included_nodes: Array<{ page_id: string; slug: string; title: string }>;
-  preflight: { pages: number; ai_state_pages: number; unresolved_nodes: number; pending_findings: number };
+  preflight: { pages: number; structured_state_pages: number; unresolved_nodes: number; pending_findings: number };
   copy_ready: boolean;
 };
 
@@ -1348,6 +1348,16 @@ export default function HomePage() {
         throw new Error(errorText || "SARIF export failed");
       }
       const content = await response.text();
+      let readySummary = "";
+      try {
+        const parsed = JSON.parse(content);
+        const summary = parsed?.runs?.[0]?.properties?.knownet?.code_scanning_ready_summary;
+        if (summary) {
+          readySummary = `: ${summary.ready}/${summary.total_results} code scanning ready`;
+        }
+      } catch {
+        readySummary = "";
+      }
       const blob = new Blob([content], { type: "application/sarif+json" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
@@ -1357,7 +1367,7 @@ export default function HomePage() {
       link.click();
       link.remove();
       URL.revokeObjectURL(url);
-      setStatus("SARIF exported");
+      setStatus(`SARIF exported${readySummary}`);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "SARIF export failed");
     }

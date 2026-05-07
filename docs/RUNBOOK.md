@@ -5,7 +5,7 @@ This runbook covers the local-first MVP operations path.
 ## Development Environment
 
 Keep source and generated/local execution artifacts separate. Follow
-`docs/DEVELOPMENT_ENV_POLICY.md`.
+`docs/LOCAL_ENVIRONMENT.md`.
 
 Agents must not create repo-local virtual environments. API verification uses
 the workstation's global Python interpreter, and missing API dependencies should
@@ -408,7 +408,7 @@ Rotate tokens that are expired or expiring soon.
 
 ## MCP Setup
 
-The MCP server runs over stdio from `apps/mcp/knownet_mcp/server.py`.
+The MCP server runs over stdio from `apps/mcp/src/knownet_mcp/server.py`.
 Set:
 
 ```txt

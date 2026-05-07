@@ -24,7 +24,7 @@ current packet down to the small set of fields an external AI needs to:
 Reference review log:
 
 ```txt
-docs/reviews/AI_PACKET_STANDARDIZATION_EXTERNAL_REVIEWS.md
+external AI review notes folded into Phase 26
 ```
 
 Implemented surface:

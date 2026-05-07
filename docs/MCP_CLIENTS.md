@@ -6,7 +6,7 @@ not expose compatibility aliases.
 The MCP server path is:
 
 ```txt
-apps/mcp/knownet_mcp/server.py
+apps/mcp/src/knownet_mcp/server.py
 ```
 
 Set these environment variables in the MCP client configuration:
@@ -27,7 +27,7 @@ from the Agent Access panel when a client configuration changes.
 The standard KnowNet MCP baseline is documented in:
 
 ```txt
-docs/MCP_SCOPE.md
+the MCP Scope section below
 ```
 
 Resources:
@@ -71,7 +71,7 @@ Example stdio configuration:
   "mcpServers": {
     "knownet": {
       "command": "python",
-      "args": ["C:\\knownet\\apps\\mcp\\knownet_mcp\\server.py"],
+      "args": ["C:\\knownet\\apps\\mcp\\src\\knownet_mcp\\server.py"],
       "env": {
         "KNOWNET_BASE_URL": "http://127.0.0.1:8000",
         "KNOWNET_AGENT_TOKEN": "<token shown once by the operator dashboard>",
@@ -110,7 +110,7 @@ For a local stdio agent runner, start:
 ```powershell
 $env:KNOWNET_BASE_URL="http://127.0.0.1:8000"
 $env:KNOWNET_AGENT_TOKEN="<token shown once by the operator dashboard>"
-python apps/mcp/knownet_mcp/server.py
+python apps/mcp/src/knownet_mcp/server.py
 ```
 
 The process speaks JSON-RPC over stdin/stdout. Logs are written to stderr.
@@ -146,7 +146,7 @@ window. Revoke the temporary agent token immediately after the test.
 $env:KNOWNET_BASE_URL="http://127.0.0.1:8000"
 $env:KNOWNET_AGENT_TOKEN="<short-lived token>"
 $env:KNOWNET_MCP_HTTP_PORT="8010"
-$env:PYTHONPATH="C:\knownet\apps\mcp"
+$env:PYTHONPATH="C:\knownet\apps\mcp\src"
 python -m knownet_mcp.http_bridge
 cloudflared tunnel --url http://127.0.0.1:8010
 ```
@@ -194,3 +194,59 @@ aliases for older MCP tool, prompt, resource, search, or fetch names.
 Do not expose KnowNet publicly without `PUBLIC_MODE=true`, a long admin token,
 and Cloudflare Access or equivalent protection. MCP clients should normally
 connect to a local KnowNet instance.
+
+## MCP Scope
+
+KnowNet's MCP target is a real, minimal MCP server for external AI collaboration. The server lets MCP clients read compact KnowNet state and submit bounded proposals. It must not let AI operate KnowNet.
+
+### Completion Line
+
+KnowNet MCP is sufficient when an MCP client can:
+
+1. Call `initialize` and receive `serverInfo`, `protocolVersion`, and capabilities for resources, tools, and prompts.
+2. Call `resources/list` and discover safe KnowNet resources.
+3. Call `resources/read` and read compact JSON resources without raw database, filesystem, backup, session, user, or token exposure.
+4. Call `tools/list` and discover proposal-only tools.
+5. Call `tools/call` to propose findings, propose tasks, or submit implementation evidence as operator-gated drafts.
+6. Call `prompts/list` and `prompts/get` for reusable review prompts.
+
+### Resources
+
+```txt
+knownet://snapshot/overview
+knownet://snapshot/stability
+knownet://snapshot/performance
+knownet://snapshot/security
+knownet://snapshot/implementation
+knownet://snapshot/provider_review
+knownet://node/{slug_or_page_id}
+knownet://finding/recent
+```
+
+Do not expose `knownet://agent/...` aliases as the public MCP read surface.
+
+### Tools
+
+```txt
+knownet.propose_finding
+knownet.propose_task
+knownet.submit_implementation_evidence
+```
+
+Tool behavior:
+
+- `knownet.propose_finding` performs a parser dry-run only. It does not create records.
+- `knownet.propose_task` returns a structured task proposal. It does not create or assign tasks.
+- `knownet.submit_implementation_evidence` returns an operator-gated evidence proposal. It does not mark a finding implemented.
+
+### Prompts
+
+```txt
+knownet.compact_review
+knownet.implementation_candidate
+knownet.provider_risk_check
+```
+
+### Forbidden MCP Scope
+
+Do not expose raw SQLite query tools, shell tools, filesystem read/write tools, backup restore/delete tools, user/session/token resources, release check execution tools, provider live-call tools, full graph dumps, or long Markdown export as the default read path.

@@ -58,11 +58,11 @@ Push-Location $ApiDir
 Pop-Location
 
 Step "MCP tests"
-$env:PYTHONPATH = Join-Path $Root "apps/mcp"
+$env:PYTHONPATH = Join-Path $Root "apps/mcp/src"
 & $Python -m pytest (Join-Path $Root "apps/mcp/tests/test_knownet_mcp.py") -q
 
 Step "SDK tests"
-$env:PYTHONPATH = Join-Path $Root "packages/knownet-agent-py"
+$env:PYTHONPATH = Join-Path $Root "packages/knownet-agent-py/src"
 & $Python -m pytest (Join-Path $Root "packages/knownet-agent-py/tests") -q
 
 Step "Slow operational API tests"
@@ -123,8 +123,8 @@ $patterns = @(
 )
 $agentFiles = @(
   (Join-Path $ApiDir "knownet_api/routes/agent.py"),
-  (Join-Path $Root "apps/mcp/knownet_mcp/server.py"),
-  (Join-Path $Root "apps/mcp/knownet_mcp/http_bridge.py")
+  (Join-Path $Root "apps/mcp/src/knownet_mcp/server.py"),
+  (Join-Path $Root "apps/mcp/src/knownet_mcp/http_bridge.py")
 )
 foreach ($pattern in $patterns) {
   $matches = Select-String -Path $agentFiles -Pattern $pattern -ErrorAction SilentlyContinue

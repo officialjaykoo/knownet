@@ -1,4 +1,4 @@
-﻿# KnowNet
+# KnowNet
 
 AI-centered collaboration knowledge base.
 
@@ -6,7 +6,7 @@ KnowNet is designed around durable AI-to-AI project memory: structured findings,
 implementation decisions, verification records, context manifests, and safe
 context bundles. SQLite/JSON records are the canonical AI collaboration state;
 Markdown is a narrative attachment for long reasoning, source review text, and
-operator-facing context. See [AI-Centered Design](./docs/AI_CENTERED_DESIGN.md).
+operator-facing context. See [AI Design](./docs/AI_DESIGN.md).
 
 ## Quick Start
 
@@ -62,7 +62,7 @@ Local generated files stay ignored and disposable. Cargo build output is under
 `.local/cargo-target`; Next and npm generated folders remain tool-standard
 ignored directories. Python API dependencies use the workstation's global
 Python interpreter, not a repo-local virtualenv. Generated folders can be removed with
-`.\scripts\clean_generated.ps1`. See [Local Layout](./docs/LOCAL_LAYOUT.md).
+`.\scripts\clean_generated.ps1`. See [Local Environment](./docs/LOCAL_ENVIRONMENT.md).
 
 If Rust rebuild fails with `access denied`, stop running API/Rust processes and
 run the command again. `knownet-core.exe` cannot be replaced while it is running.
@@ -72,18 +72,6 @@ Check whether the local dev servers and PID files agree:
 ```powershell
 .\scripts\ops_check.ps1
 ```
-
-Test external connectivity through Cloudflare Tunnel:
-
-```powershell
-.\scripts\dev.ps1 -ProductionWeb -KeepWebCache
-.\scripts\cloudflare_quick_tunnel.ps1
-```
-
-The tunnel exposes the API on `127.0.0.1:8000` for external AI agents. Keep the
-web UI local on `127.0.0.1:3000`. For actual external use, enable
-`PUBLIC_MODE=true`, configure a long `ADMIN_TOKEN`, and protect the API hostname
-with Cloudflare Access. See [Cloudflare Tunnel](./docs/CLOUDFLARE_TUNNEL.md).
 
 ## Docker
 
@@ -107,7 +95,7 @@ MCP is the preferred integration path for MCP-capable AI tools. Phase 10 added
 agent tooling on top of scoped Phase 9 access, and Phase 11 hardens MCP client
 compatibility:
 
-- MCP server: `apps/mcp/knownet_mcp/server.py`
+- MCP server: `apps/mcp/src/knownet_mcp/server.py`
 - Python SDK: `packages/knownet-agent-py/`
 - Web Agent Access panel for token management and sanitized activity events
 
@@ -122,13 +110,8 @@ Python SDK setup and workflow examples live in [SDK client docs](./docs/SDK_CLIE
 Current implementation task lists:
 
 - [Current Phase Index](./docs/phases/README.md)
-- [Phase 19 Tasks](./docs/phases/PHASE_19_TASKS.md)
-- [Phase 20 Tasks](./docs/phases/PHASE_20_TASKS.md)
-- [Phase 21 Tasks](./docs/phases/PHASE_21_TASKS.md)
-- [Phase 22 Tasks](./docs/phases/PHASE_22_TASKS.md)
-- [Phase 23 Tasks](./docs/phases/PHASE_23_TASKS.md)
-
-Completed phase history lives in [docs/archive/phases](./docs/archive/phases/).
+Current phase docs live in [docs/phases](./docs/phases/). Completed phase
+history lives in [docs/archive/phases](./docs/archive/phases/).
 
 Operational docs:
 
@@ -136,12 +119,9 @@ Operational docs:
 - [Security Plan](./docs/SECURITY_PLAN.md)
 - [Runbook](./docs/RUNBOOK.md)
 - [Docker](./docs/DOCKER.md)
-- [Cloudflare Tunnel](./docs/CLOUDFLARE_TUNNEL.md)
 - [Release Checklist](./docs/RELEASE_CHECKLIST.md)
-- [Architecture Hardening Log](./docs/ARCHITECTURE_HARDENING_LOG.md)
 
 Product direction:
 
-- [AI-Centered Design](./docs/AI_CENTERED_DESIGN.md)
-- [AI Collaboration Concept](./docs/AI_COLLABORATION_CONCEPT.md)
+- [AI Design](./docs/AI_DESIGN.md)
 

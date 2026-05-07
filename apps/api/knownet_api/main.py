@@ -9,12 +9,14 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
 from .db.sqlite import fetch_one
+from .db.v2_runtime import V2SchemaError, initialize_or_verify_v2_schema, verify_v2_schema
 from .routes.agent import router as agent_router
 from .routes.agents import router as agents_router
 from .routes.auth import router as auth_router
 from .routes.audit import router as audit_router
 from .routes.citations import router as citations_router
-from .routes.collaboration import ensure_collaboration_schema, router as collaboration_router
+from .routes.collaboration import router as collaboration_router
+from .routes.collaboration_sarif import router as collaboration_sarif_router
 from .routes.events import router as events_router
 from .routes.graph import router as graph_router
 from .routes.jobs import router as jobs_router
@@ -30,12 +32,9 @@ from .routes.operator import router as operator_router
 from .services.draft_service import DraftService
 from .services.citation_verifier import CitationVerifier
 from .services.embedding_service import EmbeddingService
-from .services.ai_state import ensure_ai_state_schema
-from .services.citation_titles import backfill_citation_display_titles
 from .services.job_processor import JobProcessor
-from .services.model_runner_store import ensure_model_runner_schema
 from .services.rust_core import RustCoreClient
-from .services.search_index import ensure_search_schema, search_index_status
+from .services.search_index import search_index_status
 from .services.source_selector import SourceSelector
 from .services.system_pages import ensure_system_pages_schema, register_managed_seed_pages, register_onboarding_pages
 
@@ -142,17 +141,12 @@ async def lifespan(app: FastAPI):
     await app.state.rust_core.start()
     app.state.citation_verifier = CitationVerifier(sqlite_path=settings.sqlite_path, rust=app.state.rust_core)
     app.state.sqlite_status = "unknown"
+    app.state.db_version = settings.knownet_db_version
+    app.state.v2_schema = None
     if app.state.rust_core.available:
-        await app.state.rust_core.request("init_db", {"sqlite_path": str(settings.sqlite_path)})
-        await app.state.rust_core.request("ensure_phase4_schema", {"sqlite_path": str(settings.sqlite_path)})
-        await app.state.rust_core.request("ensure_graph_schema", {"sqlite_path": str(settings.sqlite_path)})
+        app.state.v2_schema = await initialize_or_verify_v2_schema(settings.sqlite_path)
         await ensure_phase6_schema(settings.sqlite_path)
-        await backfill_citation_display_titles(settings.sqlite_path)
-        await ensure_ai_state_schema(settings.sqlite_path)
         await ensure_system_pages_schema(settings.sqlite_path)
-        await ensure_collaboration_schema(settings.sqlite_path)
-        await ensure_model_runner_schema(settings.sqlite_path)
-        await ensure_search_schema(settings.sqlite_path)
         await register_onboarding_pages(settings.sqlite_path)
         await register_managed_seed_pages(settings.sqlite_path)
         app.state.sqlite_status = "ok"
@@ -247,6 +241,7 @@ app.include_router(agent_router)
 app.include_router(agents_router)
 app.include_router(auth_router)
 app.include_router(citations_router)
+app.include_router(collaboration_sarif_router)
 app.include_router(collaboration_router)
 app.include_router(jobs_router)
 app.include_router(events_router)
@@ -268,6 +263,7 @@ async def _health_payload() -> dict:
     if rust and rust.available:
         rust_status = "ok"
     sqlite_status = getattr(app.state, "sqlite_status", "unknown")
+    db_version = getattr(app.state, "db_version", "v1")
     embedding = getattr(app.state, "embedding_service", None)
     settings = app.state.settings
     issues: list[str] = []
@@ -312,6 +308,14 @@ async def _health_payload() -> dict:
     search_status = await search_index_status(settings.sqlite_path) if settings.sqlite_path.exists() else {"fts": "unavailable", "indexed_pages": 0, "fallback": "like_markdown_scan", "reason": "sqlite_missing"}
     if search_status.get("fts") == "unavailable":
         issues.append("search.fts_unavailable")
+    schema_status = getattr(app.state, "v2_schema", None)
+    if db_version == "v2" and settings.sqlite_path.exists():
+        try:
+            schema_status = await verify_v2_schema(settings.sqlite_path)
+            app.state.v2_schema = schema_status
+        except V2SchemaError as error:
+            schema_status = {"db_version": "v2", "status": "error", "code": error.code, "details": error.details}
+            issues.append(f"schema.{error.code}")
     graph_stale = bool(getattr(app.state, "graph_rebuilds", set()))
     if graph_stale:
         issues.append("graph.stale")
@@ -322,6 +326,8 @@ async def _health_payload() -> dict:
         "api": "ok",
         "rust_daemon": rust_status,
         "sqlite": sqlite_status,
+        "db_version": db_version,
+        "schema": schema_status,
         "api_detail": {"status": "ok"},
         "rust_daemon_detail": {"status": rust_status},
         "sqlite_detail": {"status": sqlite_status},
@@ -361,7 +367,18 @@ async def health():
 @app.get("/health/summary")
 async def health_summary():
     data = await _health_payload()
-    return {"ok": True, "data": {"overall_status": data["overall_status"], "issues": data["issues"], "issue_details": data["issue_details"], "search": data["search"], "checked_at": data["checked_at"]}}
+    return {
+        "ok": True,
+        "data": {
+            "overall_status": data["overall_status"],
+            "issues": data["issues"],
+            "issue_details": data["issue_details"],
+            "db_version": data["db_version"],
+            "schema": data["schema"],
+            "search": data["search"],
+            "checked_at": data["checked_at"],
+        },
+    }
 
 
 @app.get("/api/schemas/packet/p26.v1")

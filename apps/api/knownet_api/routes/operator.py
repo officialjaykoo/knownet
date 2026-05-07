@@ -8,8 +8,8 @@ from fastapi import APIRouter, Depends, Request
 
 from ..db.sqlite import fetch_all, fetch_one
 from ..security import Actor, require_admin_access, utc_now
+from ..services import collaboration_v2
 from ..services.model_output import sanitize_error_message
-from ..services.model_runner import sanitize_for_model
 from ..services.provider_registry import provider_capabilities, provider_capability_map
 
 
@@ -54,202 +54,27 @@ async def build_ai_state_quality(settings, *, vault_id: str = "local-default") -
             )
         )
         return {"overall_status": "fail", "checks": checks, "checked_at": utc_now()}
-
-    counts = await fetch_one(
-        settings.sqlite_path,
-        "SELECT "
-        "(SELECT COUNT(*) FROM pages WHERE vault_id = ? AND status = 'active') AS pages, "
-        "(SELECT COUNT(*) FROM ai_state_pages WHERE vault_id = ?) AS ai_state_pages, "
-        "(SELECT COUNT(*) FROM collaboration_reviews WHERE vault_id = ?) AS reviews, "
-        "(SELECT COUNT(*) FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id WHERE r.vault_id = ?) AS findings, "
-        "(SELECT COUNT(*) FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id WHERE r.vault_id = ? AND f.status IN ('pending','needs_more_context')) AS pending_findings, "
-        "(SELECT COUNT(*) FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id WHERE r.vault_id = ? AND f.status = 'deferred' AND f.severity IN ('critical','high')) AS deferred_high, "
-        "(SELECT COUNT(*) FROM implementation_records) AS implementation_records, "
-        "(SELECT COUNT(*) FROM graph_nodes WHERE vault_id = ?) AS graph_nodes",
-        (vault_id, vault_id, vault_id, vault_id, vault_id, vault_id, vault_id),
-    )
-    page_count = int(counts["pages"] or 0) if counts else 0
-    ai_state_count = int(counts["ai_state_pages"] or 0) if counts else 0
-    pending_findings = int(counts["pending_findings"] or 0) if counts else 0
-    deferred_high = int(counts["deferred_high"] or 0) if counts else 0
-    implementation_records = int(counts["implementation_records"] or 0) if counts else 0
-    graph_nodes = int(counts["graph_nodes"] or 0) if counts else 0
-
-    if page_count == 0 or ai_state_count == 0:
-        checks.append(
-            _check(
-                "canonical_state_missing",
-                "fail",
-                "Canonical AI state is missing",
-                f"Found {page_count} active page(s) and {ai_state_count} ai_state row(s).",
-                "Create or sync pages, then run sync_ai_state or restart the API.",
-                {"pages": page_count, "ai_state_pages": ai_state_count},
-            )
-        )
-    elif ai_state_count < page_count:
-        checks.append(
-            _check(
-                "ai_state_coverage_partial",
-                "warn",
-                "AI state coverage is partial",
-                f"{ai_state_count} of {page_count} active page(s) have generated ai_state.",
-                "Run AI state sync before a broad external review.",
-                {"pages": page_count, "ai_state_pages": ai_state_count},
-            )
-        )
-    else:
-        checks.append(
-            _check(
-                "ai_state_coverage",
-                "pass",
-                "AI state coverage is current enough",
-                f"{ai_state_count} generated ai_state row(s) cover {page_count} active page(s).",
-                data={"pages": page_count, "ai_state_pages": ai_state_count},
-            )
-        )
-
-    rows = await fetch_all(
-        settings.sqlite_path,
-        "SELECT slug, title, state_json FROM ai_state_pages WHERE vault_id = ? ORDER BY updated_at DESC LIMIT 50",
-        (vault_id,),
-    )
-    forbidden_hits: list[dict[str, str]] = []
-    current_state_hits = 0
-    boundary_hits = 0
-    known_issue_hits = 0
-    verification_hits = 0
-    review_target_hits = 0
-    for row in rows:
-        try:
-            state = json.loads(row["state_json"] or "{}")
-        except json.JSONDecodeError:
-            forbidden_hits.append({"slug": row["slug"], "code": "invalid_json"})
-            continue
-        try:
-            sanitize_for_model(state, label=f"ai_state.{row['slug']}")
-        except Exception as error:  # keep this endpoint diagnostic rather than exception-driven
-            forbidden_hits.append({"slug": row["slug"], "code": getattr(error, "detail", {}).get("code", "forbidden_context") if hasattr(error, "detail") else "forbidden_context"})
-        text = json.dumps(state, ensure_ascii=False).lower()
-        if "current_state" in state or "current state" in text:
-            current_state_hits += 1
-        if any(term in text for term in ("boundary", "boundaries", "non-goal", "non_goal", "do not")):
-            boundary_hits += 1
-        if any(term in text for term in ("known issue", "finding", "risk", "deferred", "pending")):
-            known_issue_hits += 1
-        if any(term in text for term in ("verification", "verified", "test", "release_check")):
-            verification_hits += 1
-        if any(term in text for term in ("review target", "review_focus", "next review", "target")):
-            review_target_hits += 1
-
-    if forbidden_hits:
-        checks.append(
-            _check(
-                "forbidden_context_hits",
-                "fail",
-                "Forbidden context markers were detected",
-                f"{len(forbidden_hits)} ai_state row(s) contain secret/path-like data or invalid state.",
-                "Remove forbidden data from canonical state before model review.",
-                {"hits": forbidden_hits[:20]},
-            )
-        )
-    else:
-        checks.append(_check("forbidden_context_hits", "pass", "AI context guard passed", "No forbidden secret/path markers were detected in sampled ai_state."))
-
-    checks.append(
-        _check(
-            "current_state_signal",
-            "pass" if current_state_hits else "warn",
-            "Current-state signal",
-            f"{current_state_hits} sampled ai_state row(s) include current-state language.",
-            "Add current_state fields to high-value managed pages." if not current_state_hits else None,
-            {"hits": current_state_hits, "sampled": len(rows)},
-        )
-    )
-    checks.append(
-        _check(
-            "boundary_signal",
-            "pass" if boundary_hits else "warn",
-            "Boundary/non-goal signal",
-            f"{boundary_hits} sampled ai_state row(s) mention boundaries or non-goals.",
-            "Document boundaries in AI-centered managed pages." if not boundary_hits else None,
-            {"hits": boundary_hits, "sampled": len(rows)},
-        )
-    )
-    checks.append(
-        _check(
-            "review_target_signal",
-            "pass" if review_target_hits else "warn",
-            "Review-target signal",
-            f"{review_target_hits} sampled ai_state row(s) mention review targets.",
-            "Add explicit next review targets before external model review." if not review_target_hits else None,
-            {"hits": review_target_hits, "sampled": len(rows)},
-        )
-    )
-    checks.append(
-        _check(
-            "verification_signal",
-            "pass" if verification_hits else "warn",
-            "Verification signal",
-            f"{verification_hits} sampled ai_state row(s) mention tests or verification.",
-            "Add verification notes to managed state pages." if not verification_hits else None,
-            {"hits": verification_hits, "sampled": len(rows)},
-        )
-    )
-    checks.append(
-        _check(
-            "open_findings_visibility",
-            "warn" if pending_findings or deferred_high else "pass",
-            "Open/deferred findings visibility",
-            f"{pending_findings} pending/needs-more-context finding(s), {deferred_high} deferred high-severity finding(s).",
-            "Triage pending and high-severity deferred findings before release." if pending_findings or deferred_high else None,
-            {"pending_findings": pending_findings, "deferred_high": deferred_high, "known_issue_hits": known_issue_hits},
-        )
-    )
-    checks.append(
-        _check(
-            "implementation_records",
-            "pass" if implementation_records else "warn",
-            "Implementation records",
-            f"{implementation_records} implementation record(s) exist.",
-            "Link accepted findings to implementation records when fixes land." if not implementation_records else None,
-            {"implementation_records": implementation_records},
-        )
-    )
-    checks.append(
-        _check(
-            "graph_index_counts",
-            "pass" if graph_nodes >= page_count and page_count > 0 else "warn",
-            "Graph/index count sanity",
-            f"{graph_nodes} graph node(s) for {page_count} active page(s).",
-            "Run graph rebuild and verify-index if graph counts look stale.",
-            {"graph_nodes": graph_nodes, "pages": page_count},
-        )
-    )
-
-    overall = _worst_status(checks)
-    return {
-        "overall_status": overall,
-        "checks": checks,
-        "summary": {
-            "pages": page_count,
-            "ai_state_pages": ai_state_count,
-            "reviews": int(counts["reviews"] or 0) if counts else 0,
-            "findings": int(counts["findings"] or 0) if counts else 0,
-            "pending_findings": pending_findings,
-            "deferred_high": deferred_high,
-            "implementation_records": implementation_records,
-            "graph_nodes": graph_nodes,
-        },
-        "checked_at": utc_now(),
-    }
+    quality = await collaboration_v2.ai_state_quality(settings.sqlite_path, vault_id)
+    return {**quality, "checked_at": utc_now()}
 
 
 async def build_provider_matrix(settings) -> dict[str, Any]:
-    run_rows = await fetch_all(
-        settings.sqlite_path,
-        "SELECT id, provider, model, status, request_json, response_json, trace_id, packet_trace_id, error_code, error_message, updated_at FROM model_review_runs ORDER BY updated_at DESC LIMIT 500",
-        (),
-    ) if Path(settings.sqlite_path).exists() else []
+    if not Path(settings.sqlite_path).exists():
+        run_rows = []
+    else:
+        run_rows = await fetch_all(
+            settings.sqlite_path,
+            """
+            SELECT pr.id, pr.provider, pr.model, pr.status, pr.trace_id, pr.packet_trace_id,
+                   pr.error_code, pr.error_message, pr.updated_at, m.duration_ms,
+                   COALESCE((SELECT payload_json FROM provider_run_artifacts a WHERE a.run_id = pr.id AND a.artifact_type = 'request' ORDER BY a.created_at DESC LIMIT 1), '{}') AS request_json,
+                   COALESCE((SELECT payload_json FROM provider_run_artifacts a WHERE a.run_id = pr.id AND a.artifact_type = 'response' ORDER BY a.created_at DESC LIMIT 1), '{}') AS response_json
+              FROM provider_runs pr
+              LEFT JOIN provider_run_metrics m ON m.run_id = pr.id
+             ORDER BY pr.updated_at DESC LIMIT 500
+            """,
+            (),
+        )
     run_by_provider: dict[str, dict[str, Any]] = {}
     for row in run_rows:
         provider = row["provider"]
@@ -293,7 +118,7 @@ async def build_provider_matrix(settings) -> dict[str, Any]:
                     "model": row["model"],
                     "error_code": row["error_code"],
                     "error_message": sanitize_error_message(row["error_message"] or ""),
-                    "duration_ms": response_json.get("duration_ms"),
+                    "duration_ms": response_json.get("duration_ms") or row.get("duration_ms"),
                     "updated_at": row["updated_at"],
                 }
 
@@ -399,7 +224,7 @@ async def release_readiness(request: Request, vault_id: str = "local-default", a
         warnings.append("ai_state_quality_warn")
     if not matrix["summary"].get("live_verified"):
         warnings.append("no_live_provider_verified")
-    latest_run = await fetch_one(settings.sqlite_path, "SELECT id, provider, status, updated_at FROM model_review_runs ORDER BY updated_at DESC LIMIT 1", ()) if Path(settings.sqlite_path).exists() else None
+    latest_run = await fetch_one(settings.sqlite_path, "SELECT id, provider, status, updated_at FROM provider_runs ORDER BY updated_at DESC LIMIT 1", ()) if Path(settings.sqlite_path).exists() else None
     return {
         "ok": True,
         "data": {

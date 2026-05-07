@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from ..audit import write_audit_event
 from ..config import REPO_ROOT
 from ..db.sqlite import execute, fetch_all, fetch_one
+from ..db.v2_runtime import V2SchemaError, verify_v2_schema
 from ..paths import PAGE_DIR_NAME, page_storage_dir
 from ..security import Actor, require_admin_access, utc_now
 from ..services.search_index import rebuild_pages_fts, search_index_status, verify_pages_fts
@@ -240,6 +241,81 @@ async def _table_exists(sqlite_path: Path, name: str) -> bool:
 async def _column_exists(sqlite_path: Path, table: str, column: str) -> bool:
     rows = await fetch_all(sqlite_path, f"PRAGMA table_info({table})", ())
     return any(row["name"] == column for row in rows)
+
+
+async def _verify_v2_index(settings) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    issues: list[dict[str, Any]] = []
+    schema: dict[str, Any] = {}
+    try:
+        schema = await verify_v2_schema(settings.sqlite_path)
+    except V2SchemaError as error:
+        issues.append({"code": error.code, "details": error.details})
+        return issues, {"db_version": "v2", "status": "error", "code": error.code, "details": error.details}
+
+    orphan_findings = await fetch_all(
+        settings.sqlite_path,
+        "SELECT f.id, f.review_id FROM findings f LEFT JOIN reviews r ON r.id = f.review_id WHERE r.id IS NULL",
+        (),
+    )
+    for row in orphan_findings:
+        issues.append({"code": "finding_orphan", "finding_id": row["id"], "review_id": row["review_id"]})
+
+    for table, code in (
+        ("finding_evidence", "finding_evidence_orphan"),
+        ("finding_locations", "finding_location_orphan"),
+        ("finding_decisions", "finding_decision_orphan"),
+        ("tasks", "task_orphan"),
+        ("implementation_records", "implementation_record_orphan"),
+    ):
+        rows = await fetch_all(
+            settings.sqlite_path,
+            f"SELECT t.id, t.finding_id FROM {table} t LEFT JOIN findings f ON f.id = t.finding_id WHERE t.finding_id IS NOT NULL AND f.id IS NULL",
+            (),
+        )
+        for row in rows:
+            issues.append({"code": code, "id": row["id"], "finding_id": row["finding_id"]})
+
+    invalid_quality = await fetch_all(
+        settings.sqlite_path,
+        "SELECT id, evidence_quality FROM finding_evidence WHERE evidence_quality NOT IN ('direct_access','context_limited','inferred','operator_verified','unspecified')",
+        (),
+    )
+    for row in invalid_quality:
+        issues.append({"code": "finding_evidence_invalid_quality", "evidence_id": row["id"], "evidence_quality": row["evidence_quality"]})
+
+    packet_orphans = await fetch_all(
+        settings.sqlite_path,
+        "SELECT ps.id, ps.packet_id FROM packet_sources ps LEFT JOIN packets p ON p.id = ps.packet_id WHERE p.id IS NULL",
+        (),
+    )
+    for row in packet_orphans:
+        issues.append({"code": "packet_source_orphan", "source_id": row["id"], "packet_id": row["packet_id"]})
+
+    node_card_orphans = await fetch_all(
+        settings.sqlite_path,
+        "SELECT nc.id, nc.packet_id FROM node_cards nc LEFT JOIN packets p ON p.id = nc.packet_id WHERE p.id IS NULL",
+        (),
+    )
+    for row in node_card_orphans:
+        issues.append({"code": "node_card_orphan", "node_card_id": row["id"], "packet_id": row["packet_id"]})
+
+    provider_metric_orphans = await fetch_all(
+        settings.sqlite_path,
+        "SELECT m.run_id FROM provider_run_metrics m LEFT JOIN provider_runs pr ON pr.id = m.run_id WHERE pr.id IS NULL",
+        (),
+    )
+    for row in provider_metric_orphans:
+        issues.append({"code": "provider_run_metric_orphan", "run_id": row["run_id"]})
+
+    provider_artifact_orphans = await fetch_all(
+        settings.sqlite_path,
+        "SELECT a.id, a.run_id FROM provider_run_artifacts a LEFT JOIN provider_runs pr ON pr.id = a.run_id WHERE pr.id IS NULL",
+        (),
+    )
+    for row in provider_artifact_orphans:
+        issues.append({"code": "provider_run_artifact_orphan", "artifact_id": row["id"], "run_id": row["run_id"]})
+
+    return issues, schema
 
 
 @router.get("/embedding/status")
@@ -642,7 +718,7 @@ async def embedding_load(
 @router.post("/seed/dry-run")
 async def seed_dry_run(
     request: Request,
-    path: str = "seeds/knownet-ai-state.yml",
+    path: str = "apps/api/knownet_api/seeds/knownet-ai-state.yml",
     actor: Actor = Depends(require_admin_access),
 ):
     requested_path = Path(path)
@@ -686,287 +762,10 @@ async def seed_dry_run(
 async def verify_index(request: Request, actor: Actor = Depends(require_admin_access)):
     settings = request.app.state.settings
     issues: list[dict[str, Any]] = []
-    pages_have_status = await _column_exists(settings.sqlite_path, "pages", "status")
-    page_rows = await fetch_all(
-        settings.sqlite_path,
-        "SELECT id, slug, path, current_revision_id FROM pages WHERE status = 'active'"
-        if pages_have_status
-        else "SELECT id, slug, path, current_revision_id FROM pages",
-        (),
-    )
-    for row in page_rows:
-        path = Path(row["path"])
-        if not path.exists():
-            issues.append({"code": "missing_page_file", "slug": row["slug"], "path": row["path"]})
-        section_rows = await fetch_all(
-            settings.sqlite_path,
-            "SELECT COUNT(*) AS count FROM sections WHERE page_id = ? AND revision_id = ?",
-            (row["id"], row["current_revision_id"]),
-        )
-        if section_rows and section_rows[0]["count"] == 0:
-            issues.append({"code": "missing_sections_index", "slug": row["slug"]})
-
-    for path in page_storage_dir(settings.data_dir).glob("*.md"):
-        if path.name == ".gitkeep":
-            continue
-        text = path.read_text(encoding="utf-8")
-        if not text.startswith("---\n"):
-            issues.append({"code": "missing_frontmatter", "path": str(path).replace("\\", "/")})
-
-    active_current_predicate = (
-        "(p.id IS NULL OR (p.status = 'active' AND (c.revision_id IS p.current_revision_id OR c.revision_id = p.current_revision_id)))"
-        if pages_have_status
-        else "(p.id IS NULL OR (c.revision_id IS p.current_revision_id OR c.revision_id = p.current_revision_id))"
-    )
-    audit_active_current_predicate = (
-        "(p.id IS NULL OR (p.status = 'active' AND (ca.revision_id IS p.current_revision_id OR ca.revision_id = p.current_revision_id)))"
-        if pages_have_status
-        else "(p.id IS NULL OR (ca.revision_id IS p.current_revision_id OR ca.revision_id = p.current_revision_id))"
-    )
-
-    citation_rows = await fetch_all(
-        settings.sqlite_path,
-        "SELECT c.page_id, c.revision_id, c.citation_key, c.validation_status FROM citations c "
-        "LEFT JOIN pages p ON p.id = c.page_id "
-        f"WHERE {active_current_predicate} AND c.validation_status IN ('unsupported', 'contradicted')",
-        (),
-    )
-    for row in citation_rows:
-        issues.append(
-            {
-                "code": "citation_unsupported",
-                "page_id": row["page_id"],
-                "revision_id": row["revision_id"],
-                "citation_key": row["citation_key"],
-                "validation_status": row["validation_status"],
-            }
-        )
-
-    missing_source_rows = await fetch_all(
-        settings.sqlite_path,
-        "SELECT c.page_id, c.revision_id, c.citation_key FROM citations c "
-        "LEFT JOIN pages p ON p.id = c.page_id "
-        "LEFT JOIN messages m ON m.id = c.citation_key "
-        f"WHERE {active_current_predicate} AND m.id IS NULL",
-        (),
-    )
-    for row in missing_source_rows:
-        issues.append(
-            {
-                "code": "citation_source_missing",
-                "page_id": row["page_id"],
-                "revision_id": row["revision_id"],
-                "citation_key": row["citation_key"],
-            }
-        )
-
-    audit_table_rows = await fetch_all(
-        settings.sqlite_path,
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'citation_audits'",
-        (),
-    )
-    if audit_table_rows:
-        missing_audit_rows = await fetch_all(
-            settings.sqlite_path,
-            "SELECT c.page_id, c.revision_id, c.citation_key FROM citations c "
-            "LEFT JOIN pages p ON p.id = c.page_id "
-            "LEFT JOIN citation_audits ca ON ca.page_id = c.page_id "
-            "AND (ca.revision_id IS c.revision_id OR ca.revision_id = c.revision_id) "
-            "AND ca.citation_key = c.citation_key "
-            f"WHERE {active_current_predicate} AND ca.id IS NULL",
-            (),
-        )
-        for row in missing_audit_rows:
-            issues.append(
-                {
-                    "code": "citation_audit_missing",
-                    "page_id": row["page_id"],
-                    "revision_id": row["revision_id"],
-                    "citation_key": row["citation_key"],
-                }
-            )
-
-        orphaned_audit_rows = await fetch_all(
-            settings.sqlite_path,
-            "SELECT ca.id, ca.page_id, ca.revision_id, ca.citation_key FROM citation_audits ca "
-            "LEFT JOIN pages p ON p.id = ca.page_id "
-            "LEFT JOIN citations c ON c.page_id = ca.page_id "
-            "AND (c.revision_id IS ca.revision_id OR c.revision_id = ca.revision_id) "
-            "AND c.citation_key = ca.citation_key "
-            f"WHERE {audit_active_current_predicate} AND c.citation_key IS NULL",
-            (),
-        )
-        for row in orphaned_audit_rows:
-            issues.append(
-                {
-                    "code": "citation_audit_orphaned",
-                    "audit_id": row["id"],
-                    "page_id": row["page_id"],
-                    "revision_id": row["revision_id"],
-                    "citation_key": row["citation_key"],
-                }
-            )
-
-    graph_table_rows = await fetch_all(
-        settings.sqlite_path,
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'graph_nodes'",
-        (),
-    )
-    if graph_table_rows:
-        missing_graph_page_rows = await fetch_all(
-            settings.sqlite_path,
-            "SELECT p.id, p.slug FROM pages p "
-            "LEFT JOIN graph_nodes gn ON gn.id = 'page:' || p.id AND gn.vault_id = p.vault_id "
-            "WHERE p.status = 'active' AND gn.id IS NULL",
-            (),
-        )
-        for row in missing_graph_page_rows:
-            issues.append({"code": "graph_page_node_missing", "page_id": row["id"], "slug": row["slug"]})
-
-        link_rows = await fetch_all(
-            settings.sqlite_path,
-            "SELECT l.page_id, l.revision_id, l.target, p.vault_id FROM links l "
-            "JOIN pages p ON p.id = l.page_id "
-            "WHERE p.status = 'active' AND (l.revision_id IS p.current_revision_id OR l.revision_id = p.current_revision_id)",
-            (),
-        )
-        edge_rows = await fetch_all(
-            settings.sqlite_path,
-            "SELECT vault_id, from_node_id, meta FROM graph_edges WHERE edge_type = 'page_link'",
-            (),
-        )
-        edge_targets = set()
-        for row in edge_rows:
-            try:
-                meta = yaml.safe_load(row["meta"] or "{}") or {}
-            except yaml.YAMLError:
-                meta = {}
-            edge_targets.add((row["vault_id"], row["from_node_id"], str(meta.get("target") or "").lower()))
-        for row in link_rows:
-            key = (row["vault_id"], f"page:{row['page_id']}", str(row["target"]).lower())
-            if key not in edge_targets:
-                issues.append({"code": "graph_link_edge_missing", "page_id": row["page_id"], "target": row["target"]})
-
-        orphaned_graph_rows = await fetch_all(
-            settings.sqlite_path,
-            "SELECT gn.id, gn.target_type, gn.target_id FROM graph_nodes gn "
-            "LEFT JOIN pages p ON gn.target_type = 'page' AND p.id = gn.target_id "
-            "LEFT JOIN messages m ON gn.target_type = 'message' AND m.id = gn.target_id "
-            "LEFT JOIN citation_audits ca ON gn.target_type = 'citation_audit' AND ca.id = gn.target_id "
-            "WHERE (gn.target_type = 'page' AND p.id IS NULL) "
-            "OR (gn.target_type = 'message' AND m.id IS NULL) "
-            "OR (gn.target_type = 'citation_audit' AND ca.id IS NULL)",
-            (),
-        )
-        for row in orphaned_graph_rows:
-            issues.append({"code": "graph_target_missing", "node_id": row["id"], "target_type": row["target_type"], "target_id": row["target_id"]})
-
-    if await _table_exists(settings.sqlite_path, "collaboration_reviews"):
-        missing_review_page_rows = await fetch_all(
-            settings.sqlite_path,
-            "SELECT r.id, r.page_id FROM collaboration_reviews r "
-            "LEFT JOIN pages p ON p.id = r.page_id "
-            "WHERE r.page_id IS NOT NULL AND p.id IS NULL",
-            (),
-        )
-        for row in missing_review_page_rows:
-            issues.append({"code": "collaboration_review_missing_page", "review_id": row["id"], "page_id": row["page_id"]})
-
-    if await _table_exists(settings.sqlite_path, "collaboration_findings"):
-        orphan_finding_rows = await fetch_all(
-            settings.sqlite_path,
-            "SELECT f.id, f.review_id FROM collaboration_findings f "
-            "LEFT JOIN collaboration_reviews r ON r.id = f.review_id "
-            "WHERE r.id IS NULL",
-            (),
-        )
-        for row in orphan_finding_rows:
-            issues.append({"code": "collaboration_finding_orphan", "finding_id": row["id"], "review_id": row["review_id"]})
-        if await _column_exists(settings.sqlite_path, "collaboration_findings", "evidence_quality"):
-            invalid_quality_rows = await fetch_all(
-                settings.sqlite_path,
-                "SELECT id, evidence_quality FROM collaboration_findings "
-                "WHERE evidence_quality NOT IN ('direct_access','context_limited','inferred','operator_verified','unspecified')",
-                (),
-            )
-            for row in invalid_quality_rows:
-                issues.append({"code": "collaboration_finding_invalid_evidence_quality", "finding_id": row["id"], "evidence_quality": row["evidence_quality"]})
-
-    if await _table_exists(settings.sqlite_path, "implementation_records"):
-        orphan_record_rows = await fetch_all(
-            settings.sqlite_path,
-            "SELECT ir.id, ir.finding_id FROM implementation_records ir "
-            "LEFT JOIN collaboration_findings f ON f.id = ir.finding_id "
-            "WHERE ir.finding_id IS NOT NULL AND f.id IS NULL",
-            (),
-        )
-        for row in orphan_record_rows:
-            issues.append({"code": "implementation_record_orphan", "record_id": row["id"], "finding_id": row["finding_id"]})
-
-    if await _table_exists(settings.sqlite_path, "finding_tasks"):
-        orphan_task_rows = await fetch_all(
-            settings.sqlite_path,
-            "SELECT t.id, t.finding_id FROM finding_tasks t "
-            "LEFT JOIN collaboration_findings f ON f.id = t.finding_id "
-            "WHERE f.id IS NULL",
-            (),
-        )
-        for row in orphan_task_rows:
-            issues.append({"code": "finding_task_orphan", "task_id": row["id"], "finding_id": row["finding_id"]})
-
-    if await _table_exists(settings.sqlite_path, "context_bundle_manifests"):
-        forbidden_terms = (".env", ".db", "backups/", "inbox/", "sessions", "users")
-        bundle_rows = await fetch_all(
-            settings.sqlite_path,
-            "SELECT id, path, selected_pages, included_sections FROM context_bundle_manifests",
-            (),
-        )
-        for row in bundle_rows:
-            values = [str(row["path"] or ""), str(row["selected_pages"] or ""), str(row["included_sections"] or "")]
-            normalized = " ".join(values).replace("\\", "/").lower()
-            if any(term in normalized for term in forbidden_terms):
-                issues.append({"code": "context_bundle_forbidden_reference", "bundle_id": row["id"]})
-
-    if await _table_exists(settings.sqlite_path, "agent_tokens"):
-        agent_rows = await fetch_all(
-            settings.sqlite_path,
-            "SELECT id, scopes, expires_at, revoked_at FROM agent_tokens",
-            (),
-        )
-        now = utc_now()
-        for row in agent_rows:
-            try:
-                scopes = json.loads(row["scopes"] or "[]")
-            except json.JSONDecodeError:
-                scopes = None
-            if not isinstance(scopes, list):
-                issues.append({"code": "agent_token_invalid_scope_json", "token_id": row["id"]})
-            if row["expires_at"] and row["expires_at"] <= now and not row["revoked_at"]:
-                issues.append({"code": "agent_token_expired_cleanup_candidate", "token_id": row["id"]})
-
+    schema_issues, schema = await _verify_v2_index(settings)
     fts_result = await verify_pages_fts(settings.sqlite_path)
+    issues.extend(schema_issues)
     issues.extend(fts_result.get("issues") or [])
-
-    stale_patterns = ("Markdown" + "-first",)
-    scan_paths = [
-        REPO_ROOT / "README.md",
-        REPO_ROOT / "docs" / "phases" / "PHASE_7_TASKS.md",
-        REPO_ROOT / "docs" / "phases" / "PHASE_8_TASKS.md",
-        REPO_ROOT / "docs",
-        REPO_ROOT / "apps" / "api" / "knownet_api",
-        REPO_ROOT / "apps" / "web" / "app",
-        REPO_ROOT / "apps" / "web" / "components",
-    ]
-    for scan_root in scan_paths:
-        paths = [scan_root] if scan_root.is_file() else list(scan_root.rglob("*")) if scan_root.exists() else []
-        for path in paths:
-            if not path.is_file() or path.suffix.lower() not in {".md", ".py", ".tsx", ".ts", ".css"}:
-                continue
-            text = path.read_text(encoding="utf-8", errors="ignore")
-            for pattern in stale_patterns:
-                if pattern in text:
-                    issues.append({"code": "current_terminology_mismatch", "path": _posix(path.relative_to(REPO_ROOT)), "pattern": pattern})
-
     blocking_issues = [issue for issue in issues if issue.get("code") not in VERIFY_INDEX_WARNING_CODES]
     warnings = [issue for issue in issues if issue.get("code") in VERIFY_INDEX_WARNING_CODES]
     ok = len(blocking_issues) == 0
@@ -975,10 +774,10 @@ async def verify_index(request: Request, actor: Actor = Depends(require_admin_ac
         action="maintenance.verify_index",
         actor=actor,
         target_type="index",
-        target_id="pages",
-        metadata={"ok": ok, "issues_count": len(blocking_issues), "warnings_count": len(warnings)},
+        target_id="v2",
+        metadata={"ok": ok, "issues_count": len(blocking_issues), "warnings_count": len(warnings), "db_version": "v2"},
     )
-    return {"ok": True, "data": {"ok": ok, "issues": blocking_issues, "warnings": warnings}}
+    return {"ok": True, "data": {"ok": ok, "db_version": "v2", "schema": schema, "issues": blocking_issues, "warnings": warnings, "fts": fts_result.get("summary", {})}}
 
 
 @router.post("/citations/verify")

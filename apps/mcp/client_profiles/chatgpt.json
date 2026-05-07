@@ -8,7 +8,7 @@
   ],
   "best_paid_path": "ChatGPT custom connector over protected HTTPS MCP bridge.",
   "realistic_free_path": "Developer-mode quick tunnel test when available; otherwise copied standard MCP JSON.",
-  "implemented_surface": "apps/mcp/knownet_mcp/http_bridge.py",
+  "implemented_surface": "apps/mcp/src/knownet_mcp/http_bridge.py",
   "test_status": "local_http_bridge_template_ready",
   "requires_paid_or_external_setup": true,
   "access_strategy": "single_strong_path_when_connector_available",

@@ -422,10 +422,10 @@ async def enforce_write_rate_limit(request: Request, actor: Actor, settings: Set
     since = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
     rows = await fetch_all(
         settings.sqlite_path,
-        "SELECT COUNT(*) AS count FROM audit_log "
-        "WHERE created_at >= ? AND (actor_id = ? OR ip_hash = ?) "
+        "SELECT COUNT(*) AS count FROM audit_events "
+        "WHERE created_at >= ? AND actor_id = ? "
         "AND action IN ('message.created', 'suggestion.applied', 'revision.restored')",
-        (since, actor.actor_id, actor.ip_hash),
+        (since, actor.actor_id),
     )
     count = rows[0]["count"] if rows else 0
     if count >= settings.write_requests_per_minute:

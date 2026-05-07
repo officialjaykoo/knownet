@@ -32,7 +32,7 @@ def test_sarif_export_service_uses_standard_shape_and_safe_locations():
                 "source_agent": "codex",
                 "source_model": "gpt",
                 "changed_files_values": [
-                    json.dumps(["apps/api/knownet_api/routes/collaboration.py", ".env", "C:/knownet/secret.txt"])
+                    json.dumps(["apps/api/knownet_api/routes/collaboration.py#L12-L16", ".env", "C:/knownet/secret.txt"])
                 ],
                 "commit_sha": "abcdef1",
             }
@@ -49,10 +49,15 @@ def test_sarif_export_service_uses_standard_shape_and_safe_locations():
     assert result["level"] == "error"
     assert result["message"]["text"] == "Route should validate SARIF export"
     assert result["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "apps/api/knownet_api/routes/collaboration.py"
+    assert result["locations"][0]["physicalLocation"]["region"]["startLine"] == 12
+    assert result["locations"][0]["physicalLocation"]["region"]["endLine"] == 16
+    assert "knownetContentFingerprint" in result["partialFingerprints"]
     knownet = result["properties"]["knownet"]
     assert knownet["evidence_quality"] == "operator_verified"
     assert knownet["implementation"]["commit"] == "abcdef1"
     assert len(knownet["omitted_locations"]) == 2
+    assert knownet["code_scanning_ready"] is True
+    assert run["properties"]["knownet"]["code_scanning_ready_summary"]["ready"] == 1
     assert validate_sarif_log(log) == []
 
 
@@ -62,6 +67,7 @@ def test_sarif_safe_path_rejects_generated_secret_and_absolute_paths():
     assert safe_sarif_path("apps/web/.next/server.js")[0] is None
     assert safe_sarif_path("C:/knownet/apps/api/x.py")[0] is None
     assert safe_sarif_path("../outside.py")[0] is None
+    assert safe_sarif_path("apps/api/my file.py")[0] is None
 
 
 def test_phase27_sarif_fixtures_keep_standard_core_shape():

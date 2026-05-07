@@ -83,59 +83,52 @@ def _slim_state(state: dict[str, Any]) -> dict[str, Any]:
 
 
 async def build_safe_context(settings: Settings, *, vault_id: str, max_pages: int = 20, max_findings: int = 20, slim: bool = True) -> SafeContext:
+    return await _build_safe_context_v2(settings, vault_id=vault_id, max_pages=max_pages, max_findings=max_findings, slim=slim)
+
+
+async def _build_safe_context_v2(settings: Settings, *, vault_id: str, max_pages: int, max_findings: int, slim: bool) -> SafeContext:
     counts = await fetch_one(
         settings.sqlite_path,
         "SELECT "
         "(SELECT COUNT(*) FROM pages WHERE vault_id = ? AND status = 'active') AS pages, "
-        "(SELECT COUNT(*) FROM ai_state_pages WHERE vault_id = ?) AS ai_state_pages, "
-        "(SELECT COUNT(*) FROM collaboration_reviews WHERE vault_id = ?) AS reviews, "
-        "(SELECT COUNT(*) FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id WHERE r.vault_id = ?) AS findings, "
+        "0 AS structured_state_pages, "
+        "(SELECT COUNT(*) FROM reviews WHERE vault_id = ?) AS reviews, "
+        "(SELECT COUNT(*) FROM findings f JOIN reviews r ON r.id = f.review_id WHERE r.vault_id = ?) AS findings, "
         "(SELECT COUNT(*) FROM graph_nodes WHERE vault_id = ?) AS graph_nodes",
-        (vault_id, vault_id, vault_id, vault_id, vault_id),
+        (vault_id, vault_id, vault_id, vault_id),
     )
     pages = await fetch_all(
         settings.sqlite_path,
-        "SELECT a.page_id, a.slug, a.title, a.content_hash, a.state_json, a.updated_at, p.current_revision_id, sp.kind AS system_kind, sp.tier AS system_tier "
-        "FROM ai_state_pages a "
-        "LEFT JOIN pages p ON p.id = a.page_id "
-        "LEFT JOIN system_pages sp ON sp.page_id = a.page_id "
-        "WHERE a.vault_id = ? ORDER BY a.updated_at DESC LIMIT ?",
+        "SELECT id AS page_id, slug, title, updated_at, current_revision_id, NULL AS content_hash, 'page' AS system_kind, NULL AS system_tier FROM pages WHERE vault_id = ? AND status = 'active' ORDER BY updated_at DESC LIMIT ?",
         (vault_id, max_pages),
     )
-    safe_pages = []
-    revision_ids: list[str] = []
-    for row in pages:
-        state = {}
-        try:
-            state = json.loads(row["state_json"] or "{}")
-        except json.JSONDecodeError:
-            state = {"parse_error": True}
-        state = sanitize_for_model(state, label=f"ai_state.{row['slug']}")
-        if slim and isinstance(state, dict):
-            state = _slim_state(state)
-        revision_id = row.get("current_revision_id")
-        if revision_id:
-            revision_ids.append(str(revision_id))
-        safe_pages.append(
-            {
-                "page_id": row["page_id"],
-                "slug": row["slug"],
-                "title": row["title"],
-                "content_hash": row["content_hash"],
-                "current_revision_id": revision_id,
-                "updated_at": row["updated_at"],
-                "system_kind": row.get("system_kind"),
-                "system_tier": row.get("system_tier"),
-                "state": state,
-                "source_ref": str(PurePosixPath("pages") / f"{row['slug']}.md"),
-            }
-        )
+    safe_pages = [
+        {
+            "page_id": row["page_id"],
+            "slug": row["slug"],
+            "title": row["title"],
+            "content_hash": row.get("content_hash"),
+            "current_revision_id": row.get("current_revision_id"),
+            "updated_at": row["updated_at"],
+            "system_kind": row.get("system_kind"),
+            "system_tier": row.get("system_tier"),
+            "state": {"summary": row["title"], "status": "active"},
+            "source_ref": str(PurePosixPath("pages") / f"{row['slug']}.md"),
+        }
+        for row in pages
+    ]
     findings = await fetch_all(
         settings.sqlite_path,
-        "SELECT f.id, f.severity, f.area, f.title, f.status, f.evidence_quality, r.id AS review_id, r.title AS review_title "
-        "FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
-        "WHERE r.vault_id = ? AND f.status IN ('pending','needs_more_context','accepted','deferred') "
-        "ORDER BY CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, f.updated_at DESC LIMIT 50",
+        """
+        SELECT f.id, f.severity, f.area, f.title, f.status,
+               COALESCE(fe.evidence_quality, 'unspecified') AS evidence_quality,
+               r.id AS review_id, r.title AS review_title
+          FROM findings f
+          JOIN reviews r ON r.id = f.review_id
+          LEFT JOIN finding_evidence fe ON fe.finding_id = f.id
+         WHERE r.vault_id = ? AND f.status IN ('pending','needs_more_context','accepted','deferred')
+         ORDER BY CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, f.updated_at DESC LIMIT 50
+        """,
         (vault_id,),
     )
     deduped_findings = []
@@ -151,8 +144,12 @@ async def build_safe_context(settings: Settings, *, vault_id: str, max_pages: in
             break
     existing_title_rows = await fetch_all(
         settings.sqlite_path,
-        "SELECT f.title, f.status FROM collaboration_findings f JOIN collaboration_reviews r ON r.id = f.review_id "
-        "WHERE r.vault_id = ? ORDER BY f.updated_at DESC LIMIT 120",
+        """
+        SELECT f.title, f.status
+          FROM findings f
+          JOIN reviews r ON r.id = f.review_id
+         WHERE r.vault_id = ? ORDER BY f.updated_at DESC LIMIT 120
+        """,
         (vault_id,),
     )
     existing_finding_titles = []
@@ -176,10 +173,7 @@ async def build_safe_context(settings: Settings, *, vault_id: str, max_pages: in
     )
     contract_errors = validate_packet_contract(contract)
     if contract_errors:
-        raise HTTPException(
-            status_code=500,
-            detail={"code": "provider_fast_lane_contract_invalid", "message": "Generated provider packet contract is invalid", "details": {"errors": contract_errors}},
-        )
+        raise HTTPException(status_code=500, detail={"code": "provider_fast_lane_contract_invalid", "message": "Generated provider packet contract is invalid", "details": {"errors": contract_errors}})
     generated_at = utc_now()
     trace_id = "provider_" + hashlib.sha256(f"{vault_id}:{generated_at}".encode("utf-8")).hexdigest()[:16]
     provider_context_id = "provider_fast_lane_" + hashlib.sha256(f"{vault_id}:{generated_at}:context".encode("utf-8")).hexdigest()[:12]
@@ -196,11 +190,7 @@ async def build_safe_context(settings: Settings, *, vault_id: str, max_pages: in
                 trace_id=trace_id,
                 name="knownet.provider_fast_lane_context",
                 span_kind="CLIENT",
-                attributes={
-                    "knownet.packet.kind": "provider_fast_lane",
-                    "knownet.packet.profile": "provider_review",
-                    "knownet.vault_id": vault_id,
-                },
+                attributes={"knownet.packet.kind": "provider_fast_lane", "knownet.packet.profile": "provider_review", "knownet.vault_id": vault_id},
             ),
             "contract": contract,
             "contract_shape": contract_shape(contract),
@@ -212,15 +202,8 @@ async def build_safe_context(settings: Settings, *, vault_id: str, max_pages: in
             },
             "vault_id": vault_id,
             "purpose": "External model review context. Do not request raw database files, local filesystem paths, secrets, backups, sessions, or users.",
-            "protocols": {
-                "access_fallback": "If direct access is unavailable, state the limitation and continue only from supplied context.",
-                "boundary_enforcement": "Refuse secrets, raw database files, backups, sessions, users, shell access, and unreviewed writes. Escalate ambiguous write or restore requests.",
-                "evidence_quality": "Use context_limited unless the model directly observed the system state through the provided API response.",
-            },
             "summary": counts or {},
-            "packet_summary": {
-                "open_findings": [finding_summary(row) for row in deduped_findings],
-            },
+            "packet_summary": {"open_findings": [finding_summary(row) for row in deduped_findings]},
             "node_cards": [node_card(row, short_summary=str(row.get("state") or "")) for row in safe_pages],
             "pages": safe_pages,
             "open_findings": deduped_findings,
@@ -231,7 +214,7 @@ async def build_safe_context(settings: Settings, *, vault_id: str, max_pages: in
             "rules": {
                 "output_format": "Return JSON only with review_title, overall_assessment, findings, and summary.",
                 "operator_import_required": True,
-                "canonical_state": "SQLite structured records and generated ai_state exposed through scoped APIs.",
+                "canonical_state": "SQLite v2 structured records exposed through scoped APIs.",
                 "daily_verification": "Prefer targeted tests and API smoke checks. Do not recommend full release_check unless release verification is explicitly requested.",
             },
         },
@@ -240,27 +223,18 @@ async def build_safe_context(settings: Settings, *, vault_id: str, max_pages: in
     text = _json_dumps(context)
     schema_errors = validate_packet_schema_core(context)
     if schema_errors:
-        raise HTTPException(
-            status_code=500,
-            detail={"code": "provider_fast_lane_packet_schema_invalid", "message": "Generated provider packet failed packet schema validation", "details": {"errors": schema_errors}},
-        )
+        raise HTTPException(status_code=500, detail={"code": "provider_fast_lane_packet_schema_invalid", "message": "Generated provider packet failed packet schema validation", "details": {"errors": schema_errors}})
     _reject_forbidden_text(text, label="model_context")
     if len(text) > settings.gemini_max_context_chars:
-        raise HTTPException(
-            status_code=413,
-            detail={"code": "model_context_too_large", "message": "Model context exceeds configured character budget", "details": {"max_chars": settings.gemini_max_context_chars}},
-        )
+        raise HTTPException(status_code=413, detail={"code": "model_context_too_large", "message": "Model context exceeds configured character budget", "details": {"max_chars": settings.gemini_max_context_chars}})
     tokens = estimate_tokens(text)
     if tokens > settings.gemini_max_context_tokens:
-        raise HTTPException(
-            status_code=413,
-            detail={"code": "model_context_too_large", "message": "Model context exceeds configured token budget", "details": {"max_tokens": settings.gemini_max_context_tokens, "estimated_tokens": tokens}},
-        )
+        raise HTTPException(status_code=413, detail={"code": "model_context_too_large", "message": "Model context exceeds configured token budget", "details": {"max_tokens": settings.gemini_max_context_tokens, "estimated_tokens": tokens}})
     summary = {
         "vault_id": vault_id,
         "page_count": len(safe_pages),
-        "revision_ids": sorted(set(revision_ids))[:100],
-        "content_hashes": [page["content_hash"] for page in safe_pages],
+        "revision_ids": sorted({str(page.get("current_revision_id")) for page in safe_pages if page.get("current_revision_id")})[:100],
+        "content_hashes": [page["content_hash"] for page in safe_pages if page.get("content_hash")],
         "open_finding_count": len(deduped_findings),
         "existing_finding_title_count": len(existing_finding_titles),
         "context_mode": "slim" if slim else "full",
