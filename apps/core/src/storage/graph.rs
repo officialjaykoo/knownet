@@ -670,18 +670,42 @@ fn build_semantic_edges(
     Ok(())
 }
 
+fn table_exists(tx: &Transaction<'_>, table_name: &str) -> Result<bool, CoreError> {
+    let count: i64 = tx
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            params![table_name],
+            |row| row.get(0),
+        )
+        .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
+    Ok(count > 0)
+}
+
 fn build_collaboration_graph(
     tx: &Transaction<'_>,
     vault_id: &str,
     now: &str,
     summary: &mut GraphRebuildSummary,
 ) -> Result<(), CoreError> {
+    let has_v2_reviews = table_exists(tx, "reviews")?;
+    let has_v1_reviews = table_exists(tx, "collaboration_reviews")?;
+    if !has_v2_reviews && !has_v1_reviews {
+        return Ok(());
+    }
+    let reviews_table = if has_v2_reviews { "reviews" } else { "collaboration_reviews" };
+    let findings_table = if has_v2_reviews { "findings" } else { "collaboration_findings" };
+    let review_target_type = if has_v2_reviews { "review" } else { "collaboration_review" };
+    let finding_target_type = if has_v2_reviews { "finding" } else { "collaboration_finding" };
+
     let mut review_statement = tx
         .prepare(
-            "SELECT id, title, source_agent, source_model, status, page_id, created_at
-             FROM collaboration_reviews
-             WHERE vault_id = ?1
-             ORDER BY updated_at DESC",
+            &format!(
+                "SELECT id, title, source_agent, source_model, status, page_id, created_at
+                 FROM {}
+                 WHERE vault_id = ?1
+                 ORDER BY updated_at DESC",
+                reviews_table
+            ),
         )
         .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
     let reviews = review_statement
@@ -708,7 +732,7 @@ fn build_collaboration_graph(
             vault_id,
             "review",
             &title,
-            Some("collaboration_review"),
+            Some(review_target_type),
             Some(&review_id),
             Some(&status),
             2.0,
@@ -739,11 +763,14 @@ fn build_collaboration_graph(
 
     let mut finding_statement = tx
         .prepare(
-            "SELECT f.id, f.review_id, f.severity, f.area, f.title, f.status, r.page_id
-             FROM collaboration_findings f
-             JOIN collaboration_reviews r ON r.id = f.review_id
-             WHERE r.vault_id = ?1
-             ORDER BY f.updated_at DESC",
+            &format!(
+                "SELECT f.id, f.review_id, f.severity, f.area, f.title, f.status, r.page_id
+                 FROM {} f
+                 JOIN {} r ON r.id = f.review_id
+                 WHERE r.vault_id = ?1
+                 ORDER BY f.updated_at DESC",
+                findings_table, reviews_table
+            ),
         )
         .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
     let findings = finding_statement
@@ -771,7 +798,7 @@ fn build_collaboration_graph(
             vault_id,
             "finding",
             &title,
-            Some("collaboration_finding"),
+            Some(finding_target_type),
             Some(&finding_id),
             Some(&status),
             finding_weight(&severity, &status),
@@ -809,12 +836,15 @@ fn build_collaboration_graph(
 
     let mut implementation_statement = tx
         .prepare(
-            "SELECT ir.id, ir.finding_id, ir.commit_sha
-             FROM implementation_records ir
-             JOIN collaboration_findings f ON f.id = ir.finding_id
-             JOIN collaboration_reviews r ON r.id = f.review_id
-             WHERE r.vault_id = ?1
-             ORDER BY ir.created_at DESC",
+            &format!(
+                "SELECT ir.id, ir.finding_id, ir.commit_sha
+                 FROM implementation_records ir
+                 JOIN {} f ON f.id = ir.finding_id
+                 JOIN {} r ON r.id = f.review_id
+                 WHERE r.vault_id = ?1
+                 ORDER BY ir.created_at DESC",
+                findings_table, reviews_table
+            ),
         )
         .map_err(|err| CoreError::new("sqlite_error", err.to_string()))?;
     let records = implementation_statement

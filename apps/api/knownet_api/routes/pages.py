@@ -102,6 +102,15 @@ def _citation_definitions(markdown: str) -> dict[str, str]:
     return definitions
 
 
+def _page_links_from_markdown(markdown: str) -> list[dict]:
+    links: list[dict] = []
+    for match in re.finditer(r"\[\[([^\]]+)\]\]", _strip_frontmatter(markdown)):
+        raw = match.group(1)
+        target, _, display = raw.partition("|")
+        links.append({"raw": raw, "target": _safe_slug(target), "display": display.strip() or None, "status": "unresolved"})
+    return links
+
+
 def _source_excerpt(path: str | None, max_chars: int = 420) -> str | None:
     if not path:
         return None
@@ -115,18 +124,40 @@ def _source_excerpt(path: str | None, max_chars: int = 420) -> str | None:
 
 async def _citation_sources(settings, page_id: str, revision_id: str | None, markdown: str) -> list[dict]:
     definitions = _citation_definitions(markdown)
-    rows = await fetch_all(
+    table_rows = await fetch_all(
         settings.sqlite_path,
-        "SELECT c.citation_key, c.display_title, c.validation_status, m.path AS message_path, "
-        "ca.status AS audit_status, ca.reason, ca.evidence_snapshot_id, ev.excerpt AS evidence_excerpt "
-        "FROM citations c "
-        "LEFT JOIN messages m ON m.id = c.citation_key "
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('citations', 'messages', 'citation_audits', 'citation_evidence_snapshots')",
+        (),
+    )
+    tables = {row["name"] for row in table_rows}
+    if "citations" not in tables:
+        return [
+            {"key": key, "display_title": key, "definition": definition, "excerpt": None, "status": "unchecked", "reason": None}
+            for key, definition in definitions.items()
+        ]
+    message_path_select = "m.path AS message_path" if "messages" in tables else "NULL AS message_path"
+    message_join = "LEFT JOIN messages m ON m.id = c.citation_key " if "messages" in tables else ""
+    audit_select = "ca.status AS audit_status, ca.reason, ca.evidence_snapshot_id" if "citation_audits" in tables else "NULL AS audit_status, NULL AS reason, NULL AS evidence_snapshot_id"
+    audit_join = (
         "LEFT JOIN citation_audits ca ON ca.page_id = c.page_id "
         "  AND (ca.revision_id IS c.revision_id OR ca.revision_id = c.revision_id) "
         "  AND ca.citation_key = c.citation_key "
-        "LEFT JOIN citation_evidence_snapshots ev ON ev.id = ca.evidence_snapshot_id "
+        if "citation_audits" in tables
+        else ""
+    )
+    evidence_select = "ev.excerpt AS evidence_excerpt" if "citation_evidence_snapshots" in tables and "citation_audits" in tables else "NULL AS evidence_excerpt"
+    evidence_join = "LEFT JOIN citation_evidence_snapshots ev ON ev.id = ca.evidence_snapshot_id " if "citation_evidence_snapshots" in tables and "citation_audits" in tables else ""
+    order_clause = "ORDER BY c.citation_key, ca.updated_at DESC" if "citation_audits" in tables else "ORDER BY c.citation_key"
+    rows = await fetch_all(
+        settings.sqlite_path,
+        f"SELECT c.citation_key, c.display_title, c.validation_status, {message_path_select}, "
+        f"{audit_select}, {evidence_select} "
+        f"FROM citations c "
+        f"{message_join}"
+        f"{audit_join}"
+        f"{evidence_join}"
         "WHERE c.page_id = ? AND (c.revision_id IS ? OR c.revision_id = ?) "
-        "ORDER BY c.citation_key, ca.updated_at DESC",
+        f"{order_clause}",
         (page_id, revision_id, revision_id),
     )
     seen: set[str] = set()
@@ -274,6 +305,7 @@ async def list_pages(request: Request):
                 "updated_at": row["updated_at"],
                 "links_count": row["links_count"],
                 "citations_count": row["citations_count"],
+                "links": [],
                 **system_fields(row),
             }
             for row in rows
@@ -282,7 +314,20 @@ async def list_pages(request: Request):
     else:
         pages = []
         for path in sorted(pages_dir.glob("*.md")):
-            pages.append({"slug": path.stem, "title": path.stem, "path": str(path).replace("\\", "/"), "links_count": 0, "citations_count": 0})
+            markdown = path.read_text(encoding="utf-8")
+            frontmatter = _frontmatter(markdown)
+            links = _page_links_from_markdown(markdown)
+            citations = _citation_definitions(markdown)
+            pages.append(
+                {
+                    "slug": frontmatter.get("slug") or path.stem,
+                    "title": frontmatter.get("title") or path.stem,
+                    "path": str(path).replace("\\", "/"),
+                    "links_count": len(links),
+                    "citations_count": len(citations),
+                    "links": links,
+                }
+            )
     return {"ok": True, "data": {"pages": pages}}
 
 

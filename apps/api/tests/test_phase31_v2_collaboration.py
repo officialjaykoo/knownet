@@ -145,6 +145,37 @@ def test_v2_review_decision_task_and_implementation_use_clean_tables(tmp_path, m
     get_settings.cache_clear()
 
 
+def test_v2_page_and_submission_routes_do_not_require_legacy_inbox_tables(tmp_path, monkeypatch):
+    _isolate_v2(monkeypatch, tmp_path)
+    with TestClient(app) as client:
+        settings = app.state.settings
+        page_dir = settings.data_dir / "pages"
+        page_dir.mkdir(parents=True, exist_ok=True)
+        (page_dir / "v2-source.md").write_text("# V2 Source\n\nCitation [^source-1].\n\n[^source-1]: DB v2 source note\n", encoding="utf-8")
+        with sqlite3.connect(settings.sqlite_path) as connection:
+            connection.execute(
+                "INSERT INTO pages (id, vault_id, title, slug, path, current_revision_id, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                ("page_v2_source", "local-default", "V2 Source", "v2-source", "pages/v2-source.md", "rev_v2_source", "active", "now", "now"),
+            )
+            connection.execute(
+                "INSERT INTO citations (page_id, revision_id, citation_key, display_title, validation_status, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                ("page_v2_source", "rev_v2_source", "source-1", "Source One", "unchecked", "now"),
+            )
+
+        page = client.get("/api/pages/v2-source")
+        assert page.status_code == 200, page.text
+        sources = page.json()["data"]["citation_sources"]
+        assert sources[0]["key"] == "source-1"
+        assert sources[0]["display_title"] == "Source One"
+        assert sources[0]["definition"] == "DB v2 source note"
+
+        submissions = client.get("/api/submissions")
+        assert submissions.status_code == 200, submissions.text
+        assert submissions.json()["data"]["submissions"] == []
+
+    get_settings.cache_clear()
+
+
 def test_v2_sarif_export_uses_finding_evidence_and_locations(tmp_path, monkeypatch):
     _isolate_v2(monkeypatch, tmp_path)
     with TestClient(app) as client:

@@ -1,24 +1,18 @@
 "use client";
 
-import { Clipboard, FileText, Play, Upload } from "lucide-react";
+import { Clipboard, FileText } from "lucide-react";
 
 type AIPacketsWorkspaceProps = {
   canOperate: boolean;
   operatorBusyAction: string | null;
   projectSnapshotPacket: any;
+  projectSnapshotCopyState: string;
   projectSnapshotTargetAgent: string;
   projectSnapshotProfile: string;
   projectSnapshotOutputMode: string;
   projectSnapshotFocus: string;
   projectSnapshotSincePacketId: string;
   projectSnapshotQualityAcknowledged: boolean;
-  experimentPacket: any;
-  experimentName: string;
-  experimentTask: string;
-  experimentScenarios: string;
-  experimentResponseMarkdown: string;
-  experimentResponseDryRun: any;
-  experimentImportedReviewId: string | null;
   onGenerateProjectSnapshotPacket: () => void;
   onCopyProjectSnapshotPacket: () => void;
   onCopyProjectSnapshotMultiAiPrompt: () => void;
@@ -29,33 +23,19 @@ type AIPacketsWorkspaceProps = {
   onApplyProjectSnapshotStandardizationPreset: () => void;
   onProjectSnapshotSincePacketIdChange: (value: string) => void;
   onProjectSnapshotQualityAcknowledgedChange: (value: boolean) => void;
-  onGenerateExperimentPacket: () => void;
-  onCopyExperimentPacket: () => void;
-  onExperimentNameChange: (value: string) => void;
-  onExperimentTaskChange: (value: string) => void;
-  onExperimentScenariosChange: (value: string) => void;
-  onExperimentResponseMarkdownChange: (value: string) => void;
-  onDryRunExperimentResponse: () => void;
-  onImportExperimentResponse: () => void;
 };
 
 export function AIPacketsWorkspace({
   canOperate,
   operatorBusyAction,
   projectSnapshotPacket,
+  projectSnapshotCopyState,
   projectSnapshotTargetAgent,
   projectSnapshotProfile,
   projectSnapshotOutputMode,
   projectSnapshotFocus,
   projectSnapshotSincePacketId,
   projectSnapshotQualityAcknowledged,
-  experimentPacket,
-  experimentName,
-  experimentTask,
-  experimentScenarios,
-  experimentResponseMarkdown,
-  experimentResponseDryRun,
-  experimentImportedReviewId,
   onGenerateProjectSnapshotPacket,
   onCopyProjectSnapshotPacket,
   onCopyProjectSnapshotMultiAiPrompt,
@@ -66,14 +46,6 @@ export function AIPacketsWorkspace({
   onApplyProjectSnapshotStandardizationPreset,
   onProjectSnapshotSincePacketIdChange,
   onProjectSnapshotQualityAcknowledgedChange,
-  onGenerateExperimentPacket,
-  onCopyExperimentPacket,
-  onExperimentNameChange,
-  onExperimentTaskChange,
-  onExperimentScenariosChange,
-  onExperimentResponseMarkdownChange,
-  onDryRunExperimentResponse,
-  onImportExperimentResponse,
 }: AIPacketsWorkspaceProps) {
   const projectPacketDisabledReason = !canOperate
     ? "Owner/admin login required"
@@ -90,10 +62,10 @@ export function AIPacketsWorkspace({
   const packetSizeState = packetChars && packetChars > packetBudget ? "over budget" : packetChars && packetChars <= packetTarget ? "under target" : "within budget";
 
   return (
-    <section className="ai-packets-workspace" aria-label="AI Packets">
+    <section className="ai-packets-workspace" aria-label="Packets workspace">
       <div className="workspace-dashboard-head">
         <div>
-          <p className="eyebrow">AI Packets</p>
+          <p className="eyebrow">Packets</p>
           <h2>Compact AI Handoff</h2>
         </div>
         <div className="operator-actions">
@@ -123,11 +95,11 @@ export function AIPacketsWorkspace({
             <div className="operator-actions">
               <button onClick={onCopyProjectSnapshotPacket} type="button">
                 <Clipboard aria-hidden size={15} />
-                Copy
+                {projectSnapshotCopyState === "packet" ? "Copied" : "Copy packet"}
               </button>
               <button onClick={onCopyProjectSnapshotMultiAiPrompt} type="button">
                 <Clipboard aria-hidden size={15} />
-                Copy multi-AI prompt
+                {projectSnapshotCopyState === "prompt" ? "Copied" : "Copy multi-AI prompt"}
               </button>
             </div>
           </div>
@@ -225,78 +197,6 @@ export function AIPacketsWorkspace({
               <input checked={projectSnapshotQualityAcknowledged} onChange={(event) => onProjectSnapshotQualityAcknowledgedChange(event.target.checked)} type="checkbox" />
               <span>Quality warnings acknowledged</span>
             </label>
-          ) : null}
-        </div>
-      </section>
-      <section className="experiment-packet-panel">
-        <div className="operator-panel-head">
-          <div>
-            <h3>External AI Packet</h3>
-            <small>{experimentPacket ? `${experimentPacket.included_nodes.length} node(s) / ${experimentPacket.id}` : "Generate a copy-ready Claude/Codex packet"}</small>
-          </div>
-          <div className="operator-actions">
-            <button disabled={!canOperate || operatorBusyAction === "experiment-packet"} onClick={onGenerateExperimentPacket} type="button">
-              <FileText aria-hidden size={15} />
-              {operatorBusyAction === "experiment-packet" ? "Generating" : "Generate"}
-            </button>
-            <button disabled={!experimentPacket} onClick={onCopyExperimentPacket} type="button">
-              <Clipboard aria-hidden size={15} />
-              Copy
-            </button>
-          </div>
-        </div>
-        <div className="experiment-packet-form">
-          <label>
-            <span>Experiment</span>
-            <input onChange={(event) => onExperimentNameChange(event.target.value)} value={experimentName} />
-          </label>
-          <label>
-            <span>Task</span>
-            <textarea onChange={(event) => onExperimentTaskChange(event.target.value)} rows={2} value={experimentTask} />
-          </label>
-          <label>
-            <span>Scenarios</span>
-            <textarea onChange={(event) => onExperimentScenariosChange(event.target.value)} rows={3} value={experimentScenarios} />
-          </label>
-        </div>
-        {experimentPacket ? (
-          <div className="experiment-packet-preview">
-            <div className="model-run-stats">
-              <span>{experimentPacket.preflight.pages} pages</span>
-              <span>{experimentPacket.preflight.structured_state_pages} structured state</span>
-              <span>{experimentPacket.preflight.unresolved_nodes} unresolved</span>
-              <span>{experimentPacket.preflight.pending_findings} pending findings</span>
-              <span>{experimentPacket.links.self.href}</span>
-            </div>
-            <textarea readOnly rows={10} value={experimentPacket.content} />
-          </div>
-        ) : null}
-        <div className="experiment-response-panel">
-          <div className="operator-panel-head">
-            <h4>Response Dry Run</h4>
-            <button disabled={!experimentPacket || !experimentResponseMarkdown.trim() || operatorBusyAction === "experiment-response"} onClick={onDryRunExperimentResponse} type="button">
-              <Play aria-hidden size={15} />
-              {operatorBusyAction === "experiment-response" ? "Parsing" : "Dry-run parse"}
-            </button>
-            <button disabled={!experimentResponseDryRun || Boolean(experimentImportedReviewId) || operatorBusyAction === "experiment-import"} onClick={onImportExperimentResponse} type="button">
-              <Upload aria-hidden size={15} />
-              {operatorBusyAction === "experiment-import" ? "Importing" : "Import to inbox"}
-            </button>
-          </div>
-          <textarea onChange={(event) => onExperimentResponseMarkdownChange(event.target.value)} placeholder="Paste Claude or Codex response here" rows={6} value={experimentResponseMarkdown} />
-          {experimentResponseDryRun ? (
-            <div className="experiment-dry-run-result">
-              <strong>{experimentResponseDryRun.finding_count} finding(s)</strong>
-              {experimentImportedReviewId ? <small>Imported as {experimentImportedReviewId}</small> : experimentResponseDryRun.parser_errors.length ? <small>{experimentResponseDryRun.parser_errors.join(", ")}</small> : <small>No parser errors</small>}
-              <div className="model-run-findings">
-                {experimentResponseDryRun.findings.slice(0, 3).map((finding: any) => (
-                  <article key={finding.title}>
-                    <span>{finding.severity} / {finding.area}</span>
-                    <strong>{finding.title}</strong>
-                  </article>
-                ))}
-              </div>
-            </div>
           ) : null}
         </div>
       </section>

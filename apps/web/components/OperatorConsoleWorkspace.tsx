@@ -61,11 +61,11 @@ export function OperatorConsoleWorkspace({
   onRestoreSnapshot,
 }: OperatorConsoleWorkspaceProps) {
   return (
-    <section className="operator-console" aria-label="Operator Console">
+    <section className="operator-console" aria-label="Ops workspace">
       <div className="operator-head">
         <div>
-          <p className="eyebrow">Operator Console</p>
-          <h2>Phase 17 Readiness</h2>
+          <p className="eyebrow">Ops</p>
+          <h2>System Operations</h2>
         </div>
         <div className="operator-actions">
           <button onClick={onRefresh} type="button">

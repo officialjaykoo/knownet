@@ -7,10 +7,12 @@ type AIReviewsWorkspaceProps = {
   canWrite: boolean;
   canOperate: boolean;
   reviewMarkdown: string;
+  reviewDryRun: any;
   collaborationReviews: any[];
   selectedCollaborationReview: any;
   onReviewMarkdownChange: (value: string) => void;
   onImportReview: (event: FormEvent<HTMLFormElement>) => void;
+  onDryRunReview: () => void;
   onRefresh: () => void;
   onExportSarif: () => void;
   onLoadReview: (reviewId: string) => void;
@@ -22,10 +24,12 @@ export function AIReviewsWorkspace({
   canWrite,
   canOperate,
   reviewMarkdown,
+  reviewDryRun,
   collaborationReviews,
   selectedCollaborationReview,
   onReviewMarkdownChange,
   onImportReview,
+  onDryRunReview,
   onRefresh,
   onExportSarif,
   onLoadReview,
@@ -33,10 +37,10 @@ export function AIReviewsWorkspace({
   onCreateFindingTask,
 }: AIReviewsWorkspaceProps) {
   return (
-    <section className="ai-reviews-workspace" aria-label="AI Reviews">
+    <section className="ai-reviews-workspace" aria-label="Reviews workspace">
       <div className="workspace-dashboard-head">
         <div>
-          <p className="eyebrow">AI Reviews</p>
+          <p className="eyebrow">Reviews</p>
           <h2>Review Inbox</h2>
         </div>
         <button onClick={onRefresh} type="button">
@@ -50,7 +54,7 @@ export function AIReviewsWorkspace({
       </div>
       <div className="ai-reviews-grid">
         <section className="review-panel collaboration-panel main-review-panel">
-          <p className="eyebrow">Import</p>
+          <p className="eyebrow">Step 1: Parse</p>
           <form className="collab-import" onSubmit={onImportReview}>
             <textarea
               aria-label="Agent review Markdown"
@@ -58,11 +62,40 @@ export function AIReviewsWorkspace({
               value={reviewMarkdown}
               onChange={(event) => onReviewMarkdownChange(event.target.value)}
             />
-            <button disabled={!canWrite || !reviewMarkdown.trim()} type="submit">
+            <button disabled={!canWrite || !reviewMarkdown.trim()} onClick={onDryRunReview} type="button">
+              <RefreshCw aria-hidden size={15} />
+              Dry Run
+            </button>
+            <button disabled={!canWrite || !reviewMarkdown.trim() || !reviewDryRun || reviewDryRun.parser_errors?.length} title={!reviewDryRun ? "Run parser dry-run first" : reviewDryRun.parser_errors?.length ? "Fix parser errors before import" : "Import review"} type="submit">
               <Save aria-hidden size={15} />
               Import review
             </button>
           </form>
+          {reviewDryRun ? (
+            <div className="review-dry-run-panel">
+              <p className="eyebrow">Step 2: Import Preview</p>
+              <strong>{reviewDryRun.finding_count || 0} finding(s)</strong>
+              {reviewDryRun.parser_errors?.length ? (
+                <div className="parser-error-list">
+                  {reviewDryRun.parser_errors.map((error: string) => (
+                    <span key={error}>{error}</span>
+                  ))}
+                </div>
+              ) : (
+                <small>No parser errors. Import is available.</small>
+              )}
+              {reviewDryRun.findings?.length ? (
+                <div className="review-preview-findings">
+                  {reviewDryRun.findings.slice(0, 3).map((finding: any) => (
+                    <article key={finding.title}>
+                      <span>{finding.severity} / {finding.area}</span>
+                      <strong>{finding.title}</strong>
+                    </article>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <div className="review-list-main">
             {collaborationReviews.map((item) => (
               <button className={selectedCollaborationReview?.review.id === item.id ? "review-open active" : "review-open"} key={item.id} onClick={() => onLoadReview(item.id)} type="button">

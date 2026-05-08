@@ -116,8 +116,8 @@ export function GraphPanel({
     <section className="graph-panel">
       <div className="graph-head">
         <div>
-          <p className="eyebrow">Knowledge Map</p>
-          <h2>Graph</h2>
+          <p className="eyebrow">Sources</p>
+          <h2>Source Graph</h2>
         </div>
         <div className="graph-actions">
           <select aria-label="Graph node type" value={graphNodeType} onChange={(event) => onGraphNodeTypeChange(event.target.value)}>

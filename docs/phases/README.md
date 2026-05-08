@@ -19,6 +19,11 @@ PHASE_30_TASKS.md - source structure cleanup:
 PHASE_31_TASKS.md - DB v2 runtime adoption:
   reconnect API, packet, SARIF, provider-run, agent/operator, and maintenance
   paths to the clean v2 SQLite schema before promoting data/knownet-v2.db.
+
+PHASE_32_TASKS.md - workflow-first operator UI:
+  redesign the web UI around Next, Packets, Reviews, Tasks, Sources, and Ops so
+  the operator sees the next AI collaboration action instead of backend module
+  names.
 ```
 
 ## Archive Rule

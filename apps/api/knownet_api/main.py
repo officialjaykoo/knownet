@@ -36,6 +36,7 @@ from .services.job_processor import JobProcessor
 from .services.rust_core import RustCoreClient
 from .services.search_index import search_index_status
 from .services.source_selector import SourceSelector
+from .services.ai_state import ensure_legacy_ai_state_schema
 from .services.system_pages import ensure_system_pages_schema, register_managed_seed_pages, register_onboarding_pages
 
 
@@ -145,6 +146,7 @@ async def lifespan(app: FastAPI):
     app.state.v2_schema = None
     if app.state.rust_core.available:
         app.state.v2_schema = await initialize_or_verify_v2_schema(settings.sqlite_path)
+        await ensure_legacy_ai_state_schema(settings.sqlite_path)
         await ensure_phase6_schema(settings.sqlite_path)
         await ensure_system_pages_schema(settings.sqlite_path)
         await register_onboarding_pages(settings.sqlite_path)

@@ -310,6 +310,54 @@ def _require_scope(agent: AgentAuth, scope: str, *, slug: str | None = None) -> 
         )
 
 
+def _source_ref(source_path: str, slug: str) -> str:
+    normalized = source_path.replace("\\", "/")
+    if "/pages/" in normalized:
+        return "pages/" + normalized.rsplit("/pages/", 1)[1]
+    if normalized.startswith("data/pages/"):
+        return normalized.removeprefix("data/")
+    return f"pages/{slug}.md"
+
+
+def _is_draft_ai_state(state: dict) -> bool:
+    headings = {str(item.get("heading", "")).strip().lower() for item in state.get("sections", []) if isinstance(item, dict)}
+    draft_headings = {"question", "claims", "evidence", "next actions"}
+    return bool(draft_headings.intersection(headings)) and "current state" not in headings
+
+
+def _public_ai_state_row(row: dict, fields: dict) -> dict:
+    try:
+        state = json.loads(row["state_json"])
+    except (TypeError, json.JSONDecodeError):
+        state = {"schema_version": 1, "summary": row["title"], "parse_warning": "invalid_state_json"}
+    if isinstance(state, dict):
+        source = state.get("source")
+        if isinstance(source, dict):
+            source.pop("path", None)
+    else:
+        state = {"schema_version": 1, "summary": str(state)}
+    state_hash = hashlib.sha256(json.dumps(state, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    return {
+        "page_id": row["page_id"],
+        "slug": row["slug"],
+        "title": row["title"],
+        "source_ref": _source_ref(row["source_path"], row["slug"]),
+        "content_hash": row["content_hash"],
+        "content_hash_note": "Hash of the source Markdown content used to build this structured AI state.",
+        "state_hash": state_hash,
+        "state_status": "published",
+        "page_kind": _page_kind(fields),
+        **fields,
+        "state": state,
+        "updated_at": row["updated_at"],
+    }
+
+
+async def _ai_state_table_exists(sqlite_path) -> bool:
+    row = await fetch_one(sqlite_path, "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'ai_state_pages'", ())
+    return bool(row)
+
+
 @router.get("/ping")
 async def agent_ping():
     return {"ok": True, "version": "9.0"}
@@ -503,6 +551,59 @@ async def agent_ai_state(request: Request, limit: int = 50, offset: int = 0, inc
     limit = min(max(limit, 1), agent.max_pages_per_request)
     offset = max(offset, 0)
     settings = request.app.state.settings
+    if await _ai_state_table_exists(settings.sqlite_path):
+        total_row = await fetch_one(settings.sqlite_path, "SELECT COUNT(*) AS count FROM ai_state_pages WHERE vault_id = ?", (agent.vault_id,))
+        total = total_row["count"] if total_row else 0
+        all_state_rows = await fetch_all(settings.sqlite_path, "SELECT state_json FROM ai_state_pages WHERE vault_id = ?", (agent.vault_id,))
+        total_published = 0
+        for state_row in all_state_rows:
+            try:
+                parsed = json.loads(state_row["state_json"])
+            except (TypeError, json.JSONDecodeError):
+                parsed = {}
+            if include_drafts or not (isinstance(parsed, dict) and _is_draft_ai_state(parsed)):
+                total_published += 1
+        rows = await fetch_all(
+            settings.sqlite_path,
+            "SELECT id, vault_id, page_id, slug, title, source_path, content_hash, state_json, updated_at "
+            "FROM ai_state_pages WHERE vault_id = ? ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+            (agent.vault_id, limit, offset),
+        )
+        system_by_page_id = await system_rows_for_page_ids(settings.sqlite_path, [row["page_id"] for row in rows])
+        states = []
+        skipped_drafts = 0
+        for row in rows:
+            try:
+                parsed = json.loads(row["state_json"])
+            except (TypeError, json.JSONDecodeError):
+                parsed = {}
+            if not include_drafts and isinstance(parsed, dict) and _is_draft_ai_state(parsed):
+                skipped_drafts += 1
+                continue
+            fields = system_by_page_id.get(row["page_id"], {"system_kind": None, "system_tier": None, "system_locked": False})
+            states.append(_public_ai_state_row(row, fields))
+        scanned = len(rows)
+        has_more = total > offset + scanned
+        await record_agent_access(settings.sqlite_path, agent=agent, action="agent.ai_state", status="ok", meta={"returned_count": len(states), "truncated": has_more})
+        meta = _meta(agent, total=total, returned=len(states), truncated=has_more, offset=offset)
+        meta["has_more"] = has_more
+        meta["scanned_count"] = scanned
+        meta["published_returned_count"] = len(states)
+        meta["total_unfiltered_count"] = total
+        meta["total_published_count"] = total_published
+        meta["draft_filtered_count"] = skipped_drafts
+        meta["skipped_drafts"] = skipped_drafts
+        meta["include_drafts"] = include_drafts
+        meta["empty_state"] = {"active": total == 0, "reason": "fresh_install" if total == 0 else None}
+        if has_more:
+            meta["next_offset"] = offset + scanned
+        else:
+            meta.pop("next_offset", None)
+        if scanned and not states and skipped_drafts:
+            meta["no_published_in_range"] = True
+            meta["warning"] = "page_range_contains_only_drafts_use_next_offset"
+        return {"ok": True, "data": {"ai_state_pages": states, "structured_state_pages": states}, "meta": meta}
+
     count_row = await fetch_one(settings.sqlite_path, "SELECT COUNT(*) AS count FROM pages WHERE vault_id = ? AND status = 'active'", (agent.vault_id,))
     count = count_row["count"] if count_row else 0
     rows = await fetch_all(
@@ -553,9 +654,10 @@ async def agent_ai_state(request: Request, limit: int = 50, offset: int = 0, inc
 async def agent_state_summary(request: Request, agent: AgentAuth = Depends(require_agent)):
     settings = request.app.state.settings
     summary = {}
+    ai_state_count_query = "SELECT COUNT(*) AS count FROM ai_state_pages WHERE vault_id = ?" if await _ai_state_table_exists(settings.sqlite_path) else "SELECT 0 AS count"
     queries = {
         "pages": "SELECT COUNT(*) AS count FROM pages WHERE vault_id = ? AND status = 'active'",
-        "structured_state_pages": "SELECT 0 AS count",
+        "structured_state_pages": ai_state_count_query,
         "reviews": "SELECT COUNT(*) AS count FROM reviews WHERE vault_id = ?",
         "findings": "SELECT COUNT(*) AS count FROM findings f JOIN reviews r ON r.id = f.review_id WHERE r.vault_id = ?",
         "graph_nodes": "SELECT COUNT(*) AS count FROM graph_nodes WHERE vault_id = ?",
@@ -641,6 +743,7 @@ async def agent_state_summary(request: Request, agent: AgentAuth = Depends(requi
             "conflict_resolution_policy": CONFLICT_RESOLUTION_POLICY,
             "security_boundary_policy": SECURITY_BOUNDARY_POLICY,
             "infrastructure_notice": INFRASTRUCTURE_NOTICE,
+            "ai_state_coverage_note": "ai_state_pages counts structured state rows generated from active pages. It can differ from pages during sync or rebuild drift.",
             "structured_state_coverage_note": "structured_state_pages counts structured state rows generated from active pages. It can differ from pages during sync or rebuild drift.",
             "structured_state_pages_match": structured_state_pages_match,
             "drift_suspected": not structured_state_pages_match,

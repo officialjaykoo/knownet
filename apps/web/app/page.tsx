@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronsDown,
@@ -19,12 +19,13 @@ import {
   X,
 } from "lucide-react";
 import { GraphPanel, GraphData, GraphNode } from "../components/GraphPanel";
-import { AgentDashboardWorkspace } from "../components/AgentDashboardWorkspace";
 import { AIReviewsWorkspace } from "../components/AIReviewsWorkspace";
 import { AIPacketsWorkspace } from "../components/AIPacketsWorkspace";
 import { MarkdownView } from "../components/MarkdownView";
+import { NextWorkspace, NextAction } from "../components/NextWorkspace";
 import { OperatorConsoleWorkspace } from "../components/OperatorConsoleWorkspace";
-import { WorkspaceTabs } from "../components/WorkspaceTabs";
+import { TasksWorkspace } from "../components/TasksWorkspace";
+import { WorkspaceTabs, Workspace } from "../components/WorkspaceTabs";
 
 type PageSummary = {
   slug: string;
@@ -33,6 +34,7 @@ type PageSummary = {
   updated_at?: string | null;
   links_count: number;
   citations_count: number;
+  links?: Array<{ raw?: string; target: string; display?: string | null; status: string }>;
   system_kind?: string | null;
   system_tier?: number | null;
   system_locked?: boolean;
@@ -177,16 +179,28 @@ type CollaborationFinding = {
 type FindingTask = {
   id: string;
   finding_id: string;
+  title?: string | null;
   status: string;
   priority: string;
   owner?: string | null;
   task_prompt: string;
   expected_verification?: string | null;
+  blocking_reason?: string | null;
 };
 
 type CollaborationReviewDetail = {
   review: CollaborationReviewSummary & { meta?: string };
   findings: CollaborationFinding[];
+};
+
+type ReviewDryRun = {
+  dry_run: boolean;
+  finding_count: number;
+  findings: CollaborationFinding[];
+  context_questions?: unknown[];
+  duplicate_candidates?: unknown[];
+  parser_errors: string[];
+  truncated_findings: boolean;
 };
 
 type QualityCheck = {
@@ -328,12 +342,25 @@ async function fetchJson<T>(path: string, init?: RequestInit, token?: string | n
     headers.set("x-knownet-vault", vaultId);
   }
   const response = await fetch(`${apiBase}${path}`, { ...init, headers });
-  const body = await response.json();
+  const text = await response.text();
+  let body: any = {};
+  try {
+    body = text ? JSON.parse(text) : {};
+  } catch {
+    throw new Error(text || `Request failed with status ${response.status}`);
+  }
   if (!response.ok || !body.ok) {
     const validationMessage = Array.isArray(body.detail) ? body.detail.map((item: { msg?: string }) => item.msg).filter(Boolean).join("; ") : "";
     throw new Error(body.detail?.message ?? validationMessage ?? body.error?.message ?? "Request failed");
   }
   return body.data as T;
+}
+
+const workspaceKeys: Workspace[] = ["next", "packets", "reviews", "tasks", "sources", "ops"];
+
+function workspaceFromPath(pathname: string): Workspace {
+  const key = pathname.replace(/^\/+/, "").split("/")[0] || "next";
+  return workspaceKeys.includes(key as Workspace) ? (key as Workspace) : "next";
 }
 
 export default function HomePage() {
@@ -376,10 +403,22 @@ export default function HomePage() {
   const [verifyIssues, setVerifyIssues] = useState(0);
   const [opsBusyAction, setOpsBusyAction] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [activeWorkspace, setActiveWorkspace] = useState<"operator" | "map" | "reviews" | "packets" | "agents">("operator");
+  const [activeWorkspace, setActiveWorkspace] = useState<Workspace>("next");
+  const [nextAction, setNextAction] = useState<NextAction | null>(null);
+  const [nextActionLoading, setNextActionLoading] = useState(false);
+  const [nextActionError, setNextActionError] = useState<string | null>(null);
+  const nextActionRequestId = useRef(0);
   const [reviewMarkdown, setReviewMarkdown] = useState("");
+  const [reviewDryRun, setReviewDryRun] = useState<ReviewDryRun | null>(null);
   const [collaborationReviews, setCollaborationReviews] = useState<CollaborationReviewSummary[]>([]);
   const [selectedCollaborationReview, setSelectedCollaborationReview] = useState<CollaborationReviewDetail | null>(null);
+  const [tasks, setTasks] = useState<FindingTask[]>([]);
+  const [acceptedFindings, setAcceptedFindings] = useState<any[]>([]);
+  const [selectedTask, setSelectedTask] = useState<FindingTask | null>(null);
+  const [evidenceCommit, setEvidenceCommit] = useState("");
+  const [evidenceChangedFiles, setEvidenceChangedFiles] = useState("");
+  const [evidenceVerification, setEvidenceVerification] = useState("Implemented and verified with targeted checks.");
+  const [evidenceNotes, setEvidenceNotes] = useState("");
   const [bundleStatus, setBundleStatus] = useState("");
   const [bundlePageIds, setBundlePageIds] = useState<string[]>([]);
   const [aiStateQuality, setAiStateQuality] = useState<AiStateQuality | null>(null);
@@ -395,6 +434,7 @@ export default function HomePage() {
   const [projectSnapshotFocus, setProjectSnapshotFocus] = useState("");
   const [projectSnapshotSincePacketId, setProjectSnapshotSincePacketId] = useState("");
   const [projectSnapshotQualityAcknowledged, setProjectSnapshotQualityAcknowledged] = useState(false);
+  const [projectSnapshotCopyState, setProjectSnapshotCopyState] = useState<"idle" | "packet" | "prompt">("idle");
   const [experimentPacket, setExperimentPacket] = useState<ExperimentPacket | null>(null);
   const [experimentName, setExperimentName] = useState("Boundary Interpretation Divergence Test");
   const [experimentTask, setExperimentTask] = useState("Decide scenarios only. Return parser-ready findings only for items that should be imported.");
@@ -402,6 +442,50 @@ export default function HomePage() {
   const [experimentResponseMarkdown, setExperimentResponseMarkdown] = useState("");
   const [experimentResponseDryRun, setExperimentResponseDryRun] = useState<ExperimentResponseDryRun | null>(null);
   const [experimentImportedReviewId, setExperimentImportedReviewId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const syncWorkspaceFromLocation = () => setActiveWorkspace(workspaceFromPath(window.location.pathname));
+    syncWorkspaceFromLocation();
+    window.addEventListener("popstate", syncWorkspaceFromLocation);
+    return () => window.removeEventListener("popstate", syncWorkspaceFromLocation);
+  }, []);
+
+  function navigateWorkspace(workspace: Workspace) {
+    setActiveWorkspace(workspace);
+    const nextPath = workspace === "next" ? "/next" : `/${workspace}`;
+    if (window.location.pathname !== nextPath) {
+      window.history.pushState(null, "", nextPath);
+    }
+  }
+
+  async function loadNextAction() {
+    const requestId = nextActionRequestId.current + 1;
+    nextActionRequestId.current = requestId;
+    setNextActionLoading(true);
+    setNextActionError(null);
+    try {
+      const data = await fetchJson<NextAction>(
+        `/api/collaboration/next-action?vault_id=${encodeURIComponent(vaultId)}`,
+        {},
+        sessionToken,
+        vaultId,
+      );
+      if (requestId !== nextActionRequestId.current) {
+        return;
+      }
+      setNextAction(data);
+    } catch (error) {
+      if (requestId !== nextActionRequestId.current) {
+        return;
+      }
+      setNextAction(null);
+      setNextActionError(error instanceof Error ? error.message : "Next action failed to load");
+    } finally {
+      if (requestId === nextActionRequestId.current) {
+        setNextActionLoading(false);
+      }
+    }
+  }
 
   async function loadPages() {
     const data = await fetchJson<{ pages: PageSummary[] }>("/api/pages");
@@ -431,6 +515,115 @@ export default function HomePage() {
     return sorted;
   }, [pageSort, pageSortDir, pages]);
 
+  const sourceGraph = useMemo<GraphData | null>(() => {
+    if (graph && graph.nodes.length > 0) {
+      return graph;
+    }
+    if (!sortedPages.length) {
+      return graph;
+    }
+    const baseNodes: GraphNode[] = sortedPages.map((sourcePage) => {
+      const degree = Number(sourcePage.links_count || 0) + Number(sourcePage.citations_count || 0);
+      return {
+        id: `page:${pageIdFromSlug(sourcePage.slug)}`,
+        node_type: "page",
+        label: sourcePage.title || sourcePage.slug,
+        target_type: "page",
+        target_id: pageIdFromSlug(sourcePage.slug),
+        status: "markdown",
+        weight: Math.max(1, degree),
+        meta: {
+          slug: sourcePage.slug,
+          degree,
+          citations_count: Number(sourcePage.citations_count || 0),
+          system_kind: sourcePage.system_kind || null,
+          system_tier: sourcePage.system_tier || null,
+          system_locked: Boolean(sourcePage.system_locked),
+          markdown_fallback: true,
+        },
+      };
+    });
+    const nodeIds = new Set(baseNodes.map((node) => node.id));
+    const edges = sortedPages.flatMap((sourcePage) =>
+      (sourcePage.links || [])
+        .map((link) => {
+          const targetId = `page:${pageIdFromSlug(link.target)}`;
+          if (!nodeIds.has(targetId)) {
+            return null;
+          }
+          return {
+            id: `markdown-link:${sourcePage.slug}:${link.target}:${link.raw || link.display || link.target}`,
+            edge_type: "markdown_link",
+            from_node_id: `page:${pageIdFromSlug(sourcePage.slug)}`,
+            to_node_id: targetId,
+            status: link.status || "linked",
+            weight: 1,
+          };
+        })
+        .filter((edge): edge is NonNullable<typeof edge> => Boolean(edge))
+    );
+    const connectedNodeIds = new Set(edges.flatMap((edge) => [edge.from_node_id, edge.to_node_id]));
+    const outgoingCounts = new Map<string, number>();
+    const incomingCounts = new Map<string, number>();
+    edges.forEach((edge) => {
+      outgoingCounts.set(edge.from_node_id, (outgoingCounts.get(edge.from_node_id) || 0) + 1);
+      incomingCounts.set(edge.to_node_id, (incomingCounts.get(edge.to_node_id) || 0) + 1);
+    });
+    const scoredNodes = baseNodes
+      .map((node) => {
+        const incoming = incomingCounts.get(node.id) || 0;
+        const outgoing = outgoingCounts.get(node.id) || 0;
+        const degree = incoming + outgoing + Number(node.meta.citations_count || 0);
+        const title = node.label.toLowerCase();
+        const titleCore = /\b(start|overview|protocol|operating|model|workflow|state|quality|boundary|evidence|graph)\b/.test(title);
+        return { id: node.id, degree, incoming, outgoing, titleCore, score: degree * 2 + incoming + (titleCore ? 2 : 0) };
+      })
+      .sort((left, right) => right.score - left.score);
+    const coreLimit = Math.max(4, Math.ceil(baseNodes.length * 0.08));
+    const coreIds = new Set(scoredNodes.filter((item) => item.degree >= 3 || item.titleCore).slice(0, coreLimit).map((item) => item.id));
+    const nodes = baseNodes.map((node) => {
+      const incoming = incomingCounts.get(node.id) || 0;
+      const outgoing = outgoingCounts.get(node.id) || 0;
+      const degree = incoming + outgoing + Number(node.meta.citations_count || 0);
+      const coreReasons = [];
+      if (incoming >= 3) coreReasons.push("many_incoming_links");
+      if (outgoing >= 4) coreReasons.push("many_outgoing_links");
+      if (incoming > 0 && outgoing > 0 && degree >= 5) coreReasons.push("bridge_page");
+      if (coreIds.has(node.id) && coreReasons.length === 0) coreReasons.push("title_or_degree");
+      return {
+        ...node,
+        weight: Math.max(1, degree),
+        meta: {
+          ...node.meta,
+          degree,
+          incoming_links: incoming,
+          outgoing_links: outgoing,
+          auto_core: coreIds.has(node.id),
+          core: coreIds.has(node.id),
+          core_reasons: coreReasons,
+        },
+      };
+    });
+    return {
+      nodes,
+      edges,
+      truncated: false,
+      total_node_count: nodes.length,
+      graph_stale: false,
+      layout_key: `vault:${vaultId}:markdown-pages`,
+      summary: {
+        visible_node_count: nodes.length,
+        total_node_count: nodes.length,
+        visible_edge_count: edges.length,
+        page_count: nodes.length,
+        weak_page_count: 0,
+        orphan_page_count: nodes.filter((node) => !connectedNodeIds.has(node.id)).length,
+        hub_page_count: nodes.filter((node) => Number(node.meta.degree || 0) >= 5).length,
+        core_page_count: nodes.filter((node) => node.meta.core).length,
+      },
+    };
+  }, [graph, sortedPages, vaultId]);
+
   const pageIconClass = (page: PageSummary) => {
     if (page.system_tier === 1) {
       return "page-icon system";
@@ -459,6 +652,10 @@ export default function HomePage() {
     fetchJson<ActorState>("/api/auth/me", {}, sessionToken, vaultId)
       .then(setActor)
       .catch(() => setActor(null));
+  }, [sessionToken, vaultId]);
+
+  useEffect(() => {
+    loadNextAction();
   }, [sessionToken, vaultId]);
 
   async function loadVaults(token = sessionToken) {
@@ -539,6 +736,37 @@ export default function HomePage() {
     loadCollaborationReviews();
   }, [sessionToken, actor?.role, vaultId]);
 
+  async function loadTasksWorkspace() {
+    if (!sessionToken && actor?.actor_type !== "local") {
+      setTasks([]);
+      setAcceptedFindings([]);
+      setSelectedTask(null);
+      return;
+    }
+    try {
+      const [taskData, queueData] = await Promise.all([
+        fetchJson<{ tasks: FindingTask[] }>(`/api/collaboration/tasks?status=all&limit=80`, {}, sessionToken, vaultId),
+        fetchJson<{ queue: any[] }>(`/api/collaboration/finding-queue?vault_id=${encodeURIComponent(vaultId)}&status=accepted&limit=50`, {}, sessionToken, vaultId),
+      ]);
+      setTasks(taskData.tasks);
+      setAcceptedFindings(queueData.queue.filter((finding) => !finding.has_task));
+      setSelectedTask((current) => {
+        if (!current) {
+          return taskData.tasks[0] ?? null;
+        }
+        return taskData.tasks.find((task) => task.id === current.id) ?? taskData.tasks[0] ?? null;
+      });
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Tasks load failed");
+    }
+  }
+
+  useEffect(() => {
+    if (activeWorkspace === "tasks") {
+      loadTasksWorkspace();
+    }
+  }, [activeWorkspace, sessionToken, actor?.role, vaultId]);
+
   async function loadOperatorConsole() {
     if (!sessionToken && actor?.actor_type !== "local") {
       setAiStateQuality(null);
@@ -570,8 +798,10 @@ export default function HomePage() {
   }
 
   useEffect(() => {
-    loadOperatorConsole();
-  }, [sessionToken, actor?.actor_type, vaultId]);
+    if (activeWorkspace === "ops") {
+      loadOperatorConsole();
+    }
+  }, [activeWorkspace, sessionToken, actor?.actor_type, vaultId]);
 
   async function loadGraph() {
     try {
@@ -597,8 +827,10 @@ export default function HomePage() {
   }
 
   useEffect(() => {
-    loadGraph();
-  }, [sessionToken, vaultId, graphNodeType, graphStatus]);
+    if (activeWorkspace === "sources") {
+      loadGraph();
+    }
+  }, [activeWorkspace, sessionToken, vaultId, graphNodeType, graphStatus]);
 
   async function loadOperations() {
     try {
@@ -626,10 +858,10 @@ export default function HomePage() {
   }
 
   useEffect(() => {
-    loadOperations();
-    const interval = window.setInterval(loadOperations, healthSummary?.overall_status === "attention_required" ? 30000 : 60000);
-    return () => window.clearInterval(interval);
-  }, [sessionToken, actor?.actor_type, vaultId, healthSummary?.overall_status]);
+    if (activeWorkspace === "ops") {
+      loadOperations();
+    }
+  }, [activeWorkspace, sessionToken, actor?.actor_type, vaultId]);
 
   useEffect(() => {
     if (!selectedSlug) {
@@ -988,7 +1220,9 @@ export default function HomePage() {
     }
     try {
       await navigator.clipboard.writeText(projectSnapshotPacket.content);
+      setProjectSnapshotCopyState("packet");
       setStatus(`Copied project snapshot: ${projectSnapshotPacket.id}`);
+      window.setTimeout(() => setProjectSnapshotCopyState("idle"), 1800);
     } catch {
       setStatus("Clipboard unavailable");
     }
@@ -1029,7 +1263,9 @@ export default function HomePage() {
     ].join("\n");
     try {
       await navigator.clipboard.writeText(prompt);
+      setProjectSnapshotCopyState("prompt");
       setStatus("Copied multi-AI prompt");
+      window.setTimeout(() => setProjectSnapshotCopyState("idle"), 1800);
     } catch {
       setStatus("Copy failed");
     }
@@ -1269,6 +1505,7 @@ export default function HomePage() {
         vaultId,
       );
       setReviewMarkdown("");
+      setReviewDryRun(null);
       setStatus(`Imported review: ${data.findings.length} finding(s)`);
       await loadCollaborationReviews();
       await loadCollaborationReview(data.review.id);
@@ -1308,6 +1545,29 @@ export default function HomePage() {
     }
   }
 
+  async function dryRunCollaborationReview() {
+    if (!reviewMarkdown.trim()) {
+      return;
+    }
+    try {
+      const data = await fetchJson<ReviewDryRun>(
+        "/api/collaboration/reviews?dry_run=true",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ vault_id: vaultId, markdown: reviewMarkdown.trim(), source_agent: "external-ai" }),
+        },
+        sessionToken,
+        vaultId,
+      );
+      setReviewDryRun(data);
+      setStatus(`Dry run: ${data.finding_count} finding(s), ${data.parser_errors.length} parser error(s)`);
+    } catch (error) {
+      setReviewDryRun(null);
+      setStatus(error instanceof Error ? error.message : "Review dry run failed");
+    }
+  }
+
   async function createFindingTask(findingId: string) {
     try {
       const data = await fetchJson<{ task: FindingTask }>(
@@ -1321,11 +1581,53 @@ export default function HomePage() {
         vaultId,
       );
       setStatus(`Task ready: ${data.task.id}`);
+      await loadTasksWorkspace();
       if (selectedCollaborationReview) {
         await loadCollaborationReview(selectedCollaborationReview.review.id);
       }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Task creation failed");
+    }
+  }
+
+  async function submitTaskEvidence() {
+    if (!selectedTask) {
+      setStatus("Select a task before submitting evidence");
+      return;
+    }
+    setOperatorBusyAction("task-evidence");
+    try {
+      const changedFiles = evidenceChangedFiles
+        .split(/[,\n]/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      await fetchJson<{ dry_run: boolean; draft: any; record: any }>(
+        `/api/collaboration/findings/${selectedTask.finding_id}/implementation-evidence`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            commit_sha: evidenceCommit.trim() || null,
+            changed_files: changedFiles,
+            verification: evidenceVerification.trim(),
+            notes: evidenceNotes.trim() || null,
+            dry_run: false,
+          }),
+        },
+        sessionToken,
+        vaultId,
+      );
+      setStatus(`Implementation evidence submitted for ${selectedTask.id}`);
+      setEvidenceCommit("");
+      setEvidenceChangedFiles("");
+      setEvidenceVerification("Implemented and verified with targeted checks.");
+      setEvidenceNotes("");
+      await loadTasksWorkspace();
+      await loadNextAction();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Evidence submit failed");
+    } finally {
+      setOperatorBusyAction(null);
     }
   }
 
@@ -1464,7 +1766,7 @@ export default function HomePage() {
             Hide
           </button>
         </div>
-        {activeWorkspace === "map" ? (
+        {activeWorkspace === "sources" ? (
           <>
             <div className="page-list-tools" aria-label="Page sorting">
               <select aria-label="Sort pages" value={pageSort} onChange={(event) => setPageSort(event.target.value as "recent" | "links" | "class")}>
@@ -1575,7 +1877,7 @@ export default function HomePage() {
             ) : null}
           </div>
         </section>
-        {activeWorkspace === "operator" ? (
+        {activeWorkspace === "next" ? (
           <>
             <form className="inbox" onSubmit={submitMessage}>
               <label htmlFor="message">Inbox</label>
@@ -1614,7 +1916,7 @@ export default function HomePage() {
             ) : null}
           </>
         ) : null}
-        {activeWorkspace === "map" && citationAudits.length ? (
+        {activeWorkspace === "sources" && citationAudits.length ? (
           <section className="review-panel citation-panel">
             <p className="eyebrow">Citations</p>
             {citationAudits.slice(0, 5).map((item) => (
@@ -1635,12 +1937,17 @@ export default function HomePage() {
         ) : null}
       </aside>
       <section className="workspace">
-        <WorkspaceTabs activeWorkspace={activeWorkspace} canManageAgents={canManageAgents} onChange={setActiveWorkspace} />
-        {activeWorkspace === "agents" && canManageAgents ? (
-          <AgentDashboardWorkspace sessionToken={sessionToken} vaultId={vaultId} />
-        ) : (
-          <>
-        {activeWorkspace === "operator" ? (
+        <WorkspaceTabs activeWorkspace={activeWorkspace} onChange={navigateWorkspace} />
+        {activeWorkspace === "next" ? (
+          <NextWorkspace
+            action={nextAction}
+            error={nextActionError}
+            loading={nextActionLoading}
+            onOpenWorkspace={navigateWorkspace}
+            onRefresh={loadNextAction}
+          />
+        ) : null}
+        {activeWorkspace === "ops" ? (
           <OperatorConsoleWorkspace
             healthSummary={healthSummary}
             aiStateQuality={aiStateQuality}
@@ -1675,19 +1982,13 @@ export default function HomePage() {
             canOperate={canOperate}
             operatorBusyAction={operatorBusyAction}
             projectSnapshotPacket={projectSnapshotPacket}
+            projectSnapshotCopyState={projectSnapshotCopyState}
             projectSnapshotTargetAgent={projectSnapshotTargetAgent}
             projectSnapshotProfile={projectSnapshotProfile}
             projectSnapshotOutputMode={projectSnapshotOutputMode}
             projectSnapshotFocus={projectSnapshotFocus}
             projectSnapshotSincePacketId={projectSnapshotSincePacketId}
             projectSnapshotQualityAcknowledged={projectSnapshotQualityAcknowledged}
-            experimentPacket={experimentPacket}
-            experimentName={experimentName}
-            experimentTask={experimentTask}
-            experimentScenarios={experimentScenarios}
-            experimentResponseMarkdown={experimentResponseMarkdown}
-            experimentResponseDryRun={experimentResponseDryRun}
-            experimentImportedReviewId={experimentImportedReviewId}
             onGenerateProjectSnapshotPacket={generateProjectSnapshotPacket}
             onCopyProjectSnapshotPacket={copyProjectSnapshotPacket}
             onCopyProjectSnapshotMultiAiPrompt={copyProjectSnapshotMultiAiPrompt}
@@ -1698,14 +1999,6 @@ export default function HomePage() {
             onApplyProjectSnapshotStandardizationPreset={applyProjectSnapshotStandardizationPreset}
             onProjectSnapshotSincePacketIdChange={setProjectSnapshotSincePacketId}
             onProjectSnapshotQualityAcknowledgedChange={setProjectSnapshotQualityAcknowledged}
-            onGenerateExperimentPacket={generateExperimentPacket}
-            onCopyExperimentPacket={copyExperimentPacket}
-            onExperimentNameChange={setExperimentName}
-            onExperimentTaskChange={setExperimentTask}
-            onExperimentScenariosChange={setExperimentScenarios}
-            onExperimentResponseMarkdownChange={setExperimentResponseMarkdown}
-            onDryRunExperimentResponse={dryRunExperimentResponse}
-            onImportExperimentResponse={importExperimentResponse}
           />
         ) : null}
         {activeWorkspace === "reviews" ? (
@@ -1713,10 +2006,12 @@ export default function HomePage() {
             canWrite={canWrite}
             canOperate={canOperate}
             reviewMarkdown={reviewMarkdown}
+            reviewDryRun={reviewDryRun}
             collaborationReviews={collaborationReviews}
             selectedCollaborationReview={selectedCollaborationReview}
             onReviewMarkdownChange={setReviewMarkdown}
             onImportReview={importCollaborationReview}
+            onDryRunReview={dryRunCollaborationReview}
             onRefresh={loadCollaborationReviews}
             onExportSarif={exportSarifFindings}
             onLoadReview={loadCollaborationReview}
@@ -1724,7 +2019,28 @@ export default function HomePage() {
             onCreateFindingTask={createFindingTask}
           />
         ) : null}
-        {activeWorkspace === "map" ? (
+        {activeWorkspace === "tasks" ? (
+          <TasksWorkspace
+            canOperate={canOperate}
+            tasks={tasks}
+            acceptedFindings={acceptedFindings}
+            selectedTask={selectedTask}
+            evidenceCommit={evidenceCommit}
+            evidenceChangedFiles={evidenceChangedFiles}
+            evidenceVerification={evidenceVerification}
+            evidenceNotes={evidenceNotes}
+            busyAction={operatorBusyAction}
+            onRefresh={loadTasksWorkspace}
+            onSelectTask={setSelectedTask}
+            onCreateTask={createFindingTask}
+            onEvidenceCommitChange={setEvidenceCommit}
+            onEvidenceChangedFilesChange={setEvidenceChangedFiles}
+            onEvidenceVerificationChange={setEvidenceVerification}
+            onEvidenceNotesChange={setEvidenceNotes}
+            onSubmitEvidence={submitTaskEvidence}
+          />
+        ) : null}
+        {activeWorkspace === "sources" ? (
           <>
         {suggestion ? (
           <aside className="suggestion">
@@ -1769,7 +2085,7 @@ export default function HomePage() {
           </aside>
         ) : null}
         <GraphPanel
-          graph={graph}
+          graph={sourceGraph}
           graphMode={graphMode}
           graphNodeType={graphNodeType}
           graphStatus={graphStatus}
@@ -1785,7 +2101,7 @@ export default function HomePage() {
         />
           </>
         ) : null}
-        {activeWorkspace === "map" ? (
+        {activeWorkspace === "sources" ? (
           page ? (
             <>
               <header className="page-header">
@@ -1837,8 +2153,6 @@ export default function HomePage() {
             <p className="empty">Loading page.</p>
           )
         ) : null}
-          </>
-        )}
       </section>
     </main>
   );

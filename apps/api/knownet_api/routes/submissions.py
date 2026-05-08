@@ -16,11 +16,21 @@ class ReviewSubmissionRequest(BaseModel):
 @router.get("")
 async def list_submissions(request: Request, status: str = "pending_review", actor: Actor = Depends(require_review_access)):
     settings = request.app.state.settings
+    table_rows = await fetch_all(
+        settings.sqlite_path,
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('submissions', 'messages')",
+        (),
+    )
+    tables = {row["name"] for row in table_rows}
+    if "submissions" not in tables:
+        return {"ok": True, "data": {"submissions": [], "actor_role": actor.role}}
+    message_path_select = "m.path AS message_path" if "messages" in tables else "NULL AS message_path"
+    message_join = "JOIN messages m ON m.id = s.message_id " if "messages" in tables else ""
     rows = await fetch_all(
         settings.sqlite_path,
         "SELECT s.id, s.message_id, s.actor_type, s.session_id, s.status, s.reviewed_by, "
-        "s.review_note, s.created_at, s.updated_at, m.path AS message_path "
-        "FROM submissions s JOIN messages m ON m.id = s.message_id "
+        f"s.review_note, s.created_at, s.updated_at, {message_path_select} "
+        f"FROM submissions s {message_join}"
         "WHERE s.status = ? ORDER BY s.created_at ASC LIMIT 100",
         (status,),
     )
